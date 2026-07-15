@@ -1,0 +1,24 @@
+# Mapa de superfícies
+
+| Funcionalidade | Entidade/tabela | Endpoint | Página ou componente | Teste |
+|---|---|---|---|---|
+| Senha compartilhada e sessão | Cookie assinado, sem tabela de usuário | `POST /api/session/login`, `GET /api/session`, `POST /api/session/logout` | `/entrar`, `AppShell` | `session-api.test.ts`, `auth.test.ts`, `core.spec.ts` |
+| Rebanho, identificação e cadastro em massa | `animals` | `GET/POST /api/animals`, `POST /api/animals/bulk`, `GET/PATCH /api/animals/:id` | `/rebanho` com linha inteira navegável; modos individual/em massa em `/rebanho/novo` | `core.spec.ts`, `visual.spec.ts` |
+| Ciclo produtivo e histórico de situação | `animals`, `animal_status_events` | `POST /api/animals/:id/status-changes`, `DELETE /api/animals/:id/status-changes/:eventId`, `GET /api/animals/:id` | Seção “Ciclo produtivo e reprodução” no detalhe | `domain.test.ts`, `core.spec.ts`, `visual.spec.ts` |
+| Cio, cobertura, resultado e parto | `animal_reproductive_events` | `POST /api/animals/:id/reproductive-events`, `PATCH/DELETE /api/animals/:id/reproductive-events/:eventId`; parto derivado de mudança para lactação | Formulário contextual, resumo factual e linha do tempo no detalhe do animal | `domain.test.ts`, `core.spec.ts`, `visual.spec.ts` |
+| Lotes e histórico de movimentação | `herd_groups`, `animal_group_assignments` | `GET/POST /api/herd-groups`, `PATCH /api/herd-groups/:id`, `POST /api/animals/:id/group-assignments` | `GroupPicker` contextual no cadastro, retorno à lactação e detalhe; sem página separada | `domain.test.ts`, `core.spec.ts` |
+| Aliases exatos | `animal_aliases` | `POST /api/animals/:id/aliases`, `DELETE /api/animal-aliases/:id` | Detalhe do animal | `domain.test.ts`, `core.spec.ts` |
+| Sessões e importação de peso | `weight_sessions`, `animal_weights` | `GET/POST /api/weight-sessions`, `POST /api/weight-sessions/validate`, `GET/DELETE /api/weight-sessions/:id`, `PATCH /api/weight-measurements/:id` | `/pesos`, `/pesos/importar`, `/pesos/:id` e histórico no animal | `domain.test.ts`, `core.spec.ts`, `visual.spec.ts` |
+| Total diário do rebanho | `daily_milk_totals` | `GET/POST /api/daily-milk-totals`, `PATCH/DELETE /api/daily-milk-totals/:id` | `DailyMilkPanel` em `/producao` e resumo em `/` | `domain.test.ts`, `core.spec.ts`, `visual.spec.ts` |
+| Controles individuais de leite | `milk_sessions` | `GET /api/milk-sessions`, `GET/PATCH/DELETE /api/milk-sessions/:id` | `/producao`, `/producao/:id`; `/producao/nova` redireciona para importação | `seed.test.ts`, `domain.test.ts`, `core.spec.ts` |
+| Evolução geral e individual por período | consultas derivadas de `daily_milk_totals`, `milk_sessions`, `milk_measurements` | `GET /api/milk-production-timeline`, `GET /api/animals/:id` | gráfico em `/producao` e no detalhe do animal | `domain.test.ts`, `core.spec.ts`, `visual.spec.ts` |
+| Medições, revisão e estimativa | `milk_measurements` | `PATCH /api/milk-measurements/:id` | `MilkMeasurementEditor` e detalhe do controle | `domain.test.ts`, `seed.test.ts`, `core.spec.ts` |
+| Importação e revisão do controle | `milk_sessions`, `milk_measurements`, situação/lote históricos | `POST /api/import/chatgpt/validate`, `POST /api/import/chatgpt` | `/producao/importar`, filtros de ausentes, duplicadas, períodos, vínculo, confiança e desvio | `domain.test.ts`, `core.spec.ts`, `visual.spec.ts` |
+| Fornecedores | `suppliers` | `GET/POST /api/suppliers`, `GET/PATCH /api/suppliers/:id` | `/fornecedores`, `/fornecedores/:id`, compra | `core.spec.ts` cobre o consumidor em compra |
+| Compras e vencimentos | `purchases` | `GET/POST /api/purchases`, `GET/PATCH /api/purchases/:id` | `/compras`, `/compras/nova`, `/compras/:id` | `domain.test.ts`, `core.spec.ts`, `visual.spec.ts` |
+| Itens opcionais | `purchase_items` | `POST /api/purchases/:id/items`, `PATCH/DELETE /api/purchase-items/:id` | Detalhe da compra | `domain.test.ts`, `core.spec.ts` |
+| Documentos locais/Drive | `attachments` + provider binário | `GET/POST /api/attachments`, `GET /api/attachments/:id/file`, `PATCH/DELETE /api/attachments/:id` | `/documentos`, detalhe de compra e controle | `storage.test.ts`, `domain.test.ts`, `core.spec.ts`, checklist Drive real |
+| Indicadores, pendências e tutorial operacional | consultas derivadas | `GET /api/dashboard` | `/`: ações rápidas, comparação mensal, gráficos, lotes, peso, compras e guia | `core.spec.ts`, `visual.spec.ts` |
+| Saúde e prontidão | consulta ao PostgreSQL | `GET /api/health`, `GET /api/ready` | Healthcheck Docker/Railway | `session-api.test.ts`, smoke Docker |
+
+Não existe superfície de configuração do Google Drive. Por decisão de escopo, a autorização acontece uma vez com `pnpm google-drive:authorize` e as credenciais ficam nas variáveis do ambiente de produção.

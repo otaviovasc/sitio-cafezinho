@@ -1,0 +1,93 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #f4f2eb;
+  --surface: #fffef9;
+  --text: #1f2922;
+  --muted: #647068;
+  --border: #dce1da;
+  --primary: #315c3b;
+  --primary-strong: #24462d;
+  --primary-soft: #e5eee6;
+  --success: #27633a;
+  --warning: #8a5a0a;
+  --danger: #a1372f;
+  --radius: 14px;
+  --shadow: 0 1px 2px rgb(31 41 34 / 8%), 0 6px 20px rgb(31 41 34 / 5%);
+  --space: 1rem;
+  --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+html { background: var(--background); color: var(--text); font-family: var(--font); }
+body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--background); color: var(--text); }
+button, input, select, textarea { font: inherit; }
+button, a { -webkit-tap-highlight-color: transparent; }
+a { color: inherit; text-decoration: none; }
+
+@layer components {
+  .page { @apply mx-auto w-full max-w-6xl px-4 pb-28 pt-5 md:px-6 md:pt-8 lg:pb-10; }
+  .page-narrow { @apply mx-auto w-full max-w-2xl; }
+  .page-header { @apply mb-5 flex items-start justify-between gap-3; }
+  .page-title { @apply flex items-center gap-2 text-2xl font-bold tracking-tight md:text-3xl; }
+  .title-icon { color: var(--primary); @apply shrink-0; }
+  .page-subtitle { color: var(--muted); @apply mt-1 text-sm leading-5 md:text-base; }
+  .section-card { background: var(--surface); border-color: var(--border); border-radius: var(--radius); box-shadow: var(--shadow); @apply min-w-0 border p-4 md:p-5; }
+  .stat-card { background: var(--surface); border-color: var(--border); border-radius: var(--radius); @apply min-h-24 min-w-0 border p-4; }
+  .stat-label { color: var(--muted); @apply text-sm font-medium; }
+  .stat-value { @apply mt-2 break-words text-xl font-bold tracking-tight sm:text-2xl; }
+  .field { @apply grid gap-1.5; }
+  .field-label { @apply text-sm font-semibold; }
+  .field-hint { color: var(--muted); @apply text-xs leading-4; }
+  .input { background: var(--surface); border-color: var(--border); min-height: 46px; min-width: 0; @apply w-full rounded-xl border px-3 py-2.5 outline-none transition; }
+  .input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+  .input-error { border-color: var(--danger); }
+  .button { min-height: 44px; border-radius: 12px; @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50; }
+  .button-primary { background: var(--primary); color: white; }
+  .button-primary:hover { background: var(--primary-strong); }
+  .button-secondary { background: var(--surface); border-color: var(--border); @apply border; }
+  .button-danger { color: var(--danger); background: #fff4f2; border-color: #f0c9c5; @apply border; }
+  .mobile-item { border-color: var(--border); min-height: 60px; @apply flex min-w-0 items-center justify-between gap-3 border-b py-3 last:border-b-0; }
+  .badge { @apply inline-flex items-center rounded-full px-2.5 py-1 text-xs font-bold; }
+  .badge-success { background: #e3f1e6; color: var(--success); }
+  .badge-warning { background: #fff1cf; color: var(--warning); }
+  .badge-danger { background: #fde8e5; color: var(--danger); }
+  .badge-neutral { background: #edf0ed; color: var(--muted); }
+  .notice { border-radius: 12px; @apply border px-3.5 py-3 text-sm leading-5; }
+  .notice-info { background: var(--primary-soft); border-color: #c5d8c8; color: var(--primary-strong); }
+  .notice-warning { background: #fff8e6; border-color: #eddaaa; color: #6b470a; }
+  .notice-error { background: #fff4f2; border-color: #f0c9c5; color: var(--danger); }
+  .filter-bar { background: var(--surface); border-color: var(--border); @apply grid min-w-0 gap-3 rounded-[var(--radius)] border p-3 sm:grid-cols-2 lg:flex lg:items-end; }
+  .scroll-area { background: var(--surface); scrollbar-color: #a8b4aa transparent; @apply max-h-[34rem] min-w-0 overflow-y-auto pr-1 outline-none; }
+  .scroll-area:focus-visible { box-shadow: 0 0 0 3px var(--primary-soft); }
+  .period-chip { border-color: var(--border); background: var(--surface); @apply min-h-10 rounded-full border px-3 text-xs font-bold; }
+  .period-chip-active { border-color: var(--primary); background: var(--primary-soft); color: var(--primary-strong); }
+  .chart-wrap { @apply h-72 min-w-0 w-full md:h-80; }
+  .chart-empty { background: var(--primary-soft); color: var(--muted); @apply flex min-h-48 items-center justify-center rounded-xl px-4 text-center text-sm; }
+  .guide-step { border-color: var(--border); @apply relative grid min-w-0 content-start gap-2 rounded-xl border p-4; }
+  .guide-step > svg { color: var(--primary); }
+  .guide-step p { color: var(--muted); @apply text-sm leading-5; }
+  .guide-number { background: var(--primary-soft); color: var(--primary-strong); @apply absolute right-3 top-3 flex h-7 w-7 items-center justify-center rounded-full text-xs font-black; }
+  .review-row { border-color: var(--border); @apply border-b py-4 last:border-b-0; }
+  .review-row-warning { background: #fffaf0; @apply -mx-2 rounded-xl px-2; }
+  .data-table { @apply w-full table-fixed border-collapse text-left text-sm; }
+  .data-table th { color: var(--muted); @apply border-b border-[var(--border)] px-3 py-2 text-xs font-bold uppercase tracking-wide; }
+  .quick-action { background: var(--surface); border-color: var(--border); border-radius: var(--radius); @apply flex min-h-20 items-center gap-3 border p-3 text-left transition; }
+  .quick-action:hover { border-color: var(--primary); }
+  .quick-action svg { color: var(--primary); @apply shrink-0; }
+  .quick-action strong, .quick-action small { @apply block; }
+  .quick-action small { color: var(--muted); @apply mt-0.5 text-xs; }
+  .quick-action-primary { background: var(--primary); color: white; border-color: var(--primary); }
+  .quick-action-primary svg, .quick-action-primary small { color: white; }
+  .attention-item { background: #fff8e6; border-color: #eddaaa; color: #6b470a; @apply flex min-h-16 items-center gap-3 rounded-xl border p-3; }
+  .attention-item svg { @apply shrink-0; }
+  .attention-item strong, .attention-item small { @apply block; }
+  .attention-item small { @apply mt-0.5 text-xs; }
+  .attention-danger { background: #fff4f2; border-color: #f0c9c5; color: var(--danger); }
+}
+
+@media (min-width: 768px) {
+  .desktop-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 1.25rem; }
+}

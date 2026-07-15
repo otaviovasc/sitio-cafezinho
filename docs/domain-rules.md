@@ -1,0 +1,32 @@
+# Regras de domínio
+
+- PostgreSQL é a fonte oficial dos metadados.
+- Total diário de leite é a medição real retirada do rebanho em uma data. Novos registros guardam manhã e tarde separadas e derivam o total; registros históricos sem divisão continuam válidos. Há no máximo um registro por data.
+- Uma data contém o total diário do rebanho ou um controle individual, nunca ambos.
+- O total diário não é distribuído entre animais e não substitui o controle individual completo.
+- Dias sem medição diária permanecem ausentes; médias consideram somente os dias efetivamente medidos.
+- Controle leiteiro individual é uma medição pontual, não uma série diária presumida por vaca.
+- Um controle individual novo inclui todas as vacas que estavam `LACTATING` e em lote de ordenha naquela data. A interface principal usa importação e revisão do ChatGPT; não há formulário manual concorrente.
+- Situação representa o ciclo produtivo/vida; lote representa somente a rotina operacional de ordenha. Reprodução é um terceiro histórico paralelo. São conceitos diferentes.
+- As situações úteis são `HEIFER` (novilha antes da primeira lactação), `LACTATING`, `DRY`, `SOLD` e `DEAD`. Não existe situação genérica “ativa”.
+- Mudanças preservam data, situação anterior e motivo. O fluxo normal é `HEIFER → LACTATING → DRY → LACTATING`; venda e morte encerram o ciclo no sistema.
+- Entrar em `LACTATING` vindo de novilha ou seca registra um parto e o início da lactação. O sistema não inventa um parto para uma situação inicial antiga sem data conhecida.
+- Cio pode ser observado com ou sem cobertura. Cobertura começa como aguardando confirmação e pode ser corrigida para prenhez confirmada ou não prenhe, com data do resultado.
+- Prenhez não altera automaticamente a situação produtiva: uma novilha ou vaca em lactação pode estar prenhe. Somente o parto inicia a lactação.
+- Resumos reprodutivos são contagens factuais do ciclo atual. Eles não calculam diagnóstico, probabilidade de prenhez ou fertilidade presumida.
+- Eventos de cio podem ser editados ou excluídos. A última mudança de situação pode ser desfeita quando não houve movimentação de lote posterior que tornaria a reversão ambígua.
+- Ao sair de `LACTATING`, o lote atual é encerrado. Ao entrar em `LACTATING`, selecionar um lote de ordenha é obrigatório.
+- Lotes são cadastros editáveis, não nomes codificados na regra. Cada lote define ordenha manhã+tarde ou somente manhã. “Sem ordenha” é representado pela situação fora de lactação, não por outro lote.
+- Cada vaca em lactação possui no máximo um lote atual. Mudanças fecham a lotação anterior e preservam data e motivo no histórico.
+- Grupo com ordenha somente de manhã persiste tarde como `null`; nunca como zero inventado.
+- `Lote 1` e `Lote 2` são apenas dados iniciais demonstrativos. Todos os animais do seed começam no `Lote 1`; movimentações e períodos secos posteriores preservam essa origem no histórico.
+- Peso é uma medição pontual. Uma sessão pode cobrir apenas parte do rebanho; não interpolar dias nem transformar uma leitura em peso diário.
+- Peso `NEEDS_REVIEW` não entra em médias nem no gráfico confirmado. Rótulo, texto lido e linha excluída continuam preservados.
+- O seed rico é permitido somente com `SEED_DEMO_DATA=true`. Produção usa `false` e não recebe animais ou lançamentos fictícios.
+- `rawAnimalLabel` e `rawValueText` são preservados mesmo após correção.
+- Total combinado histórico é medição real; divisão manhã/tarde é estimativa visual e nunca é persistida.
+- Medições `NEEDS_REVIEW` e `EXCLUDED` não entram nos indicadores confirmados.
+- Não há fusão aproximada de animais. Brinco, nome e alias só casam por normalização exata.
+- Compra cancelada não entra em totais; vencida é derivada de compra aberta com data anterior a hoje.
+- Nota, boleto e comprovante vinculados à mesma compra são documentos da mesma obrigação.
+- Itens são opcionais; divergência com o total alerta, mas não bloqueia.
