@@ -8,6 +8,7 @@ import { participatesInMilking, requiresAfternoonMeasurement } from '../../src/d
 import { parseChatGptImport, stripMarkdownJson } from '../../src/domain/import';
 import { calculateTotal, confirmedTotal, estimateSplit } from '../../src/domain/milk';
 import { summarizeMilkDay } from '../../src/domain/milk-collection';
+import { isMonthKey, monthStorageDate, summarizeMonthlyMilkPrice } from '../../src/domain/milk-price';
 import { isOpenMastitisStatus, mastitisActionTiming, withdrawalState } from '../../src/domain/mastitis';
 import { summarizeRegisteredCash } from '../../src/domain/finance';
 import { dateKeyInSaoPaulo, isOverdue, itemDifference } from '../../src/domain/purchases';
@@ -18,6 +19,8 @@ describe('formatação e normalização', () => {
   it('aceita decimal brasileiro e ponto', () => {
     expect(parseDecimal('13,5')).toBe(13.5);
     expect(parseDecimal('13.5')).toBe(13.5);
+    expect(parseDecimal('1.234,56')).toBe(1234.56);
+    expect(parseDecimal('1,234.56')).toBe(1234.56);
     expect(parseDecimal('texto')).toBeNull();
   });
 
@@ -77,6 +80,30 @@ describe('produção de leite', () => {
   it('compara produção e coleta como fatos independentes', () => {
     expect(summarizeMilkDay(385, [360])).toEqual({ productionLiters: 385, collectedLiters: 360, differenceLiters: 25 });
     expect(summarizeMilkDay(null, [180, 180])).toEqual({ productionLiters: null, collectedLiters: 360, differenceLiters: null });
+  });
+
+  it('estima o valor somente a partir das coletas e do preço mensal informado', () => {
+    expect(summarizeMonthlyMilkPrice([{ liters: '360.50' }, { liters: 339.5 }], '1.7200')).toEqual({
+      collectedLiters: 700,
+      collectionCount: 2,
+      pricePerLiter: 1.72,
+      estimatedValue: 1204,
+      estimateBasis: 'COLLECTED_LITERS_X_MONTHLY_PRICE',
+    });
+    expect(summarizeMonthlyMilkPrice([{ liters: 700 }], null)).toEqual({
+      collectedLiters: 700,
+      collectionCount: 1,
+      pricePerLiter: null,
+      estimatedValue: null,
+      estimateBasis: null,
+    });
+  });
+
+  it('normaliza somente chaves de mês válidas para o primeiro dia', () => {
+    expect(isMonthKey('2026-07')).toBe(true);
+    expect(isMonthKey('2026-13')).toBe(false);
+    expect(isMonthKey('julho')).toBe(false);
+    expect(monthStorageDate('2026-07')).toBe('2026-07-01');
   });
 
   it('soma manhã e tarde', () => expect(calculateTotal(12, 9)).toBe(21));

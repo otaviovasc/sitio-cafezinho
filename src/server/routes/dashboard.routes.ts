@@ -1,11 +1,12 @@
 import { desc, isNull } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { getDb } from '../../db/client.js';
-import { animalGroupAssignments, animals, animalWeights, attachments, dailyMilkTotals, herdGroups, mastitisActions, mastitisCases, milkCollections, milkMeasurements, milkSessions, purchases, revenues } from '../../db/schema.js';
+import { animalGroupAssignments, animals, animalWeights, attachments, dailyMilkTotals, herdGroups, mastitisActions, mastitisCases, milkCollections, milkMeasurements, milkSessions, monthlyMilkPrices, purchases, revenues } from '../../db/schema.js';
 import { resolveDailyMilkDay, summarizeDailyMilk } from '../../domain/daily-milk.js';
 import { summarizeRegisteredCash } from '../../domain/finance.js';
 import { mastitisActionTiming, withdrawalState } from '../../domain/mastitis.js';
 import { summarizeMilkDay } from '../../domain/milk-collection.js';
+import { summarizeMonthlyMilkPrice } from '../../domain/milk-price.js';
 import { dateKeyInSaoPaulo, isOverdue } from '../../domain/purchases.js';
 import { env } from '../env.js';
 
@@ -17,7 +18,7 @@ function nextDate(date: string) {
 
 export const dashboardRoutes = new Hono().get('/dashboard', async (c) => {
   const db = getDb();
-  const [purchaseRows, dailyRows, collectionRows, revenueRows, documentRows, animalRows, assignments, groupRows, weights, allMeasurements, sessions, caseRows, actionRows] = await Promise.all([
+  const [purchaseRows, dailyRows, collectionRows, revenueRows, documentRows, animalRows, assignments, groupRows, weights, allMeasurements, sessions, caseRows, actionRows, milkPriceRows] = await Promise.all([
     db.select().from(purchases).orderBy(desc(purchases.purchaseDate)),
     db.select().from(dailyMilkTotals).orderBy(desc(dailyMilkTotals.productionDate)),
     db.select().from(milkCollections).orderBy(desc(milkCollections.collectionDate)),
@@ -31,6 +32,7 @@ export const dashboardRoutes = new Hono().get('/dashboard', async (c) => {
     db.select().from(milkSessions).orderBy(desc(milkSessions.sessionDate)),
     db.select().from(mastitisCases).orderBy(desc(mastitisCases.detectedAt)),
     db.select().from(mastitisActions).orderBy(mastitisActions.scheduledFor),
+    db.select().from(monthlyMilkPrices).orderBy(desc(monthlyMilkPrices.month)),
   ]);
   const today = dateKeyInSaoPaulo();
   const tomorrow = nextDate(today);
@@ -51,6 +53,9 @@ export const dashboardRoutes = new Hono().get('/dashboard', async (c) => {
   const animalById = new Map(animalRows.map((animal) => [animal.id, animal]));
   const monthDaily = summarizeDailyMilk(dailyRows, month);
   const monthCollections = collectionRows.filter((row) => row.collectionDate.startsWith(month)).reduce((sum, row) => sum + Number(row.liters), 0);
+  const monthCollectionRows = collectionRows.filter((row) => row.collectionDate.startsWith(month));
+  const monthPrice = milkPriceRows.find((row) => row.month.startsWith(month)) ?? null;
+  const monthMilkEstimate = summarizeMonthlyMilkPrice(monthCollectionRows, monthPrice?.pricePerLiter ?? null);
   const monthRevenues = revenueRows.filter((row) => row.revenueDate.startsWith(month));
   const monthPurchases = purchaseRows.filter((row) => row.purchaseDate.startsWith(month));
   const cash = summarizeRegisteredCash(monthRevenues, monthPurchases);
@@ -97,6 +102,8 @@ export const dashboardRoutes = new Hono().get('/dashboard', async (c) => {
       productionLiters: monthDaily.total,
       productionDays: monthDaily.measuredDays,
       collectionLiters: Math.round(monthCollections * 100) / 100,
+      milkPricePerLiter: monthMilkEstimate.pricePerLiter,
+      estimatedMilkValue: monthMilkEstimate.estimatedValue,
       revenuesReceived: cash.received,
       revenuesExpected: cash.expected,
       expensesPaid: cash.paid,

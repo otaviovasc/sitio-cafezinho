@@ -1,9 +1,32 @@
-import { cloneElement, isValidElement, useId } from 'react';
+import { cloneElement, isValidElement, useEffect, useId, useRef } from 'react';
 import type { LucideIcon } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactElement, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from 'react';
+import { Link, useLocation } from 'react-router-dom';
+
+const topLevelRoutes = new Set(['/', '/rebanho', '/producao', '/pesos', '/financeiro', '/documentos']);
+
+function backDestination(pathname: string): { to: string; label: string } | null {
+  if (topLevelRoutes.has(pathname)) return null;
+  if (pathname === '/mastite') return { to: '/', label: 'Hoje' };
+  if (pathname.startsWith('/mastite/')) return { to: '/mastite', label: 'Mastite' };
+  if (pathname === '/compras') return { to: '/financeiro', label: 'Financeiro' };
+  if (pathname.startsWith('/compras/')) return { to: '/compras', label: 'Compras' };
+  if (pathname === '/fornecedores') return { to: '/compras', label: 'Compras' };
+  if (pathname.startsWith('/fornecedores/')) return { to: '/fornecedores', label: 'Fornecedores' };
+  if (pathname.startsWith('/receitas/')) return { to: '/financeiro', label: 'Financeiro' };
+  if (pathname.startsWith('/financeiro/')) return { to: '/financeiro', label: 'Financeiro' };
+  if (pathname.startsWith('/rebanho/')) return { to: '/rebanho', label: 'Rebanho' };
+  if (pathname.startsWith('/producao/')) return { to: '/producao', label: 'Produção' };
+  if (pathname.startsWith('/pesos/')) return { to: '/pesos', label: 'Peso' };
+  if (pathname === '/configuracoes/dados') return { to: '/', label: 'Hoje' };
+  return { to: '/', label: 'Hoje' };
+}
 
 export function PageHeader({ title, subtitle, action, icon: Icon }: { title: string; subtitle?: string; action?: ReactNode; icon?: LucideIcon }) {
-  return <header className="page-header"><div><h1 className="page-title">{Icon && <Icon className="title-icon" size={28} strokeWidth={2.2} aria-hidden />}{title}</h1>{subtitle && <p className="page-subtitle">{subtitle}</p>}</div>{action}</header>;
+  const location = useLocation();
+  const back = backDestination(location.pathname);
+  return <header className="page-header"><div className="min-w-0">{back && <Link className="page-back" to={back.to}><ArrowLeft size={17} aria-hidden />Voltar para {back.label}</Link>}<h1 className="page-title">{Icon && <Icon className="title-icon" size={28} strokeWidth={2.2} aria-hidden />}{title}</h1>{subtitle && <p className="page-subtitle">{subtitle}</p>}</div>{action}</header>;
 }
 
 export function SectionCard({ title, action, children, className = '', icon: Icon }: { title?: string; action?: ReactNode; children: ReactNode; className?: string; icon?: LucideIcon }) {
@@ -19,20 +42,33 @@ export function StatCard({ label, value, detail }: { label: string; value: React
 
 export function Field({ label, hint, error, children }: { label: string; hint?: string; error?: string; children: ReactNode }) {
   const generatedId = useId();
-  const child = isValidElement<{ id?: string; 'aria-describedby'?: string; 'aria-invalid'?: boolean }>(children) ? children : null;
+  const child = isValidElement<{ id?: string; required?: boolean; 'aria-describedby'?: string; 'aria-invalid'?: boolean; 'aria-errormessage'?: string }>(children) ? children : null;
   const controlId = child?.props.id ?? `field-${generatedId.replaceAll(':', '')}`;
   const descriptionId = hint || error ? `${controlId}-description` : undefined;
   const control = child
-    ? cloneElement(child as ReactElement<{ id?: string; 'aria-describedby'?: string; 'aria-invalid'?: boolean }>, {
+    ? cloneElement(child as ReactElement<{ id?: string; 'aria-describedby'?: string; 'aria-invalid'?: boolean; 'aria-errormessage'?: string }>, {
         id: controlId,
         'aria-describedby': child.props['aria-describedby'] ?? descriptionId,
         'aria-invalid': child.props['aria-invalid'] ?? Boolean(error),
+        'aria-errormessage': child.props['aria-errormessage'] ?? (error ? descriptionId : undefined),
       })
     : children;
-  return <div className="field"><label className="field-label" htmlFor={controlId}>{label}</label>{control}{(hint || error) && <div id={descriptionId}>{hint && <span className="field-hint block">{hint}</span>}{error && <span className="text-sm text-[var(--danger)]">{error}</span>}</div>}</div>;
+  return <div className="field"><div className="field-label-row"><label className="field-label" htmlFor={controlId}>{label}</label>{child?.props.required && <span className="field-required" aria-hidden>Obrigatório</span>}</div>{control}{(hint || error) && <div id={descriptionId}>{hint && <span className="field-hint block">{hint}</span>}{error && <span className="field-error">{error}</span>}</div>}</div>;
 }
 
-export function Input(props: InputHTMLAttributes<HTMLInputElement>) { return <input {...props} className={`input ${props.className || ''}`} />; }
+export function FormErrorSummary({ errors }: { errors: Array<string | undefined> }) {
+  const count = errors.filter(Boolean).length;
+  const ref = useRef<HTMLDivElement>(null);
+  const previousCount = useRef(0);
+  useEffect(() => {
+    if (count > previousCount.current) ref.current?.focus();
+    previousCount.current = count;
+  }, [count]);
+  if (!count) return null;
+  return <div ref={ref} className="notice notice-error form-error-summary" role="alert" tabIndex={-1}><strong>Revise os campos destacados</strong><span>{count === 1 ? 'Há 1 campo que precisa de correção.' : `Há ${count} campos que precisam de correção.`}</span></div>;
+}
+
+export function Input(props: InputHTMLAttributes<HTMLInputElement>) { return <input {...props} aria-keyshortcuts={props['aria-keyshortcuts'] ?? (props.type === 'search' ? '/' : undefined)} className={`input ${props.className || ''}`} />; }
 export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) { return <select {...props} className={`input ${props.className || ''}`} />; }
 export function Textarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) { return <textarea {...props} className={`input min-h-24 resize-y ${props.className || ''}`} />; }
 
@@ -44,7 +80,8 @@ export function ChoiceCard({ name, value, checked, onChange, title, description 
 }
 
 export function Button({ variant = 'primary', className = '', ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' | 'danger' }) {
-  return <button {...props} className={`button button-${variant} ${className}`} />;
+  const variantClass = { primary: 'button-primary', secondary: 'button-secondary', danger: 'button-danger' }[variant];
+  return <button {...props} className={`button ${variantClass} ${className}`} />;
 }
 
 export function LoadingState() { return <div className="section-card py-10 text-center text-[var(--muted)]" role="status">Carregando…</div>; }
@@ -57,10 +94,6 @@ export function ErrorState({ message, retry }: { message: string; retry?: () => 
 
 export function Badge({ tone = 'neutral', children }: { tone?: 'success' | 'warning' | 'danger' | 'neutral'; children: ReactNode }) {
   return <span className={`badge badge-${tone}`}>{children}</span>;
-}
-
-export function ConfirmButton({ question, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { question: string; variant?: 'primary' | 'secondary' | 'danger' }) {
-  return <Button {...props} onClick={(event) => { if (!window.confirm(question)) return; props.onClick?.(event); }} />;
 }
 
 export function FilterBar({ children }: { children: ReactNode }) {

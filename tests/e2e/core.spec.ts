@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { login } from './helpers';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -12,8 +13,13 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await page.getByLabel('Senha', { exact: true }).fill(process.env.APP_PASSWORD ?? 'senha-local-segura');
   await page.getByRole('button', { name: 'Entrar' }).click();
   await expect(page.getByRole('heading', { name: 'Hoje', exact: true })).toBeVisible();
+  const operationDate = await page.evaluate(async () => (await fetch('/api/dashboard').then((response) => response.json()) as { date: string }).date);
   await expect(page.getByText('Visão mensal')).toBeVisible();
   await expect(page.getByText('Resumo de hoje')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Ações rápidas' })).toBeVisible();
+  for (const action of ['Controle individual', 'Registrar pesos', 'Cadastrar animal', 'Registrar entrada', 'Registrar saída', 'Enviar documento', 'Consultar animal', 'Produção e coletas', 'Casos de mastite', 'Fornecedores', 'Preço do leite', 'Exportar dados']) {
+    await expect(page.getByRole('link', { name: new RegExp(action) }).first()).toBeVisible();
+  }
   await page.screenshot({ path: testInfo.outputPath('dashboard.png'), fullPage: true });
 
   await page.goto('/rebanho');
@@ -24,6 +30,11 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await page.goto('/producao');
   await page.getByRole('link', { name: /Controle leiteiro — manhã \+ tarde/ }).click();
   await expect(page.getByText(/^(724,5|737,5) L$/).first()).toBeVisible();
+  await page.getByRole('button', { name: 'Excluir', exact: true }).first().click();
+  await expect(page.getByRole('dialog', { name: 'Confirmar exclusão?' })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('modal-confirmacao.png') });
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Confirmar exclusão?' })).toBeHidden();
   const confirmPending = page.getByRole('button', { name: 'Confirmar linha 512 13???', exact: true });
   if (await confirmPending.count()) {
     await confirmPending.scrollIntoViewIfNeeded();
@@ -36,14 +47,22 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   const suffix = `${testInfo.project.name}-${Date.now()}`;
   const cowName = `Vaca ciclo ${suffix}`;
   await page.goto('/rebanho/novo');
-  await page.getByLabel('Nome', { exact: true }).fill(cowName);
   await page.getByRole('button', { name: 'Salvar animal' }).click();
+  await expect(page.getByRole('alert').filter({ hasText: 'Revise os campos destacados' })).toBeFocused();
+  await expect(page.getByText('Informe o nome ou o número do brinco.')).toBeVisible();
+  await page.getByLabel('Nome', { exact: true }).fill(cowName);
+  await expect(page.getByText('Informe o nome ou o número do brinco.')).toBeHidden();
+  await page.getByRole('button', { name: 'Salvar animal' }).click();
+  await expect(page.getByText('Animal cadastrado', { exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: cowName })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Voltar para Rebanho' })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('toast-e-voltar.png') });
+  await expect(page.getByText('Animal cadastrado', { exact: true })).toBeHidden({ timeout: 3_000 });
   await expect(page.getByText('Em lactação', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('Lote 1', { exact: true }).first()).toBeVisible();
 
   await page.getByRole('button', { name: 'Iniciar período seco' }).click();
-  await page.getByLabel('Data da mudança').fill('2026-07-15');
+  await page.getByLabel('Data da mudança').fill(operationDate);
   await page.getByLabel('Motivo ou observação').fill('Início da seca de teste');
   await page.getByRole('button', { name: 'Registrar mudança' }).click();
   await expect(page.getByText('Seca', { exact: true }).first()).toBeVisible();
@@ -51,7 +70,7 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await expect(page.getByText('Fora da lactação', { exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'Registrar parto' }).click();
-  await page.getByLabel('Data da mudança').fill('2026-07-15');
+  await page.getByLabel('Data da mudança').fill(operationDate);
   await page.getByLabel('Motivo ou observação').fill('Retorno à lactação de teste');
   await page.getByRole('button', { name: 'Registrar parto e iniciar lactação' }).click();
   await expect(page.getByText('Em lactação', { exact: true }).first()).toBeVisible();
@@ -63,7 +82,7 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await expect(page.getByText('Aguardando confirmação', { exact: true }).first()).toBeVisible();
   await page.getByRole('button', { name: 'Mudar lote' }).first().click();
   await page.getByLabel('Novo lote de ordenha').selectOption({ label: 'Lote 2' });
-  await page.getByLabel('Data da mudança').fill('2026-07-15');
+  await page.getByLabel('Data da mudança').fill(operationDate);
   await page.getByRole('button', { name: 'Registrar mudança' }).click();
   await expect(page.getByText('Lote 2', { exact: true }).first()).toBeVisible();
 
@@ -107,7 +126,8 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   });
   await page.reload();
   await page.getByLabel('Data', { exact: true }).fill('2026-05-06');
-  await page.getByLabel('Manhã (L)').fill('210');
+  await page.getByLabel('Manhã (L)').fill('210.00');
+  await expect(page.getByLabel('Manhã (L)')).toHaveValue('210,00');
   await page.getByLabel('Tarde (L)').fill('175');
   await page.getByRole('button', { name: 'Registrar total' }).click();
   await expect(page.getByText('385 L', { exact: true })).toBeVisible();
@@ -117,15 +137,15 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await page.getByLabel('Manhã (L)').fill('120');
   await page.getByLabel('Tarde (L)').fill('80');
   await page.getByRole('button', { name: 'Registrar total' }).click();
-  await expect(page.getByText('Lote: Lote 1', { exact: true })).toBeVisible();
-  await expect(page.getByText('200 L', { exact: true })).toBeVisible();
+  await expect(page.getByText('Lote: Lote 1', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('200 L', { exact: true }).first()).toBeVisible();
 
   await page.getByLabel('Data', { exact: true }).fill('2026-05-06');
   await page.getByLabel('Produção de').selectOption({ label: 'Lote 2' });
   await expect(page.getByLabel('Tarde (L)')).toBeDisabled();
   await page.getByLabel('Manhã (L)').fill('95');
   await page.getByRole('button', { name: 'Registrar total' }).click();
-  await expect(page.getByText('Lote: Lote 2', { exact: true })).toBeVisible();
+  await expect(page.getByText('Lote: Lote 2', { exact: true }).first()).toBeVisible();
 
   await page.getByLabel('Data', { exact: true }).fill('2026-05-06');
   await page.getByLabel('Produção de').selectOption({ label: 'Lote 2' });
@@ -143,7 +163,7 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await page.getByRole('button', { name: 'Registrar coleta' }).click();
   await expect(page.getByRole('heading', { name: 'Coleta de 06/05/2026' })).toBeVisible();
   await expect(page.getByText(/Produção agregada registrada/)).toBeVisible();
-  await expect(page.getByText(/Coleta registrada/)).toBeVisible();
+  await expect(page.getByText(/Coleta registrada/).first()).toBeVisible();
   await expect(page.getByText(/Diferença observada/)).toBeVisible();
   const milkFacts = await page.evaluate(async () => {
     const [daily, sessions, collections] = await Promise.all([
@@ -177,7 +197,7 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await page.getByRole('button', { name: 'Abrir caso de mastite' }).click();
   await expect(page.getByRole('heading', { name: new RegExp(`Mastite — ${cowName}`) })).toBeVisible();
   await expect(page.getByText(/Carência informada até 18\/07\/2026/)).toBeVisible();
-  await page.getByLabel('Data da ação').fill('2026-07-15');
+  await page.getByLabel('Data da ação').fill(operationDate);
   await page.getByLabel('Ação informada').fill('Reavaliar leite no teste');
   await page.getByRole('button', { name: 'Adicionar ação' }).click();
   await expect(page.getByText('Reavaliar leite no teste')).toBeVisible();
@@ -188,7 +208,8 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await expect(page.getByRole('link', { name: /Entrada Venda ou receita/ })).toHaveAttribute('aria-current', 'page');
   await page.screenshot({ path: testInfo.outputPath('nova-entrada.png'), fullPage: true });
   await page.getByLabel('Descrição').fill(`Venda de leite ${suffix}`);
-  await page.getByLabel('Valor da entrada').fill('1250,50');
+  await page.getByLabel('Valor da entrada').fill('1250.50');
+  await expect(page.getByLabel('Valor da entrada')).toHaveValue('1250,50');
   await page.getByRole('radio', { name: /Já recebi/ }).check();
   await page.getByLabel('Categoria').selectOption('MILK_SALE');
   await page.getByRole('button', { name: 'Registrar entrada' }).click();
@@ -254,6 +275,24 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await expect(page.getByRole('link', { name: /Registrar saída/ })).toBeVisible();
   await expect(page.getByText('Resultado de caixa registrado', { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('financeiro.png'), fullPage: true });
+
+  await page.goto('/financeiro/preco-leite');
+  await expect(page.getByRole('heading', { name: 'Preço do leite' })).toBeVisible();
+  await page.getByLabel('Mês', { exact: true }).fill('2026-05');
+  await page.getByLabel('Preço por litro').fill('1,85');
+  await page.getByLabel('Observação (opcional)').fill('Preço mensal do teste automatizado');
+  await page.getByRole('button', { name: /Salvar (preço|alteração)/ }).click();
+  await expect(page.getByText(/Preço do leite (registrado|atualizado)/)).toBeVisible();
+  await expect(page.getByText('R$ 666,00', { exact: true })).toBeVisible();
+  await page.getByLabel('Preço por litro').fill('1,90');
+  await page.getByRole('button', { name: 'Salvar alteração' }).click();
+  await expect(page.getByText('Preço do leite atualizado', { exact: true })).toBeVisible();
+  await expect(page.getByText('Preço do leite atualizado', { exact: true })).toHaveCount(1);
+  await expect(page.getByText('R$ 684,00', { exact: true })).toBeVisible();
+  const milkPriceSummary = await page.evaluate(async () => fetch('/api/milk-prices/summary?month=2026-05').then((response) => response.json()) as Promise<{ collection: { collectedLiters: number; pricePerLiter: number; estimatedValue: number } }>);
+  expect(milkPriceSummary.collection).toEqual(expect.objectContaining({ collectedLiters: 360, pricePerLiter: 1.9, estimatedValue: 684 }));
+  await page.screenshot({ path: testInfo.outputPath('preco-leite.png'), fullPage: true });
+
   await page.goto('/configuracoes/dados');
   const download = page.waitForEvent('download');
   await page.getByRole('link', { name: 'Baixar CSV' }).first().click();
@@ -261,4 +300,25 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
 
   await page.getByRole('button', { name: 'Sair' }).click();
   await expect(page).toHaveURL(/\/entrar$/);
+});
+
+test('abre e atualiza um preço mensal pelo histórico', async ({ page }) => {
+  await login(page);
+  await page.evaluate(async () => {
+    await fetch('/api/milk-prices/2026-09', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pricePerLiter: 1.83, notes: 'Preço para testar edição pelo histórico' }),
+    });
+  });
+  await page.goto('/financeiro/preco-leite');
+  await page.getByLabel('Mês', { exact: true }).fill('2026-08');
+  await page.getByRole('button', { name: /Editar preço de setembro de 2026/i }).click();
+  await expect(page.getByLabel('Mês', { exact: true })).toHaveValue('2026-09');
+  await expect(page.getByLabel('Preço por litro')).toHaveValue('1,83');
+  await page.getByLabel('Preço por litro').fill('1,84');
+  await page.getByRole('button', { name: 'Salvar alteração' }).click();
+  await expect(page.getByText('Preço do leite atualizado', { exact: true })).toBeVisible();
+  const saved = await page.evaluate(async () => fetch('/api/milk-prices/summary?month=2026-09').then((response) => response.json()) as Promise<{ price: { pricePerLiter: string } }>);
+  expect(saved.price.pricePerLiter).toBe('1.8400');
 });

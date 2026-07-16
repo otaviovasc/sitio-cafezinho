@@ -3,7 +3,10 @@ import { Plus, Truck } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { formatDate, formatLiters, parseDecimal } from '../../domain/format';
 import { AttachmentPanel, type Attachment } from '../components/AttachmentPanel';
-import { Badge, Button, ConfirmButton, EmptyState, ErrorState, Field, Input, LoadingState, PageHeader, ScrollArea, SectionCard, Select, Textarea } from '../components/ui';
+import { useConfirm, useToast } from '../components/feedback-context';
+import { ConfirmButton } from '../components/feedback';
+import { LitersInput } from '../components/form-controls';
+import { Badge, Button, EmptyState, ErrorState, Field, FormErrorSummary, Input, LoadingState, PageHeader, ScrollArea, SectionCard, Select, Textarea } from '../components/ui';
 import { useResource } from '../hooks/useResource';
 import { api, ApiError, json } from '../lib/api';
 import { today } from '../lib/labels';
@@ -46,6 +49,8 @@ function CollectionComparison({ comparison }: { comparison: DayComparison }) {
 }
 
 function MilkCollectionForm({ initial, onSaved }: { initial?: MilkCollectionDetail; onSaved: (collection: MilkCollection) => void }) {
+  const confirm = useConfirm();
+  const toast = useToast();
   const [collectionDate, setCollectionDate] = useState(initial?.collectionDate ?? today());
   const [liters, setLiters] = useState(initial?.liters ?? '');
   const [collectedTime, setCollectedTime] = useState(timeFromIso(initial?.collectedAt));
@@ -53,19 +58,34 @@ function MilkCollectionForm({ initial, onSaved }: { initial?: MilkCollectionDeta
   const [notes, setNotes] = useState(initial?.notes ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<{ date?: string; liters?: string }>({});
 
   async function persist(confirmPossibleDuplicate: boolean) {
     const parsedLiters = parseDecimal(liters);
-    if (parsedLiters === null || parsedLiters <= 0) { setError('Informe um volume maior que zero.'); return; }
+    const nextErrors = {
+      date: collectionDate ? undefined : 'Informe a data da coleta.',
+      liters: parsedLiters === null || parsedLiters <= 0 ? 'Informe um volume maior que zero.' : undefined,
+    };
+    setFieldErrors(nextErrors);
+    if (nextErrors.date || nextErrors.liters || parsedLiters === null) return;
     const collectedAt = collectedTime ? new Date(`${collectionDate}T${collectedTime}:00-03:00`).toISOString() : null;
     const path = initial ? `/api/milk-collections/${initial.id}` : '/api/milk-collections';
     try {
       const created = await api<MilkCollection>(path, json(initial ? 'PATCH' : 'POST', { collectionDate, liters: parsedLiters, collectedAt, source, notes: notes.trim() || null, confirmPossibleDuplicate }));
+      toast(initial ? 'Coleta atualizada' : 'Coleta registrada');
       onSaved(created);
     } catch (cause) {
-      if (cause instanceof ApiError && cause.code === 'POSSIBLE_DUPLICATE' && window.confirm(`${cause.message}\n\nDeseja registrar mesmo assim?`)) {
-        await persist(true);
-        return;
+      if (cause instanceof ApiError && cause.code === 'POSSIBLE_DUPLICATE') {
+        const accepted = await confirm({
+          title: 'Possível coleta duplicada',
+          description: cause.message,
+          confirmLabel: 'Registrar mesmo assim',
+          tone: 'primary',
+        });
+        if (accepted) {
+          await persist(true);
+          return;
+        }
       }
       setError(cause instanceof Error ? cause.message : 'Não foi possível salvar a coleta.');
     }
@@ -76,13 +96,14 @@ function MilkCollectionForm({ initial, onSaved }: { initial?: MilkCollectionDeta
     try { await persist(false); } finally { setBusy(false); }
   }
 
-  return <form className="grid gap-4" onSubmit={(event) => void save(event)}>
+  return <form className="grid gap-4" noValidate onSubmit={(event) => void save(event)}>
     {error && <ErrorState message={error} />}
+    <FormErrorSummary errors={Object.values(fieldErrors)} />
     <SectionCard title="Registro rápido">
-      <div className="grid gap-3 sm:grid-cols-2"><Field label="Data"><Input type="date" value={collectionDate} onChange={(event) => setCollectionDate(event.target.value)} required /></Field><Field label="Litros retirados"><Input inputMode="decimal" value={liters} onChange={(event) => setLiters(event.target.value)} placeholder="Ex.: 360" required autoFocus /></Field></div>
+      <div className="grid gap-3 sm:grid-cols-2"><Field label="Data" error={fieldErrors.date}><Input type="date" value={collectionDate} onChange={(event) => { setCollectionDate(event.target.value); setFieldErrors((current) => ({ ...current, date: undefined })); }} required /></Field><Field label="Litros retirados" error={fieldErrors.liters}><LitersInput value={liters} onValueChange={(value) => { setLiters(value); setFieldErrors((current) => ({ ...current, liters: undefined })); }} placeholder="Ex.: 360" required autoFocus /></Field></div>
     </SectionCard>
     <details className="section-card" open={Boolean(initial?.collectedAt || initial?.notes)}><summary className="min-h-11 cursor-pointer py-2 text-lg font-bold">Mais detalhes</summary><div className="mt-3 grid gap-3 sm:grid-cols-2"><Field label="Horário (opcional)"><Input type="time" value={collectedTime} onChange={(event) => setCollectedTime(event.target.value)} /></Field><Field label="Origem da medição"><Select value={source} onChange={(event) => setSource(event.target.value)}>{Object.entries(sourceLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></Field><Field label="Observação"><Textarea value={notes} onChange={(event) => setNotes(event.target.value)} /></Field></div></details>
-    <Button className="w-full sm:w-auto sm:self-start" type="submit" disabled={busy || !liters}>{busy ? 'Salvando…' : initial ? 'Salvar alteração' : 'Registrar coleta'}</Button>
+    <Button className="w-full sm:w-auto sm:self-start" type="submit" disabled={busy}>{busy ? 'Salvando…' : initial ? 'Salvar alteração' : 'Registrar coleta'}</Button>
   </form>;
 }
 

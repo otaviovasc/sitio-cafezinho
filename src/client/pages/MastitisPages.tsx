@@ -2,7 +2,7 @@ import { FormEvent, useState } from 'react';
 import { Activity, Check, Plus } from 'lucide-react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { formatDate } from '../../domain/format';
-import { Badge, Button, EmptyState, ErrorState, Field, Input, LoadingState, PageHeader, ScrollArea, SectionCard, Select, Textarea } from '../components/ui';
+import { Badge, Button, EmptyState, ErrorState, Field, FormErrorSummary, Input, LoadingState, PageHeader, ScrollArea, SectionCard, Select, Textarea } from '../components/ui';
 import { useResource } from '../hooks/useResource';
 import { api, json } from '../lib/api';
 import { today } from '../lib/labels';
@@ -60,11 +60,17 @@ function MastitisCaseForm({ initial, initialAnimalId, onSaved }: { initial?: Mas
   const [notes, setNotes] = useState(initial?.notes ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<{ animal?: string; date?: string; observation?: string }>({});
 
   async function save(event: FormEvent) {
     event.preventDefault(); setError('');
-    if (!animalId) { setError('Escolha o animal.'); return; }
-    if (!observedSigns.trim() && !notes.trim()) { setError('Informe o sinal percebido ou uma observação.'); return; }
+    const nextErrors = {
+      animal: animalId ? undefined : 'Escolha o animal.',
+      date: detectedOn ? undefined : 'Informe a data em que o sinal foi percebido.',
+      observation: !observedSigns.trim() && !notes.trim() ? 'Informe o sinal percebido ou uma observação.' : undefined,
+    };
+    setFieldErrors(nextErrors);
+    if (nextErrors.animal || nextErrors.date || nextErrors.observation) return;
     setBusy(true);
     try {
       const body = {
@@ -80,10 +86,10 @@ function MastitisCaseForm({ initial, initialAnimalId, onSaved }: { initial?: Mas
     finally { setBusy(false); }
   }
 
-  return <form className="grid gap-4" onSubmit={(event) => void save(event)}>{(error || animalError) && <ErrorState message={error || animalError} />}
-    <SectionCard title="Registro rápido"><div className="grid gap-3 sm:grid-cols-2"><Field label="Animal"><Select value={animalId} onChange={(event) => setAnimalId(event.target.value)} disabled={loadingAnimals} required><option value="">Selecione</option>{animals?.map((animal) => <option key={animal.id} value={animal.id}>{animalName(animal)}</option>)}</Select></Field><Field label="Data"><Input type="date" value={detectedOn} onChange={(event) => setDetectedOn(event.target.value)} required /></Field><Field label="Status inicial"><Select value={status} onChange={(event) => setStatus(event.target.value)}>{Object.entries(statusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</Select></Field><Field label="Sinal percebido ou observação"><Textarea className="min-h-20" value={observedSigns} onChange={(event) => setObservedSigns(event.target.value)} placeholder="Ex.: grumos observados no leite" /></Field></div></SectionCard>
+  return <form className="grid gap-4" noValidate onSubmit={(event) => void save(event)}>{(error || animalError) && <ErrorState message={error || animalError} />}<FormErrorSummary errors={Object.values(fieldErrors)} />
+    <SectionCard title="Registro rápido"><div className="grid gap-3 sm:grid-cols-2"><Field label="Animal" error={fieldErrors.animal}><Select value={animalId} onChange={(event) => { setAnimalId(event.target.value); setFieldErrors((current) => ({ ...current, animal: undefined })); }} disabled={loadingAnimals} required><option value="">Selecione</option>{animals?.map((animal) => <option key={animal.id} value={animal.id}>{animalName(animal)}</option>)}</Select></Field><Field label="Data" error={fieldErrors.date}><Input type="date" value={detectedOn} onChange={(event) => { setDetectedOn(event.target.value); setFieldErrors((current) => ({ ...current, date: undefined })); }} required /></Field><Field label="Status inicial"><Select value={status} onChange={(event) => setStatus(event.target.value)}>{Object.entries(statusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</Select></Field><Field label="Sinal percebido ou observação" hint="Registre o fato percebido; não é diagnóstico." error={fieldErrors.observation}><Textarea className="min-h-20" value={observedSigns} onChange={(event) => { setObservedSigns(event.target.value); setFieldErrors((current) => ({ ...current, observation: undefined })); }} placeholder="Ex.: grumos observados no leite" /></Field></div></SectionCard>
     <details className="section-card" open={Boolean(initial)}><summary className="min-h-11 cursor-pointer py-2 text-lg font-bold">Mais detalhes</summary><div className="mt-3 grid gap-3 sm:grid-cols-2"><Field label="Teto afetado"><Select value={affectedQuarter} onChange={(event) => setAffectedQuarter(event.target.value)}><option value="">Não informado</option>{Object.entries(quarterLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</Select></Field><Field label="Como foi percebido"><Select value={detectionMethod} onChange={(event) => setDetectionMethod(event.target.value)}><option value="">Não informado</option>{Object.entries(detectionLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</Select></Field><Field label="Tratamento decidido"><Textarea value={treatmentSummary} onChange={(event) => setTreatmentSummary(event.target.value)} placeholder="Registre somente a decisão humana" /></Field><Field label="Início do tratamento"><Input type="date" value={treatmentStartedOn} onChange={(event) => setTreatmentStartedOn(event.target.value)} /></Field><Field label="Fim previsto"><Input type="date" value={treatmentExpectedEndOn} onChange={(event) => setTreatmentExpectedEndOn(event.target.value)} /></Field><Field label="Carência informada até"><Input type="date" value={withdrawalEndsAt} onChange={(event) => setWithdrawalEndsAt(event.target.value)} /></Field><label className="flex min-h-11 items-center gap-3 text-sm font-semibold"><input className="h-5 w-5" type="checkbox" checked={milkDiscardRequired} onChange={(event) => setMilkDiscardRequired(event.target.checked)} />Descarte de leite informado</label><Field label="Resultado"><Select value={outcome} onChange={(event) => setOutcome(event.target.value)}><option value="">Ainda não informado</option>{Object.entries(outcomeLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</Select></Field><Field label="Outras observações"><Textarea value={notes} onChange={(event) => setNotes(event.target.value)} /></Field></div></details>
-    <Button className="w-full sm:w-auto sm:self-start" type="submit" disabled={busy || !animalId}>{busy ? 'Salvando…' : initial ? 'Salvar alterações' : 'Abrir caso de mastite'}</Button>
+    <Button className="w-full sm:w-auto sm:self-start" type="submit" disabled={busy}>{busy ? 'Salvando…' : initial ? 'Salvar alterações' : 'Abrir caso de mastite'}</Button>
   </form>;
 }
 
@@ -128,7 +134,7 @@ function MastitisActions({ item, reload }: { item: MastitisCaseDetail; reload: (
   }
   return <SectionCard title="Ações de tratamento">{error && <div className="mb-3"><ErrorState message={error} /></div>}
     {!item.actions.length ? <p className="text-sm text-[var(--muted)]">Nenhuma ação programada.</p> : <div>{item.actions.map((action) => <div className="border-b border-[var(--border)] py-3 last:border-b-0" key={action.id}>{editing?.id === action.id ? <div className="grid gap-3 sm:grid-cols-[11rem_1fr_auto]"><Field label="Data"><Input type="date" value={editScheduledOn} onChange={(event) => setEditScheduledOn(event.target.value)} /></Field><Field label="Ação"><Input value={editDescription} onChange={(event) => setEditDescription(event.target.value)} /></Field><div className="flex items-end gap-2"><Button onClick={() => void saveEdit()}>Salvar</Button><Button variant="secondary" onClick={() => setEditing(null)}>Cancelar</Button></div></div> : <div className="sm:flex sm:items-center sm:justify-between sm:gap-3"><div><div className="flex flex-wrap items-center gap-2"><strong>{action.actionDescription}</strong><Badge tone={action.timing === 'OVERDUE' ? 'danger' : action.timing === 'COMPLETED' ? 'success' : action.timing === 'TODAY' ? 'warning' : 'neutral'}>{timingLabels[action.timing]}</Badge></div><p className="mt-1 text-xs text-[var(--muted)]">{formatDate(dateFromTimestamp(action.scheduledFor))}</p></div><div className="mt-3 flex flex-wrap gap-2 sm:mt-0">{action.timing !== 'COMPLETED' && action.timing !== 'CANCELLED' && <Button onClick={() => void act(action.id, 'complete')}><Check size={16} aria-hidden />Concluir</Button>}{action.timing === 'COMPLETED' && <Button variant="secondary" onClick={() => void act(action.id, 'undo')}>Desfazer</Button>}{action.timing !== 'CANCELLED' && <Button variant="secondary" onClick={() => { setEditing(action); setEditScheduledOn(dateFromTimestamp(action.scheduledFor)); setEditDescription(action.actionDescription); }}>Editar</Button>}{action.timing !== 'CANCELLED' && action.timing !== 'COMPLETED' && <Button variant="danger" onClick={() => void act(action.id, 'cancel')}>Cancelar</Button>}</div></div>}</div>)}</div>}
-    <form className="mt-4 grid gap-3 border-t border-[var(--border)] pt-4 sm:grid-cols-[11rem_1fr_auto] sm:items-end" onSubmit={(event) => void add(event)}><Field label="Data da ação"><Input type="date" value={scheduledOn} onChange={(event) => setScheduledOn(event.target.value)} required /></Field><Field label="Ação informada"><Input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Ex.: Reavaliar o leite" required /></Field><Button type="submit" disabled={!description.trim()}>Adicionar ação</Button></form>
+    <form className="mt-4 grid gap-3 border-t border-[var(--border)] pt-4 sm:grid-cols-[11rem_1fr_auto] sm:items-end" onSubmit={(event) => void add(event)}><Field label="Data da ação"><Input type="date" value={scheduledOn} onChange={(event) => setScheduledOn(event.target.value)} required /></Field><Field label="Ação informada"><Input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Ex.: Reavaliar o leite" required /></Field><Button type="submit">Adicionar ação</Button></form>
   </SectionCard>;
 }
 

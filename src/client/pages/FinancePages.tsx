@@ -1,10 +1,12 @@
 import { FormEvent, useState } from 'react';
-import { Banknote, CircleDollarSign, ShoppingCart } from 'lucide-react';
+import { BadgeDollarSign, Banknote, CircleDollarSign, ShoppingCart } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { formatDate, formatMoney, parseDecimal } from '../../domain/format';
 import { AttachmentPanel, type Attachment } from '../components/AttachmentPanel';
 import { FinanceDirectionSwitch } from '../components/FinanceDirectionSwitch';
-import { Badge, Button, ChoiceCard, ConfirmButton, ErrorState, Field, Input, LoadingState, PageHeader, ScrollArea, SectionCard, Select, StatCard, Textarea } from '../components/ui';
+import { LitersInput, MoneyInput } from '../components/form-controls';
+import { ConfirmButton } from '../components/feedback';
+import { Badge, Button, ChoiceCard, ErrorState, Field, FormErrorSummary, Input, LoadingState, PageHeader, ScrollArea, SectionCard, Select, StatCard, Textarea } from '../components/ui';
 import { useResource } from '../hooks/useResource';
 import { api, json } from '../lib/api';
 import { today } from '../lib/labels';
@@ -81,12 +83,12 @@ function RevenueForm({ initial, initialAnimalId, onSaved }: { initial?: RevenueD
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível salvar a receita.'); }
     finally { setBusy(false); }
   }
-  return <form className="grid gap-4" noValidate onSubmit={(event) => void save(event)}>{error && <ErrorState message={error} />}
+  return <form className="grid gap-4" noValidate onSubmit={(event) => void save(event)}>{error && <ErrorState message={error} />}<FormErrorSummary errors={Object.values(fieldErrors)} />
     <SectionCard title="Dados da entrada"><div className="grid gap-3 sm:grid-cols-2">
       <Field label="Categoria"><Select value={category} onChange={(event) => setCategory(event.target.value)}>{Object.entries(categoryLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</Select></Field>
-      <Field label="Data" error={fieldErrors.revenueDate}><Input type="date" value={revenueDate} onChange={(event) => { setRevenueDate(event.target.value); setFieldErrors((current) => ({ ...current, revenueDate: undefined })); }} /></Field>
-      <Field label="Descrição" hint="Ex.: Pagamento do leite de julho" error={fieldErrors.description}><Input value={description} onChange={(event) => { setDescription(event.target.value); setFieldErrors((current) => ({ ...current, description: undefined })); }} /></Field>
-      <Field label="Valor da entrada" hint="Use o valor líquido que entrou ou será recebido." error={fieldErrors.amount}><Input inputMode="decimal" value={amount} onChange={(event) => { setAmount(event.target.value); setFieldErrors((current) => ({ ...current, amount: undefined })); }} placeholder="0,00" /></Field>
+      <Field label="Data" error={fieldErrors.revenueDate}><Input type="date" value={revenueDate} required onChange={(event) => { setRevenueDate(event.target.value); setFieldErrors((current) => ({ ...current, revenueDate: undefined })); }} /></Field>
+      <Field label="Descrição" hint="Ex.: Pagamento do leite de julho" error={fieldErrors.description}><Input value={description} required onChange={(event) => { setDescription(event.target.value); setFieldErrors((current) => ({ ...current, description: undefined })); }} /></Field>
+      <Field label="Valor da entrada" hint="Use o valor líquido que entrou ou será recebido." error={fieldErrors.amount}><MoneyInput value={amount} required onValueChange={(value) => { setAmount(value); setFieldErrors((current) => ({ ...current, amount: undefined })); }} placeholder="0,00" /></Field>
     </div></SectionCard>
     {initial?.status === 'CANCELLED' ? <div className="notice notice-warning">Esta receita está cancelada. Edite somente os dados; reabra o lançamento na tela de detalhes para mudar a situação.</div> : <SectionCard title="Situação do recebimento"><div className="grid gap-2 sm:grid-cols-2">
       <ChoiceCard name="revenue-status" value="received" checked={received} onChange={() => setReceived(true)} title="Já recebi" description="Entra no caixa registrado agora" />
@@ -95,10 +97,10 @@ function RevenueForm({ initial, initialAnimalId, onSaved }: { initial?: RevenueD
     {category === 'MILK_SALE' && <SectionCard title="Detalhes da venda de leite"><p className="mb-3 text-sm text-[var(--muted)]">Preencha somente o que estiver informado no relatório do laticínio.</p><div className="grid gap-3 sm:grid-cols-2">
       <Field label="Início do período"><Input type="date" value={periodStart} onChange={(event) => setPeriodStart(event.target.value)} /></Field>
       <Field label="Fim do período" error={fieldErrors.periodEnd}><Input type="date" value={periodEnd} onChange={(event) => { setPeriodEnd(event.target.value); setFieldErrors((current) => ({ ...current, periodEnd: undefined })); }} /></Field>
-      <Field label="Litros reconhecidos" error={fieldErrors.quantity}><Input inputMode="decimal" value={quantity} onChange={(event) => { setQuantity(event.target.value); setFieldErrors((current) => ({ ...current, quantity: undefined })); }} /></Field>
-      <Field label="Preço-base por litro" error={fieldErrors.unitPrice}><Input inputMode="decimal" value={unitPrice} onChange={(event) => { setUnitPrice(event.target.value); setFieldErrors((current) => ({ ...current, unitPrice: undefined })); }} /></Field>
-      <Field label="Bonificações" error={fieldErrors.bonusAmount}><Input inputMode="decimal" value={bonusAmount} onChange={(event) => { setBonusAmount(event.target.value); setFieldErrors((current) => ({ ...current, bonusAmount: undefined })); }} /></Field>
-      <Field label="Descontos" error={fieldErrors.discountAmount}><Input inputMode="decimal" value={discountAmount} onChange={(event) => { setDiscountAmount(event.target.value); setFieldErrors((current) => ({ ...current, discountAmount: undefined })); }} /></Field>
+      <Field label="Litros reconhecidos" error={fieldErrors.quantity}><LitersInput value={quantity} onValueChange={(value) => { setQuantity(value); setFieldErrors((current) => ({ ...current, quantity: undefined })); }} /></Field>
+      <Field label="Preço-base por litro" error={fieldErrors.unitPrice}><MoneyInput value={unitPrice} onValueChange={(value) => { setUnitPrice(value); setFieldErrors((current) => ({ ...current, unitPrice: undefined })); }} /></Field>
+      <Field label="Bonificações" error={fieldErrors.bonusAmount}><MoneyInput value={bonusAmount} onValueChange={(value) => { setBonusAmount(value); setFieldErrors((current) => ({ ...current, bonusAmount: undefined })); }} /></Field>
+      <Field label="Descontos" error={fieldErrors.discountAmount}><MoneyInput value={discountAmount} onValueChange={(value) => { setDiscountAmount(value); setFieldErrors((current) => ({ ...current, discountAmount: undefined })); }} /></Field>
     </div></SectionCard>}
     <details className="section-card" open={Boolean(initial)}><summary className="min-h-11 cursor-pointer py-2 text-lg font-bold">Informações opcionais</summary><div className="mt-3 grid gap-3 sm:grid-cols-2">
       <Field label="Comprador"><Input value={buyerName} onChange={(event) => setBuyerName(event.target.value)} /></Field>
@@ -116,9 +118,10 @@ export function FinancePage() {
   const { data: purchases, loading: purchasesLoading, error: purchasesError, reload: reloadPurchases } = useResource<FinancePurchase[]>('/api/purchases');
   return <div className="page"><PageHeader icon={Banknote} title="Financeiro" subtitle="Veja o que entrou, o que saiu e o que ainda está pendente" />
     <div className="grid gap-5">
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <Link className="finance-action finance-action-income" to="/receitas/nova"><CircleDollarSign size={30} aria-hidden /><span><strong>Registrar entrada</strong><small>Venda de leite, animal ou outra receita</small></span></Link>
         <Link className="finance-action finance-action-expense" to="/compras/nova"><ShoppingCart size={30} aria-hidden /><span><strong>Registrar saída</strong><small>Compra, conta ou despesa da propriedade</small></span></Link>
+        <Link className="finance-action finance-action-milk" to="/financeiro/preco-leite"><BadgeDollarSign size={30} aria-hidden /><span><strong>Preço do leite</strong><small>Valor mensal e estimativa sobre as coletas</small></span></Link>
       </div>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><h2 className="text-xl font-bold">Resumo de {monthLabel(month)}</h2><p className="text-sm text-[var(--muted)]">Somente valores registrados neste sistema.</p></div><div className="w-full sm:w-48"><Field label="Mês do resumo"><Input type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></Field></div></div>
       {summaryLoading ? <LoadingState /> : summaryError || !summary ? <ErrorState message={summaryError || 'Resumo indisponível.'} retry={reloadSummary} /> : <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">

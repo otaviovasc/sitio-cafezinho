@@ -1,7 +1,8 @@
 import { useId, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import { documentLabels } from '../lib/labels';
-import { Badge, Button, ConfirmButton, ErrorState, Field, Input, ScrollArea, Select } from './ui';
+import { ConfirmButton } from './feedback';
+import { Badge, Button, ErrorState, Field, Input, ScrollArea, Select } from './ui';
 
 export type Attachment = {
   id: string; originalFilename: string; mimeType: string; sizeBytes: number; documentType: string;

@@ -10,6 +10,7 @@ import { dailyMilkRoutes } from './routes/daily-milk.routes.js';
 import { herdGroupRoutes } from './routes/herd-groups.routes.js';
 import { milkRoutes } from './routes/milk.routes.js';
 import { milkCollectionRoutes } from './routes/milk-collections.routes.js';
+import { milkPriceRoutes } from './routes/milk-prices.routes.js';
 import { mastitisRoutes } from './routes/mastitis.routes.js';
 import { revenueRoutes } from './routes/revenues.routes.js';
 import { dataExportRoutes } from './routes/data-exports.routes.js';
@@ -40,6 +41,7 @@ export function createApp() {
   app.route('/api', milkRoutes);
   app.route('/api', dailyMilkRoutes);
   app.route('/api', milkCollectionRoutes);
+  app.route('/api', milkPriceRoutes);
   app.route('/api', mastitisRoutes);
   app.route('/api', revenueRoutes);
   app.route('/api', dataExportRoutes);

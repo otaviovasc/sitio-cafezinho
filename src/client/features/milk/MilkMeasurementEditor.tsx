@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { parseDecimal } from '../../../domain/format';
-import { Button, Field, Input, Select, Textarea } from '../../components/ui';
+import { LitersInput } from '../../components/form-controls';
+import { Button, Field, Select, Textarea } from '../../components/ui';
 
 export type MeasurementEditValue = {
   animalId: string | null;
@@ -71,16 +72,15 @@ export function MilkMeasurementEditor({ measurement, animals, busy, onSave, onCa
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
       <Field label="Animal vinculado"><Select value={animalId} onChange={(event) => setAnimalId(event.target.value)}><option value="">Sem vínculo</option>{animals.map((animal) => <option key={animal.id} value={animal.id}>{animal.name || `Brinco ${animal.tagNumber}`}</option>)}</Select></Field>
       <Field label="Forma da medição"><Select value={mode} onChange={(event) => setMode(event.target.value)}><option value="COMBINED">Somente total observado</option><option value="SEPARATE">Manhã e tarde medidas</option></Select></Field>
-      {mode === 'COMBINED' ? <Field label="Total observado (L)"><Input inputMode="decimal" value={total} onChange={(event) => setTotal(event.target.value)} /></Field> : <>
-        <Field label="Manhã (L)"><Input inputMode="decimal" value={morning} onChange={(event) => setMorning(event.target.value)} /></Field>
-        <Field label="Tarde (L)"><Input inputMode="decimal" value={afternoon} onChange={(event) => setAfternoon(event.target.value)} /></Field>
+      {mode === 'COMBINED' ? <Field label="Total observado (L)" error={validationError}><LitersInput value={total} onValueChange={(value) => { setTotal(value); setValidationError(''); }} /></Field> : <>
+        <Field label="Manhã (L)" error={validationError}><LitersInput value={morning} onValueChange={(value) => { setMorning(value); setValidationError(''); }} /></Field>
+        <Field label="Tarde (L)"><LitersInput value={afternoon} onValueChange={(value) => { setAfternoon(value); setValidationError(''); }} /></Field>
         <div className="field"><span className="field-label">Total recalculado</span><div className="input flex items-center font-bold">{calculatedTotal === null ? '—' : `${calculatedTotal.toLocaleString('pt-BR')} L`}</div></div>
       </>}
       <Field label="Confiança"><Select value={confidence} onChange={(event) => setConfidence(event.target.value)}><option value="HIGH">Alta</option><option value="MEDIUM">Média</option><option value="LOW">Baixa</option></Select></Field>
       <Field label="Situação"><Select value={status} onChange={(event) => setStatus(event.target.value)}><option value="CONFIRMED">Confirmado</option><option value="NEEDS_REVIEW">Aguardando revisão</option><option value="EXCLUDED">Excluído</option></Select></Field>
       <Field label="Observação"><Textarea className="min-h-12" value={notes} onChange={(event) => setNotes(event.target.value)} /></Field>
     </div>
-    {validationError && <p className="mt-2 text-sm text-[var(--danger)]" role="alert">{validationError}</p>}
     <div className="mt-3 flex flex-wrap gap-2"><Button disabled={busy} onClick={submit}>{busy ? 'Salvando…' : 'Salvar correção'}</Button><Button variant="secondary" disabled={busy} onClick={onCancel}>Cancelar</Button></div>
   </div>;
 }

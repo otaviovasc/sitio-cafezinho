@@ -1,4 +1,4 @@
-import type { ComponentType, ReactNode } from 'react';
+import { useEffect, type ComponentType, type ReactNode } from 'react';
 import { Files, Home, LogOut, Milk, Scale, WalletCards, type LucideProps } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { CowHead } from './icons';
@@ -15,6 +15,29 @@ const nav: Array<{ to: string; label: string; icon: ComponentType<LucideProps> }
 
 export function AppShell({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
+  useEffect(() => {
+    function handleKeyboardShortcut(event: KeyboardEvent) {
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      const isEditing = target?.matches('input, textarea, select, [contenteditable="true"]');
+      if (event.key === '/' && !event.metaKey && !event.ctrlKey && !event.altKey && !isEditing) {
+        const search = [...document.querySelectorAll<HTMLInputElement>('input[type="search"]:not(:disabled)')].find((input) => input.offsetParent !== null);
+        if (search) {
+          event.preventDefault();
+          search.focus();
+          search.select();
+        }
+      }
+      if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+        const form = target?.closest('form');
+        if (form instanceof HTMLFormElement) {
+          event.preventDefault();
+          form.requestSubmit();
+        }
+      }
+    }
+    document.addEventListener('keydown', handleKeyboardShortcut);
+    return () => document.removeEventListener('keydown', handleKeyboardShortcut);
+  }, []);
   async function logout() {
     await api('/api/session/logout', json('POST'));
     navigate('/entrar', { replace: true });

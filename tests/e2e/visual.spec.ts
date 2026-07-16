@@ -31,6 +31,7 @@ test('captura estados principais sem rolagem horizontal', async ({ page }, testI
     ['nova-receita', '/receitas/nova'],
     ['nova-compra', '/compras/nova'],
     ['financeiro', '/financeiro'],
+    ['preco-leite', '/financeiro/preco-leite'],
     ['exportacao-dados', '/configuracoes/dados'],
   ] as const;
   for (const [name, route] of routes) {
@@ -88,13 +89,45 @@ test('captura estados principais sem rolagem horizontal', async ({ page }, testI
 
   await page.goto('/receitas/nova');
   await page.getByRole('button', { name: 'Registrar entrada' }).click();
+  await expect(page.getByRole('alert').filter({ hasText: 'Revise os campos destacados' })).toBeFocused();
   await expect(page.getByText('Descreva de onde vem esta entrada.')).toBeVisible();
   await expect(page.getByText('Informe um valor maior que zero.')).toBeVisible();
   await capturePaintedViewport(page, testInfo.outputPath('entrada-validacao.png'));
 
   await page.goto('/compras/nova');
   await page.getByRole('button', { name: 'Registrar saída' }).click();
+  await expect(page.getByRole('alert').filter({ hasText: 'Revise os campos destacados' })).toBeFocused();
   await expect(page.getByText('Descreva o que foi comprado ou pago.')).toBeVisible();
   await expect(page.getByText('Informe um valor maior que zero.')).toBeVisible();
   await capturePaintedViewport(page, testInfo.outputPath('saida-validacao.png'));
+
+  await page.goto('/producao/coletas/nova');
+  await page.getByLabel('Litros retirados').fill('360.50');
+  await expect(page.getByLabel('Litros retirados')).toHaveValue('360,50');
+  await page.getByLabel('Litros retirados').fill('');
+  await page.getByRole('button', { name: 'Registrar coleta' }).click();
+  await expect(page.getByText('Informe um volume maior que zero.')).toBeVisible();
+  await expect(page.getByRole('alert').filter({ hasText: 'Revise os campos destacados' })).toBeFocused();
+  await capturePaintedViewport(page, testInfo.outputPath('coleta-validacao.png'));
+
+  await page.goto('/financeiro/preco-leite');
+  await page.getByRole('button', { name: /Editar preço de julho de 2026/i }).click();
+  await expect(page.getByLabel('Mês', { exact: true })).toHaveValue('2026-07');
+  await expect(page.getByLabel('Preço por litro')).toHaveValue(/1,7/);
+  await capturePaintedViewport(page, testInfo.outputPath('preco-leite-edicao-historico.png'));
+  await page.getByLabel('Mês', { exact: true }).fill('2199-12');
+  await expect(page.getByText('Não informado', { exact: true })).toBeVisible();
+  await expect(page.getByText('0 L', { exact: true }).first()).toBeVisible();
+  await capturePaintedViewport(page, testInfo.outputPath('preco-leite-vazio.png'));
+  await page.getByRole('button', { name: 'Salvar preço' }).click();
+  await expect(page.getByText('Informe um preço maior que zero.')).toBeVisible();
+  await capturePaintedViewport(page, testInfo.outputPath('preco-leite-validacao.png'));
+
+  await page.route((url) => url.pathname === '/api/milk-prices/summary', async (route) => {
+    await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: { message: 'Falha simulada ao carregar o resumo.' } }) });
+  });
+  await page.reload();
+  await expect(page.getByText('Falha simulada ao carregar o resumo.')).toBeVisible();
+  await capturePaintedViewport(page, testInfo.outputPath('preco-leite-erro.png'));
+  await page.unroute((url) => url.pathname === '/api/milk-prices/summary');
 });

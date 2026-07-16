@@ -1,7 +1,21 @@
 export function parseDecimal(value: string | number | null | undefined): number | null {
   if (value === null || value === undefined || value === '') return null;
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-  const normalized = value.trim().replace(/\s/g, '').replace(',', '.');
+  const compact = value.trim().replace(/\s/g, '');
+  const comma = compact.lastIndexOf(',');
+  const dot = compact.lastIndexOf('.');
+  let normalized = compact;
+  if (comma >= 0 && dot >= 0) {
+    const decimalSeparator = comma > dot ? ',' : '.';
+    const groupingSeparator = decimalSeparator === ',' ? /\./g : /,/g;
+    normalized = compact.replace(groupingSeparator, '').replace(decimalSeparator, '.');
+  } else if ((compact.match(/,/g)?.length ?? 0) > 1) {
+    normalized = compact.replace(/,/g, '');
+  } else if ((compact.match(/\./g)?.length ?? 0) > 1) {
+    normalized = compact.replace(/\./g, '');
+  } else {
+    normalized = compact.replace(',', '.');
+  }
   if (!/^-?\d+(\.\d+)?$/.test(normalized)) return null;
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : null;

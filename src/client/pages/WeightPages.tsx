@@ -1,10 +1,13 @@
 import { useMemo, useState } from 'react';
 import { AlertTriangle, ClipboardCheck, Scale, Search } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { formatDate, parseDecimal } from '../../domain/format';
+import { formatDate } from '../../domain/format';
 import { formatWeight } from '../../domain/weight';
 import { TimeSeriesChart } from '../components/TimeSeriesChart';
-import { Badge, Button, ConfirmButton, EmptyState, ErrorState, Field, FilterBar, Input, LoadingState, PageHeader, ScrollArea, SectionCard, Select, StatCard, Textarea } from '../components/ui';
+import { useToast } from '../components/feedback-context';
+import { ConfirmButton } from '../components/feedback';
+import { ParsedDecimalInput } from '../components/form-controls';
+import { Badge, Button, EmptyState, ErrorState, Field, FilterBar, Input, LoadingState, PageHeader, ScrollArea, SectionCard, Select, StatCard, Textarea } from '../components/ui';
 import { useResource } from '../hooks/useResource';
 import { api, json } from '../lib/api';
 import { animalStatusLabels, today } from '../lib/labels';
@@ -119,7 +122,7 @@ function WeightReview({ rows, setRows, animals, busy, onConfirm }: { rows: Weigh
       {(row.issues?.length ?? 0) > 0 && <div className="notice notice-warning mt-3"><div className="flex gap-2"><AlertTriangle className="mt-0.5 shrink-0" size={17} aria-hidden /><ul className="list-disc pl-4">{row.issues?.map((issue) => <li key={issue}>{issue}</li>)}</ul></div></div>}
       <div className="mt-3 grid gap-3 md:grid-cols-3">
         <Field label="Animal vinculado"><Select value={row.animalId || ''} onChange={(event) => update(index, { animalId: event.target.value || null })}><option value="">Sem vínculo</option>{animals.map((animal) => <option key={animal.id} value={animal.id}>{animalLabel(animal)} · {animalStatusLabels[animal.status]}</option>)}</Select></Field>
-        <Field label="Peso (kg)"><Input inputMode="decimal" value={row.weightKg ?? ''} onChange={(event) => update(index, { weightKg: event.target.value === '' ? null : parseDecimal(event.target.value) })} /></Field>
+        <Field label="Peso (kg)"><ParsedDecimalInput suffix="kg" value={row.weightKg} onValueChange={(value) => update(index, { weightKg: value })} /></Field>
         <Field label="Situação da linha"><Select value={row.status} onChange={(event) => update(index, { status: event.target.value })}><option value="CONFIRMED">Confirmada</option><option value="NEEDS_REVIEW">Aguardando revisão</option><option value="EXCLUDED">Excluída</option></Select></Field>
       </div>
       {row.previousWeight && <p className="mt-2 text-xs text-[var(--muted)]">Última pesagem confirmada: {formatWeight(row.previousWeight.weightKg)} em {new Date(row.previousWeight.measuredAt).toLocaleDateString('pt-BR')}.</p>}
@@ -130,19 +133,19 @@ function WeightReview({ rows, setRows, animals, busy, onConfirm }: { rows: Weigh
 }
 
 export function ImportWeightsPage() {
+  const toast = useToast();
   const [date, setDate] = useState(today());
   const [content, setContent] = useState('');
   const [preview, setPreview] = useState<WeightPreview | null>(null);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
   const [busy, setBusy] = useState(false);
   const { data: animals = [] } = useResource<Animal[]>('/api/animals');
   const navigate = useNavigate();
   const prompt = WEIGHT_PROMPT.replaceAll('{{MEASURED_ON}}', date);
-  async function copyPrompt() { try { await navigator.clipboard.writeText(prompt); setSuccess('Prompt copiado.'); } catch { setError('Não foi possível copiar automaticamente.'); } }
+  async function copyPrompt() { try { await navigator.clipboard.writeText(prompt); toast('Prompt copiado'); } catch { setError('Não foi possível copiar automaticamente.'); } }
   async function validateRows() {
-    setBusy(true); setError(''); setSuccess('');
-    try { const result = await api<WeightPreview>('/api/weight-sessions/validate', json('POST', { content })); setPreview(result); setDate(result.measuredOn); setSuccess('Dados carregados. Corrija as inconsistências destacadas.'); }
+    setBusy(true); setError('');
+    try { const result = await api<WeightPreview>('/api/weight-sessions/validate', json('POST', { content })); setPreview(result); setDate(result.measuredOn); toast('Dados carregados. Corrija as inconsistências destacadas.'); }
     catch (cause) { setPreview(null); setError(cause instanceof Error ? cause.message : 'Não foi possível validar.'); }
     finally { setBusy(false); }
   }
@@ -151,13 +154,14 @@ export function ImportWeightsPage() {
     setBusy(true); setError('');
     try {
       const session = await api<{ id: string }>('/api/weight-sessions', json('POST', { measuredOn: preview.measuredOn, title: 'Pesagem do rebanho', measurements: preview.measurements.map((row) => ({ animalId: row.animalId, rawAnimalLabel: row.rawAnimalLabel, rawValueText: row.rawValueText, weightKg: row.weightKg, confidence: row.confidence, status: row.status, notes: row.notes })) }));
+      toast('Pesagem registrada');
       navigate(`/pesos/${session.id}`);
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível salvar a pesagem.'); }
     finally { setBusy(false); }
   }
   return <div className="page"><PageHeader icon={Scale} title="Nova pesagem" subtitle="Pode ser parcial: registre somente os animais realmente pesados" />
     <div className="grid gap-5">
-      {error && <ErrorState message={error} />}{success && <div className="notice notice-info" role="status">{success}</div>}
+      {error && <ErrorState message={error} />}
       <SectionCard title="1. Preparar o prompt" action={<Button variant="secondary" onClick={() => void copyPrompt()}>Copiar prompt</Button>}><Field label="Data da pesagem"><Input type="date" value={date} onChange={(event) => { setDate(event.target.value); setPreview(null); }} /></Field><details className="mt-4"><summary className="min-h-11 cursor-pointer py-3 font-semibold">Ver prompt completo</summary><pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-xl bg-[#f0efe8] p-3 text-xs leading-5">{prompt}</pre></details></SectionCard>
       <SectionCard title="2. Colar e validar"><Field label="JSON retornado pelo ChatGPT"><Textarea className="min-h-64 font-mono text-sm" value={content} onChange={(event) => { setContent(event.target.value); setPreview(null); }} /></Field><div className="mt-3 flex flex-wrap gap-2"><Button variant="secondary" onClick={() => setContent(weightExample(date))}>Carregar exemplo</Button><Button disabled={busy || !content.trim()} onClick={() => void validateRows()}>{busy ? 'Validando…' : 'Validar pesagens'}</Button></div></SectionCard>
       {preview && <WeightReview rows={preview.measurements} setRows={(measurements) => setPreview({ ...preview, measurements })} animals={animals ?? []} busy={busy} onConfirm={() => void confirm()} />}
@@ -193,7 +197,7 @@ export function WeightSessionDetailPage() {
     <div className="grid gap-5">{actionError && <ErrorState message={actionError} />}<div className="grid grid-cols-3 gap-3"><StatCard label="Confirmadas" value={confirmedRows.length} /><StatCard label="Peso médio" value={formatWeight(average)} /><StatCard label="A revisar" value={data.measurements.filter((row) => row.status === 'NEEDS_REVIEW').length} /></div>
       <SectionCard title="Revisão da sessão" icon={Search}><FilterBar><Field label="Buscar"><Input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Nome, brinco ou original" /></Field><Field label="Situação"><Select value={filter} onChange={(event) => setFilter(event.target.value)}><option value="ALL">Todas</option><option value="NEEDS_REVIEW">A revisar</option><option value="CONFIRMED">Confirmadas</option><option value="EXCLUDED">Excluídas</option></Select></Field></FilterBar>
         <ScrollArea label="Linhas da sessão de pesagem" className="mt-4">{visible.map((row) => <div className="review-row" key={row.id}><div className="flex items-start justify-between gap-3"><div><strong>{row.animalName || (row.tagNumber ? `Brinco ${row.tagNumber}` : row.rawAnimalLabel)}</strong><p className="text-xs text-[var(--muted)]">Original: {row.rawAnimalLabel}</p></div><div className="text-right"><strong>{row.weightKg === null ? 'Sem peso' : formatWeight(row.weightKg)}</strong><div><Badge tone={statusTone(row.status)}>{statusLabel(row.status)}</Badge></div></div></div>
-          {editing === row.id && draft ? <div className="mt-3 grid gap-3 md:grid-cols-3"><Field label="Animal"><Select value={draft.animalId || ''} onChange={(event) => setDraft({ ...draft, animalId: event.target.value || null })}><option value="">Sem vínculo</option>{(animals ?? []).map((animal) => <option key={animal.id} value={animal.id}>{animalLabel(animal)}</option>)}</Select></Field><Field label="Peso (kg)"><Input inputMode="decimal" value={draft.weightKg ?? ''} onChange={(event) => setDraft({ ...draft, weightKg: event.target.value === '' ? null : parseDecimal(event.target.value) })} /></Field><Field label="Situação"><Select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value })}><option value="CONFIRMED">Confirmada</option><option value="NEEDS_REVIEW">A revisar</option><option value="EXCLUDED">Excluída</option></Select></Field><div className="flex gap-2 md:col-span-3"><Button disabled={busy} onClick={() => void save()}>Salvar correção</Button><Button variant="secondary" onClick={() => { setEditing(null); setDraft(null); }}>Cancelar</Button></div></div> : <Button className="mt-3" variant="secondary" onClick={() => { setEditing(row.id ?? null); setDraft(row); }}>Corrigir</Button>}
+          {editing === row.id && draft ? <div className="mt-3 grid gap-3 md:grid-cols-3"><Field label="Animal"><Select value={draft.animalId || ''} onChange={(event) => setDraft({ ...draft, animalId: event.target.value || null })}><option value="">Sem vínculo</option>{(animals ?? []).map((animal) => <option key={animal.id} value={animal.id}>{animalLabel(animal)}</option>)}</Select></Field><Field label="Peso (kg)"><ParsedDecimalInput suffix="kg" value={draft.weightKg} onValueChange={(value) => setDraft({ ...draft, weightKg: value })} /></Field><Field label="Situação"><Select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value })}><option value="CONFIRMED">Confirmada</option><option value="NEEDS_REVIEW">A revisar</option><option value="EXCLUDED">Excluída</option></Select></Field><div className="flex gap-2 md:col-span-3"><Button disabled={busy} onClick={() => void save()}>Salvar correção</Button><Button variant="secondary" onClick={() => { setEditing(null); setDraft(null); }}>Cancelar</Button></div></div> : <Button className="mt-3" variant="secondary" onClick={() => { setEditing(row.id ?? null); setDraft(row); }}>Corrigir</Button>}
         </div>)}</ScrollArea>
       </SectionCard>
     </div>

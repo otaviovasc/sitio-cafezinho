@@ -14,6 +14,7 @@ import {
   herdGroups,
   milkMeasurements,
   milkCollections,
+  monthlyMilkPrices,
   milkSessions,
   mastitisActions,
   mastitisCases,
@@ -178,6 +179,8 @@ async function runSeed() {
 
     const [demoCollection] = await tx.select({ id: milkCollections.id }).from(milkCollections).where(eq(milkCollections.notes, 'Coleta fictícia para demonstração local.')).limit(1);
     if (!demoCollection) await tx.insert(milkCollections).values({ collectionDate: '2026-07-14', collectedAt: new Date('2026-07-14T09:10:00-03:00'), liters: '690.00', source: 'DRIVER_READING', notes: 'Coleta fictícia para demonstração local.' });
+
+    await tx.insert(monthlyMilkPrices).values({ month: '2026-07-01', pricePerLiter: '1.7200', notes: 'Preço fictício para demonstração local.' }).onConflictDoNothing();
 
     const caruja = animalByLabel.get(normalizeLabel('Caruja'));
     if (caruja) {

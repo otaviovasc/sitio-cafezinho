@@ -1,6 +1,9 @@
 import { FormEvent, useState } from 'react';
 import { formatDate, formatLiters, parseDecimal } from '../../../domain/format';
-import { Badge, ConfirmButton, Button, ErrorState, Field, Input, SectionCard, Select, Textarea } from '../../components/ui';
+import { useToast } from '../../components/feedback-context';
+import { ConfirmButton } from '../../components/feedback';
+import { LitersInput } from '../../components/form-controls';
+import { Badge, Button, ErrorState, Field, FormErrorSummary, Input, SectionCard, Select, Textarea } from '../../components/ui';
 import { useResource } from '../../hooks/useResource';
 import { api, json } from '../../lib/api';
 import { today } from '../../lib/labels';
@@ -19,6 +22,7 @@ type DailyMilkTotal = {
 };
 
 export function DailyMilkPanel({ onChange }: { onChange?: () => void } = {}) {
+  const toast = useToast();
   const { data, loading, error, reload } = useResource<DailyMilkTotal[]>('/api/daily-milk-totals');
   const { data: groups = [], error: groupsError, reload: reloadGroups } = useResource<HerdGroup[]>('/api/herd-groups');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -28,6 +32,7 @@ export function DailyMilkPanel({ onChange }: { onChange?: () => void } = {}) {
   const [afternoonLiters, setAfternoonLiters] = useState('');
   const [notes, setNotes] = useState('');
   const [actionError, setActionError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<{ date?: string; morning?: string; afternoon?: string }>({});
   const [busy, setBusy] = useState(false);
   const selectedGroup = groups?.find((group) => group.id === herdGroupId) ?? null;
   const morningOnly = selectedGroup?.milkingRoutine === 'MORNING_ONLY';
@@ -38,7 +43,7 @@ export function DailyMilkPanel({ onChange }: { onChange?: () => void } = {}) {
     : null;
 
   function reset() {
-    setEditingId(null); setProductionDate(today()); setHerdGroupId(''); setMorningLiters(''); setAfternoonLiters(''); setNotes(''); setActionError('');
+    setEditingId(null); setProductionDate(today()); setHerdGroupId(''); setMorningLiters(''); setAfternoonLiters(''); setNotes(''); setActionError(''); setFieldErrors({});
   }
 
   function edit(row: DailyMilkTotal) {
@@ -48,11 +53,17 @@ export function DailyMilkPanel({ onChange }: { onChange?: () => void } = {}) {
 
   async function save(event: FormEvent) {
     event.preventDefault();
-    if (parsedMorning === null || parsedMorning < 0 || (!morningOnly && (parsedAfternoon === null || parsedAfternoon < 0))) {
-      setActionError(morningOnly ? 'Informe um valor válido para a manhã.' : 'Informe valores válidos para manhã e tarde.');
+    const nextErrors = {
+      date: productionDate ? undefined : 'Informe a data da produção.',
+      morning: parsedMorning === null || parsedMorning < 0 ? 'Informe um volume válido para a manhã.' : undefined,
+      afternoon: !morningOnly && (parsedAfternoon === null || parsedAfternoon < 0) ? 'Informe um volume válido para a tarde.' : undefined,
+    };
+    setFieldErrors(nextErrors);
+    if (nextErrors.date || nextErrors.morning || nextErrors.afternoon) {
       return;
     }
     setBusy(true); setActionError('');
+    const wasEditing = Boolean(editingId);
     try {
       await api(editingId ? `/api/daily-milk-totals/${editingId}` : '/api/daily-milk-totals', json(editingId ? 'PATCH' : 'POST', {
         productionDate,
@@ -62,13 +73,14 @@ export function DailyMilkPanel({ onChange }: { onChange?: () => void } = {}) {
         notes: notes.trim() || null,
       }));
       reset(); reload(); onChange?.();
+      toast(wasEditing ? 'Produção atualizada' : 'Produção registrada');
     } catch (cause) { setActionError(cause instanceof Error ? cause.message : 'Não foi possível salvar o total diário.'); }
     finally { setBusy(false); }
   }
 
   async function remove(id: string) {
     setBusy(true); setActionError('');
-    try { await api(`/api/daily-milk-totals/${id}`, { method: 'DELETE' }); if (editingId === id) reset(); reload(); onChange?.(); }
+    try { await api(`/api/daily-milk-totals/${id}`, { method: 'DELETE' }); if (editingId === id) reset(); reload(); onChange?.(); toast('Produção excluída'); }
     catch (cause) { setActionError(cause instanceof Error ? cause.message : 'Não foi possível excluir o total diário.'); }
     finally { setBusy(false); }
   }
@@ -76,21 +88,22 @@ export function DailyMilkPanel({ onChange }: { onChange?: () => void } = {}) {
   return <div id="total-diario" className="scroll-mt-20"><SectionCard title="Produção total do dia">
     <p className="mb-4 text-sm text-[var(--muted)]">Registre o volume do rebanho todo ou de um lote medido separadamente. O sistema não distribui esse total entre as vacas e mantém o controle individual como outro fato.</p>
     {(error || groupsError || actionError) && <div className="mb-3"><ErrorState message={actionError || error || groupsError || ''} retry={error ? reload : groupsError ? reloadGroups : undefined} /></div>}
-    <form className="grid gap-3" onSubmit={save}>
+    <form className="grid gap-3" noValidate onSubmit={save}>
+      <FormErrorSummary errors={Object.values(fieldErrors)} />
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Field label="Data"><Input type="date" value={productionDate} onChange={(event) => setProductionDate(event.target.value)} required /></Field>
+        <Field label="Data" error={fieldErrors.date}><Input type="date" value={productionDate} onChange={(event) => { setProductionDate(event.target.value); setFieldErrors((current) => ({ ...current, date: undefined })); }} required /></Field>
         <Field label="Produção de" hint={herdGroupId ? 'Use lote apenas quando o volume foi medido separadamente.' : 'Total geral da propriedade.'}>
           <Select value={herdGroupId} onChange={(event) => { setHerdGroupId(event.target.value); const group = groups?.find((item) => item.id === event.target.value); if (group?.milkingRoutine === 'MORNING_ONLY') setAfternoonLiters(''); }}>
             <option value="">Rebanho todo</option>
             {groups?.filter((group) => group.active || group.id === herdGroupId).map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
           </Select>
         </Field>
-        <Field label="Manhã (L)"><Input inputMode="decimal" placeholder="Ex.: 210,5" value={morningLiters} onChange={(event) => setMorningLiters(event.target.value)} required /></Field>
-        <Field label="Tarde (L)" hint={morningOnly ? 'Este lote possui ordenha somente pela manhã.' : undefined}><Input inputMode="decimal" placeholder={morningOnly ? 'Sem ordenha à tarde' : 'Ex.: 175'} value={morningOnly ? '' : afternoonLiters} onChange={(event) => setAfternoonLiters(event.target.value)} required={!morningOnly} disabled={morningOnly} /></Field>
+        <Field label="Manhã (L)" error={fieldErrors.morning}><LitersInput placeholder="Ex.: 210,5" value={morningLiters} onValueChange={(value) => { setMorningLiters(value); setFieldErrors((current) => ({ ...current, morning: undefined })); }} required /></Field>
+        <Field label="Tarde (L)" hint={morningOnly ? 'Este lote possui ordenha somente pela manhã.' : undefined} error={fieldErrors.afternoon}><LitersInput placeholder={morningOnly ? 'Sem ordenha à tarde' : 'Ex.: 175'} value={morningOnly ? '' : afternoonLiters} onValueChange={(value) => { setAfternoonLiters(value); setFieldErrors((current) => ({ ...current, afternoon: undefined })); }} required={!morningOnly} disabled={morningOnly} /></Field>
       </div>
       <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
         <Field label="Observação (opcional)"><Textarea className="min-h-12" placeholder="Ex.: medição separada no tanque do lote" value={notes} onChange={(event) => setNotes(event.target.value)} /></Field>
-        <div className="flex flex-wrap gap-2"><Button type="submit" disabled={busy || previewTotal === null}>{busy ? 'Salvando…' : editingId ? 'Salvar alteração' : 'Registrar total'}</Button>{editingId && <Button type="button" variant="secondary" onClick={reset}>Cancelar</Button>}</div>
+        <div className="flex flex-wrap gap-2"><Button type="submit" disabled={busy}>{busy ? 'Salvando…' : editingId ? 'Salvar alteração' : 'Registrar total'}</Button>{editingId && <Button type="button" variant="secondary" onClick={reset}>Cancelar</Button>}</div>
       </div>
     </form>
     {previewTotal !== null && <p className="mt-3 text-sm text-[var(--muted)]">Total calculado: <strong className="text-[var(--text)]">{formatLiters(previewTotal)}</strong></p>}

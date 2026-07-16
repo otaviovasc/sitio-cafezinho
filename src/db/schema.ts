@@ -236,6 +236,18 @@ export const milkCollections = pgTable('milk_collections', {
   check('milk_collections_positive', sql`${table.liters} > 0`),
 ]);
 
+export const monthlyMilkPrices = pgTable('monthly_milk_prices', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  month: date('month').notNull(),
+  pricePerLiter: numeric('price_per_liter', { precision: 12, scale: 4 }).notNull(),
+  notes: text('notes'),
+  ...auditColumns,
+}, (table) => [
+  uniqueIndex('monthly_milk_prices_month_unique').on(table.month),
+  check('monthly_milk_prices_first_day', sql`extract(day from ${table.month}) = 1`),
+  check('monthly_milk_prices_positive', sql`${table.pricePerLiter} > 0`),
+]);
+
 export const mastitisCases = pgTable('mastitis_cases', {
   id: uuid('id').primaryKey().defaultRandom(),
   animalId: uuid('animal_id').notNull().references(() => animals.id, { onDelete: 'cascade' }),

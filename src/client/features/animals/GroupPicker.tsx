@@ -19,9 +19,10 @@ type Props = {
   onChange: (groupId: string) => void;
   label?: string;
   required?: boolean;
+  fieldError?: string;
 };
 
-export function GroupPicker({ value, onChange, label = 'Lote de ordenha', required = true }: Props) {
+export function GroupPicker({ value, onChange, label = 'Lote de ordenha', required = true, fieldError }: Props) {
   const { data: groups = [], loading, error, reload } = useResource<HerdGroup[]>('/api/herd-groups');
   const selected = groups?.find((group) => group.id === value) ?? null;
   const [mode, setMode] = useState<'closed' | 'create' | 'edit'>('closed');
@@ -44,6 +45,7 @@ export function GroupPicker({ value, onChange, label = 'Lote de ordenha', requir
   }
 
   async function save() {
+    if (!name.trim()) { setActionError('Informe o nome do lote.'); return; }
     setBusy(true); setActionError('');
     try {
       const saved = await api<HerdGroup>(mode === 'edit' && selected ? `/api/herd-groups/${selected.id}` : '/api/herd-groups', json(mode === 'edit' ? 'PATCH' : 'POST', { name, milkingRoutine: routine, active: true }));
@@ -53,7 +55,7 @@ export function GroupPicker({ value, onChange, label = 'Lote de ordenha', requir
   }
 
   return <div className="grid min-w-0 gap-2">
-    <Field label={label} hint={selected ? milkingRoutineLabels[selected.milkingRoutine] : undefined}>
+    <Field label={label} hint={selected ? milkingRoutineLabels[selected.milkingRoutine] : undefined} error={fieldError}>
       <Select value={value} onChange={(event) => { onChange(event.target.value); setMode('closed'); }} required={required} disabled={loading}>
         <option value="">Selecione</option>
         {groups?.filter((group) => group.active).map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
@@ -71,7 +73,7 @@ export function GroupPicker({ value, onChange, label = 'Lote de ordenha', requir
         <Field label="Nome do lote"><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Ex.: Lote 2" required /></Field>
         <Field label="Rotina de ordenha"><Select value={routine} onChange={(event) => setRoutine(event.target.value as HerdGroup['milkingRoutine'])}>{Object.entries(milkingRoutineLabels).filter(([key]) => key !== 'NOT_MILKED').map(([key, text]) => <option key={key} value={key}>{text}</option>)}</Select></Field>
       </div>
-      <Button type="button" disabled={busy || !name.trim()} onClick={() => void save()}>{busy ? 'Salvando…' : mode === 'create' ? 'Criar e selecionar' : 'Salvar regra'}</Button>
+      <Button type="button" disabled={busy} onClick={() => void save()}>{busy ? 'Salvando…' : mode === 'create' ? 'Criar e selecionar' : 'Salvar regra'}</Button>
     </div>}
   </div>;
 }

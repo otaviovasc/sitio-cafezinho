@@ -137,6 +137,8 @@ Regras que devem permanecer verdadeiras:
 - [ ] Criar uma entrada “a receber” e outra “já recebida” em menos de um minuto.
 - [ ] Marcar recebida, voltar para “a receber”, cancelar e reabrir uma entrada de teste.
 - [ ] Criar venda de leite com período, litros, preço, bônus e desconto opcionais.
+- [ ] Informar o preço do leite para um mês, conferir a estimativa sobre as coletas registradas e depois editar o mesmo preço.
+- [ ] Confirmar que a estimativa não cria receita e que produção sem medição continua ausente.
 - [ ] Confirmar que cancelados não entram nos totais e esperado fica separado de recebido.
 - [ ] Vender um animal com valor e escolher “Criar receita de venda de animal”.
 - [ ] Confirmar uma única saída e uma única receita na ficha e no financeiro.

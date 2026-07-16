@@ -41,5 +41,6 @@
 - `RECURRENT` e `NO_IMPROVEMENT` permanecem casos abertos; `RESOLVED` e `CANCELLED` saem das pendências sem apagar o histórico.
 - Receita `EXPECTED` fica separada de `RECEIVED`; `CANCELLED` não entra nos totais. Compras seguem a separação entre `OPEN`, `PAID` e `CANCELLED`.
 - Resultado de caixa registrado é receitas recebidas menos compras pagas. Não inclui trabalho familiar, depreciação, terra, ativos ou fatos não lançados.
+- Preço mensal do leite é um valor informado e editável, independente de produção, coleta e receita. A estimativa mensal multiplica somente as coletas registradas pelo preço do mês; não cria receita, não representa pagamento recebido e não inclui automaticamente bônus, descontos ou ajustes do laticínio.
 - Uma venda pode criar uma receita, vincular uma receita existente ou não ter valor conhecido. A transação cria no máximo uma receita e a vincula ao animal e à saída.
 - Morte preserva motivo, observação, peso e documento quando informados, mas nunca cria receita nem aceita comprador ou tipo comercial.

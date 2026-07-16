@@ -10,7 +10,9 @@ import { CowHead } from '../components/icons';
 import { PeriodSelector } from '../components/PeriodSelector';
 import { TimeSeriesChart } from '../components/TimeSeriesChart';
 import { AttachmentPanel, type Attachment } from '../components/AttachmentPanel';
-import { Badge, Button, ConfirmButton, EmptyState, ErrorState, Field, FilterBar, Input, LoadingState, PageHeader, ScrollArea, SectionCard, Select, StatCard, Textarea } from '../components/ui';
+import { useToast } from '../components/feedback-context';
+import { ConfirmButton } from '../components/feedback';
+import { Badge, Button, EmptyState, ErrorState, Field, FilterBar, FormErrorSummary, Input, LoadingState, PageHeader, ScrollArea, SectionCard, Select, StatCard, Textarea } from '../components/ui';
 import { AnimalGroupChangeForm } from '../features/animals/AnimalGroupChangeForm';
 import { AnimalStatusChangeForm } from '../features/animals/AnimalStatusChangeForm';
 import { AnimalWeightPanel, type AnimalWeight } from '../features/animals/AnimalWeightPanel';
@@ -94,6 +96,7 @@ export function AnimalsPage() {
 }
 
 function AnimalForm({ initial, onSaved }: { initial?: AnimalDetail; onSaved?: () => void | Promise<void> }) {
+  const toast = useToast();
   const [name, setName] = useState(initial?.name || '');
   const [tagNumber, setTagNumber] = useState(initial?.tagNumber || '');
   const [status, setStatus] = useState<AnimalStatus>(initial?.status || 'LACTATING');
@@ -101,18 +104,28 @@ function AnimalForm({ initial, onSaved }: { initial?: AnimalDetail; onSaved?: ()
   const [groupId, setGroupId] = useState(initial?.currentGroup?.id || '');
   const [changedOn, setChangedOn] = useState(today());
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<{ identity?: string; group?: string; date?: string }>({});
   const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
   async function submit(event: FormEvent) {
-    event.preventDefault(); setBusy(true); setError('');
+    event.preventDefault(); setError('');
+    const nextErrors = {
+      identity: !name.trim() && !tagNumber.trim() ? 'Informe o nome ou o número do brinco.' : undefined,
+      group: !initial && statusRequiresMilkingGroup(status) && !groupId ? 'Selecione o lote de ordenha.' : undefined,
+      date: !initial && !changedOn ? 'Informe a data inicial.' : undefined,
+    };
+    setFieldErrors(nextErrors);
+    if (nextErrors.identity || nextErrors.group || nextErrors.date) return;
+    setBusy(true);
     try {
       const body = { name: name.trim() || null, tagNumber: tagNumber.trim() || null, notes: notes.trim() || null, ...(!initial ? { status, groupId: statusRequiresMilkingGroup(status) ? groupId : null, changedOn } : {}) };
       const saved = await api<{ id: string }>(initial ? `/api/animals/${initial.id}` : '/api/animals', json(initial ? 'PATCH' : 'POST', body));
+      toast(initial ? 'Identificação atualizada' : 'Animal cadastrado');
       if (initial && onSaved) await onSaved(); else navigate(`/rebanho/${saved.id}`);
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível salvar.'); }
     finally { setBusy(false); }
   }
-  return <form className="page-narrow grid gap-5" onSubmit={submit}>{error && <ErrorState message={error} />}<SectionCard><div className="grid gap-4"><Field label="Nome" hint="Nome usado pela família"><Input value={name} onChange={(event) => setName(event.target.value)} /></Field><Field label="Número do brinco" hint="Obrigatório apenas se o nome ficar vazio"><Input inputMode="numeric" value={tagNumber} onChange={(event) => setTagNumber(event.target.value)} /></Field>{!initial && <><div className="grid gap-3 sm:grid-cols-2"><Field label="Situação inicial"><Select value={status} onChange={(event) => setStatus(event.target.value as AnimalStatus)}>{Object.entries(animalStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></Field><Field label="Data inicial"><Input type="date" value={changedOn} max={today()} onChange={(event) => setChangedOn(event.target.value)} /></Field></div>{statusRequiresMilkingGroup(status) && <GroupPicker label="Lote de ordenha" value={groupId} onChange={setGroupId} />}</>}<Field label="Observações"><Textarea value={notes} onChange={(event) => setNotes(event.target.value)} /></Field></div></SectionCard><Button type="submit" disabled={busy || (!name.trim() && !tagNumber.trim()) || (!initial && statusRequiresMilkingGroup(status) && !groupId)}>{busy ? 'Salvando…' : 'Salvar animal'}</Button></form>;
+  return <form className="page-narrow grid gap-5" noValidate onSubmit={submit}>{error && <ErrorState message={error} />}<FormErrorSummary errors={Object.values(fieldErrors)} /><SectionCard><div className="grid gap-4"><Field label="Nome" hint="Informe o nome ou o brinco." error={fieldErrors.identity}><Input value={name} onChange={(event) => { setName(event.target.value); setFieldErrors((current) => ({ ...current, identity: undefined })); }} /></Field><Field label="Número do brinco" hint="Pode ser usado no lugar do nome."><Input inputMode="numeric" value={tagNumber} onChange={(event) => { setTagNumber(event.target.value); setFieldErrors((current) => ({ ...current, identity: undefined })); }} /></Field>{!initial && <><div className="grid gap-3 sm:grid-cols-2"><Field label="Situação inicial"><Select value={status} onChange={(event) => setStatus(event.target.value as AnimalStatus)}>{Object.entries(animalStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></Field><Field label="Data inicial" error={fieldErrors.date}><Input type="date" value={changedOn} max={today()} onChange={(event) => { setChangedOn(event.target.value); setFieldErrors((current) => ({ ...current, date: undefined })); }} required /></Field></div>{statusRequiresMilkingGroup(status) && <GroupPicker label="Lote de ordenha" value={groupId} fieldError={fieldErrors.group} onChange={(value) => { setGroupId(value); setFieldErrors((current) => ({ ...current, group: undefined })); }} />}</>}<Field label="Observações"><Textarea value={notes} onChange={(event) => setNotes(event.target.value)} /></Field></div></SectionCard><Button type="submit" disabled={busy}>{busy ? 'Salvando…' : 'Salvar animal'}</Button></form>;
 }
 
 export function NewAnimalPage() {
@@ -123,6 +136,7 @@ export function NewAnimalPage() {
 
 export function AnimalDetailPage() {
   const { id = '' } = useParams();
+  const toast = useToast();
   const { data, loading, error, reload } = useResource<AnimalDetail>(`/api/animals/${id}`);
   const [editing, setEditing] = useState(false);
   const [alias, setAlias] = useState('');
@@ -133,10 +147,10 @@ export function AnimalDetailPage() {
   const [showReproductiveForm, setShowReproductiveForm] = useState(false);
   const [editingReproductiveEvent, setEditingReproductiveEvent] = useState<ReproductiveEvent | undefined>();
   const [productionPeriod, setProductionPeriod] = useState<PeriodDays>(180);
-  async function addAlias(event: FormEvent) { event.preventDefault(); setActionError(''); try { await api(`/api/animals/${id}/aliases`, json('POST', { alias })); setAlias(''); reload(); } catch (cause) { setActionError(cause instanceof Error ? cause.message : 'Não foi possível adicionar.'); } }
-  async function removeAlias(aliasId: string) { try { await api(`/api/animal-aliases/${aliasId}`, { method: 'DELETE' }); reload(); } catch (cause) { setActionError(cause instanceof Error ? cause.message : 'Não foi possível remover.'); } }
-  async function removeReproductiveEvent(eventId: string) { try { await api(`/api/animals/${id}/reproductive-events/${eventId}`, { method: 'DELETE' }); await reload(); } catch (cause) { setActionError(cause instanceof Error ? cause.message : 'Não foi possível excluir o registro.'); } }
-  async function undoStatus(eventId: string) { try { await api(`/api/animals/${id}/status-changes/${eventId}`, { method: 'DELETE' }); setShowStatusForm(false); await reload(); } catch (cause) { setActionError(cause instanceof Error ? cause.message : 'Não foi possível desfazer a mudança.'); } }
+  async function addAlias(event: FormEvent) { event.preventDefault(); setActionError(''); try { await api(`/api/animals/${id}/aliases`, json('POST', { alias })); setAlias(''); reload(); toast('Alias adicionado'); } catch (cause) { setActionError(cause instanceof Error ? cause.message : 'Não foi possível adicionar.'); } }
+  async function removeAlias(aliasId: string) { try { await api(`/api/animal-aliases/${aliasId}`, { method: 'DELETE' }); reload(); toast('Alias removido'); } catch (cause) { setActionError(cause instanceof Error ? cause.message : 'Não foi possível remover.'); } }
+  async function removeReproductiveEvent(eventId: string) { try { await api(`/api/animals/${id}/reproductive-events/${eventId}`, { method: 'DELETE' }); await reload(); toast('Registro de cio excluído'); } catch (cause) { setActionError(cause instanceof Error ? cause.message : 'Não foi possível excluir o registro.'); } }
+  async function undoStatus(eventId: string) { try { await api(`/api/animals/${id}/status-changes/${eventId}`, { method: 'DELETE' }); setShowStatusForm(false); await reload(); toast('Última situação desfeita'); } catch (cause) { setActionError(cause instanceof Error ? cause.message : 'Não foi possível desfazer a mudança.'); } }
   if (loading) return <div className="page"><LoadingState /></div>;
   if (error || !data) return <div className="page"><ErrorState message={error || 'Animal não encontrado.'} retry={reload} /></div>;
   if (editing) return <div className="page"><PageHeader title="Editar identificação" subtitle="A situação e o lote possuem fluxos próprios para preservar o histórico" action={<Button variant="secondary" onClick={() => setEditing(false)}>Cancelar</Button>} /><AnimalForm initial={data} onSaved={async () => { await reload(); setEditing(false); }} /></div>;

@@ -3,7 +3,10 @@ import { Plus, Store, WalletCards } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { AttachmentPanel, type Attachment } from '../components/AttachmentPanel';
 import { FinanceDirectionSwitch } from '../components/FinanceDirectionSwitch';
-import { Badge, Button, ChoiceCard, ConfirmButton, EmptyState, ErrorState, Field, FilterBar, Input, LoadingState, PageHeader, ScrollArea, SectionCard, Select, Textarea } from '../components/ui';
+import { DecimalInput, MoneyInput } from '../components/form-controls';
+import { useConfirm } from '../components/feedback-context';
+import { ConfirmButton } from '../components/feedback';
+import { Badge, Button, ChoiceCard, EmptyState, ErrorState, Field, FilterBar, FormErrorSummary, Input, LoadingState, PageHeader, ScrollArea, SectionCard, Select, Textarea } from '../components/ui';
 import { useResource } from '../hooks/useResource';
 import { api, json } from '../lib/api';
 import { categoryLabels, today, unitLabels } from '../lib/labels';
@@ -88,12 +91,12 @@ function PurchaseForm({ initial, onSaved }: { initial?: PurchaseDetail; onSaved?
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível salvar.'); }
     finally { setBusy(false); }
   }
-  return <form className="page-narrow grid gap-5" noValidate onSubmit={submit}>{error && <ErrorState message={error} />}
+  return <form className="page-narrow grid gap-5" noValidate onSubmit={submit}>{error && <ErrorState message={error} />}<FormErrorSummary errors={Object.values(fieldErrors)} />
     <SectionCard title="Dados da saída"><div className="grid gap-4 sm:grid-cols-2">
       <Field label="Categoria"><Select value={category} onChange={(event) => setCategory(event.target.value)}>{Object.entries(categoryLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></Field>
-      <Field label="Data" error={fieldErrors.date}><Input type="date" value={date} onChange={(event) => { setDate(event.target.value); setFieldErrors((current) => ({ ...current, date: undefined })); }} /></Field>
-      <Field label="Descrição" hint="Ex.: Ração do mês ou conta de energia" error={fieldErrors.description}><Input value={description} onChange={(event) => { setDescription(event.target.value); setFieldErrors((current) => ({ ...current, description: undefined })); }} /></Field>
-      <Field label="Valor total da saída" hint="Valor final da compra, conta ou despesa." error={fieldErrors.total}><Input inputMode="decimal" value={total} onChange={(event) => { setTotal(event.target.value); setFieldErrors((current) => ({ ...current, total: undefined })); }} placeholder="0,00" /></Field>
+      <Field label="Data" error={fieldErrors.date}><Input type="date" value={date} required onChange={(event) => { setDate(event.target.value); setFieldErrors((current) => ({ ...current, date: undefined })); }} /></Field>
+      <Field label="Descrição" hint="Ex.: Ração do mês ou conta de energia" error={fieldErrors.description}><Input value={description} required onChange={(event) => { setDescription(event.target.value); setFieldErrors((current) => ({ ...current, description: undefined })); }} /></Field>
+      <Field label="Valor total da saída" hint="Valor final da compra, conta ou despesa." error={fieldErrors.total}><MoneyInput value={total} required onValueChange={(value) => { setTotal(value); setFieldErrors((current) => ({ ...current, total: undefined })); }} placeholder="0,00" /></Field>
       {initial && <Field label="Vencimento (opcional)" hint="A situação do pagamento é alterada na tela de detalhes."><Input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></Field>}
       <div className="grid min-w-0 gap-2 sm:col-span-2"><Field label="Fornecedor"><Select value={supplierId} onChange={(event) => setSupplierId(event.target.value)}><option value="">Sem fornecedor informado</option>{suppliers?.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}</Select></Field><div className="flex flex-wrap gap-2"><Button type="button" variant="secondary" onClick={() => setShowSupplierCreate((value) => !value)}><Plus size={17} aria-hidden />Novo fornecedor</Button><Link className="button button-secondary" to="/fornecedores">Ver fornecedores</Link></div>{showSupplierCreate && <div className="notice notice-info grid gap-2"><Field label="Nome do fornecedor"><Input value={newSupplierName} onChange={(event) => setNewSupplierName(event.target.value)} /></Field><div className="flex flex-wrap gap-2"><Button type="button" disabled={busy || !newSupplierName.trim()} onClick={() => void createSupplier()}>Criar e selecionar</Button><Button type="button" variant="secondary" onClick={() => setShowSupplierCreate(false)}>Cancelar</Button></div></div>}</div>
     </div></SectionCard>
@@ -102,9 +105,9 @@ function PurchaseForm({ initial, onSaved }: { initial?: PurchaseDetail; onSaved?
       <ChoiceCard name="purchase-status" value="open" checked={!paid} onChange={() => setPaid(false)} title="Pagar depois" description="Fica separado como valor a pagar" />
     </div>{!paid && <div className="mt-3"><Field label="Vencimento (opcional)" hint="Ajuda a destacar contas atrasadas."><Input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></Field></div>}</SectionCard>}
     <details className="section-card" open={Boolean(initial)}><summary className="min-h-11 cursor-pointer py-2 text-lg font-bold">Valores e observações opcionais</summary><div className="mt-3 grid gap-4 sm:grid-cols-2">
-      <Field label="Valor bruto" error={fieldErrors.gross}><Input inputMode="decimal" value={gross} onChange={(event) => { setGross(event.target.value); setFieldErrors((current) => ({ ...current, gross: undefined })); }} /></Field>
-      <Field label="Desconto" error={fieldErrors.discount}><Input inputMode="decimal" value={discount} onChange={(event) => { setDiscount(event.target.value); setFieldErrors((current) => ({ ...current, discount: undefined })); }} /></Field>
-      <Field label="Frete" error={fieldErrors.freight}><Input inputMode="decimal" value={freight} onChange={(event) => { setFreight(event.target.value); setFieldErrors((current) => ({ ...current, freight: undefined })); }} /></Field>
+      <Field label="Valor bruto" error={fieldErrors.gross}><MoneyInput value={gross} onValueChange={(value) => { setGross(value); setFieldErrors((current) => ({ ...current, gross: undefined })); }} /></Field>
+      <Field label="Desconto" error={fieldErrors.discount}><MoneyInput value={discount} onValueChange={(value) => { setDiscount(value); setFieldErrors((current) => ({ ...current, discount: undefined })); }} /></Field>
+      <Field label="Frete" error={fieldErrors.freight}><MoneyInput value={freight} onValueChange={(value) => { setFreight(value); setFieldErrors((current) => ({ ...current, freight: undefined })); }} /></Field>
       <div className="sm:col-span-2"><Field label="Observações"><Textarea value={notes} onChange={(event) => setNotes(event.target.value)} /></Field></div>
     </div></details>
     <div className="form-submit-bar"><Button type="submit" disabled={busy}>{busy ? 'Salvando…' : initial ? 'Salvar alterações' : 'Registrar saída'}</Button></div>
@@ -115,6 +118,7 @@ export function NewPurchasePage() { return <div className="page"><div className=
 
 export function PurchaseDetailPage() {
   const { id = '' } = useParams();
+  const confirm = useConfirm();
   const { data, loading, error, reload } = useResource<PurchaseDetail>(`/api/purchases/${id}`);
   const [editing, setEditing] = useState(false);
   const [actionError, setActionError] = useState('');
@@ -141,6 +145,15 @@ export function PurchaseDetailPage() {
     try { await api(`/api/purchase-items/${itemId}`, { method: 'DELETE' }); reload(); }
     catch (cause) { setActionError(cause instanceof Error ? cause.message : 'Não foi possível remover o item.'); }
   }
+  async function cancelPurchase() {
+    const accepted = await confirm({
+      title: 'Cancelar compra?',
+      description: 'Ela deixará de entrar nos totais, mas o registro continuará preservado.',
+      confirmLabel: 'Cancelar compra',
+      tone: 'danger',
+    });
+    if (accepted) await action('cancel');
+  }
   if (loading) return <div className="page"><LoadingState /></div>;
   if (error || !data) return <div className="page"><ErrorState message={error || 'Compra não encontrada.'} retry={reload} /></div>;
   if (editing) return <div className="page"><PageHeader title="Editar compra" action={<Button variant="secondary" onClick={() => setEditing(false)}>Cancelar</Button>} /><PurchaseForm initial={data} onSaved={async () => { await reload(); setEditing(false); }} /></div>;
@@ -148,12 +161,12 @@ export function PurchaseDetailPage() {
     <div className="grid gap-5">{actionError && <ErrorState message={actionError} />}
       <SectionCard><div className="flex items-start justify-between gap-4"><div><p className="text-sm text-[var(--muted)]">Valor da saída</p><p className="text-3xl font-bold">{formatMoney(data.totalAmount)}</p>{data.supplierName && <p className="mt-2 text-sm">Fornecedor: {data.supplierName}</p>}{data.dueDate && <p className="mt-1 text-sm">Vencimento: {formatDate(data.dueDate)}</p>}</div><Badge tone={data.status === 'PAID' ? 'success' : data.status === 'CANCELLED' ? 'neutral' : data.isOverdue ? 'danger' : 'warning'}>{data.status === 'PAID' ? 'Paga' : data.status === 'CANCELLED' ? 'Cancelada' : data.isOverdue ? 'Vencida' : 'A pagar'}</Badge></div>
         {data.notes && <p className="mt-4 text-sm">{data.notes}</p>}
-        <div className="mt-4 flex flex-wrap gap-2">{data.status === 'OPEN' && <Button onClick={() => void action('pay')}>Marcar como paga</Button>}{data.status !== 'OPEN' && <Button variant="secondary" onClick={() => void action('reopen')}>Reabrir</Button>}{data.status !== 'CANCELLED' && <Button variant="danger" onClick={() => { if (window.confirm('Cancelar esta compra? Ela deixará de entrar nos totais.')) void action('cancel'); }}>Cancelar</Button>}</div>
+        <div className="mt-4 flex flex-wrap gap-2">{data.status === 'OPEN' && <Button onClick={() => void action('pay')}>Marcar como paga</Button>}{data.status !== 'OPEN' && <Button variant="secondary" onClick={() => void action('reopen')}>Reabrir</Button>}{data.status !== 'CANCELLED' && <Button variant="danger" onClick={() => void cancelPurchase()}>Cancelar</Button>}</div>
       </SectionCard>
       <SectionCard title="Itens opcionais">
         {data.items.map((row) => <div className="border-b border-[var(--border)] py-3 last:border-b-0 sm:flex sm:items-center sm:justify-between sm:gap-3" key={row.id}><div><strong>{row.description}</strong><span className="block text-xs text-[var(--muted)]">{Number(row.quantity).toLocaleString('pt-BR')} {unitLabels[row.unit]} × {formatMoney(row.unitPrice)}</span></div><div className="mt-3 sm:mt-0 sm:text-right"><strong className="block">{formatMoney(row.totalPrice)}</strong><div className="mt-2 grid grid-cols-2 gap-2 sm:flex"><Button variant="secondary" onClick={() => editItem(row)}>Editar</Button><ConfirmButton variant="danger" question="Remover este item?" onClick={() => void removeItem(row.id)}>Remover</ConfirmButton></div></div></div>)}
         {data.items.length > 0 && data.itemsDifference !== 0 && <div className="notice notice-warning mt-3">A soma dos itens é {formatMoney(data.itemsTotal)} e difere {formatMoney(Math.abs(data.itemsDifference))} do total da compra. O total da compra não foi alterado.</div>}
-        <form className="mt-4 grid gap-3 sm:grid-cols-5 sm:items-end" onSubmit={addItem}><Field label="Descrição"><Input value={item.description} onChange={(event) => setItem({ ...item, description: event.target.value })} required /></Field><Field label="Quantidade"><Input inputMode="decimal" value={item.quantity} onChange={(event) => setItem({ ...item, quantity: event.target.value })} required /></Field><Field label="Unidade"><Select value={item.unit} onChange={(event) => setItem({ ...item, unit: event.target.value })}>{Object.entries(unitLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></Field><Field label="Preço unitário"><Input inputMode="decimal" value={item.unitPrice} onChange={(event) => setItem({ ...item, unitPrice: event.target.value, totalPrice: String((parseDecimal(item.quantity) ?? 0) * (parseDecimal(event.target.value) ?? 0)) })} required /></Field><Field label="Total"><Input inputMode="decimal" value={item.totalPrice} onChange={(event) => setItem({ ...item, totalPrice: event.target.value })} required /></Field><div className="flex flex-wrap gap-2 sm:col-span-5"><Button type="submit">{editingItemId ? 'Salvar item' : 'Adicionar item'}</Button>{editingItemId && <Button type="button" variant="secondary" onClick={() => { setEditingItemId(null); setItem({ description: '', quantity: '1', unit: 'UNIT', unitPrice: '', totalPrice: '' }); }}>Cancelar edição</Button>}</div></form>
+        <form className="mt-4 grid gap-3 sm:grid-cols-5 sm:items-end" onSubmit={addItem}><Field label="Descrição"><Input value={item.description} onChange={(event) => setItem({ ...item, description: event.target.value })} required /></Field><Field label="Quantidade"><DecimalInput value={item.quantity} onValueChange={(value) => setItem({ ...item, quantity: value })} required /></Field><Field label="Unidade"><Select value={item.unit} onChange={(event) => setItem({ ...item, unit: event.target.value })}>{Object.entries(unitLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></Field><Field label="Preço unitário"><MoneyInput value={item.unitPrice} onValueChange={(value) => setItem({ ...item, unitPrice: value, totalPrice: String((parseDecimal(item.quantity) ?? 0) * (parseDecimal(value) ?? 0)) })} required /></Field><Field label="Total"><MoneyInput value={item.totalPrice} onValueChange={(value) => setItem({ ...item, totalPrice: value })} required /></Field><div className="flex flex-wrap gap-2 sm:col-span-5"><Button type="submit">{editingItemId ? 'Salvar item' : 'Adicionar item'}</Button>{editingItemId && <Button type="button" variant="secondary" onClick={() => { setEditingItemId(null); setItem({ description: '', quantity: '1', unit: 'UNIT', unitPrice: '', totalPrice: '' }); }}>Cancelar edição</Button>}</div></form>
       </SectionCard>
       <SectionCard title="Nota, boleto e comprovante"><p className="mb-4 text-sm text-[var(--muted)]">Vários documentos continuam vinculados a uma única compra.</p><AttachmentPanel attachments={data.attachments} purchaseId={id} onChange={reload} /></SectionCard>
     </div>

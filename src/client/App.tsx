@@ -14,6 +14,7 @@ import { FinancePage, NewRevenuePage, RevenueDetailPage } from './pages/FinanceP
 import { DataSettingsPage } from './pages/DataSettingsPage';
 import { NewPurchasePage, PurchaseDetailPage, PurchasesPage, SupplierDetailPage, SuppliersPage } from './pages/PurchasePages';
 import { ImportWeightsPage, WeightSessionDetailPage, WeightSessionsPage } from './pages/WeightPages';
+import { MilkPricePage } from './pages/MilkPricePage';
 
 export function App() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
@@ -48,6 +49,7 @@ export function App() {
     <Route path="/mastite/nova" element={<NewMastitisCasePage />} />
     <Route path="/mastite/:id" element={<MastitisCaseDetailPage />} />
     <Route path="/financeiro" element={<FinancePage />} />
+    <Route path="/financeiro/preco-leite" element={<MilkPricePage />} />
     <Route path="/receitas/nova" element={<NewRevenuePage />} />
     <Route path="/receitas/:id" element={<RevenueDetailPage />} />
     <Route path="/configuracoes/dados" element={<DataSettingsPage />} />

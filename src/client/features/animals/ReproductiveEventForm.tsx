@@ -3,6 +3,7 @@ import { HeartPulse } from 'lucide-react';
 import { Button, ErrorState, Field, Input, Select, Textarea } from '../../components/ui';
 import { api, json } from '../../lib/api';
 import { today } from '../../lib/labels';
+import { useToast } from '../../components/feedback-context';
 
 export type ReproductiveEvent = {
   id: string;
@@ -22,6 +23,7 @@ export function ReproductiveEventForm({ animalId, initial, onSaved, onCancel }: 
   onSaved: () => void | Promise<void>;
   onCancel: () => void;
 }) {
+  const toast = useToast();
   const [occurredOn, setOccurredOn] = useState(initial?.occurredOn ?? today());
   const [hadBreeding, setHadBreeding] = useState(initial?.hadBreeding ?? false);
   const [bullName, setBullName] = useState(initial?.bullName ?? '');
@@ -43,6 +45,7 @@ export function ReproductiveEventForm({ animalId, initial, onSaved, onCancel }: 
         notes: notes.trim() || null,
       };
       await api(initial ? `/api/animals/${animalId}/reproductive-events/${initial.id}` : `/api/animals/${animalId}/reproductive-events`, json(initial ? 'PATCH' : 'POST', body));
+      toast(initial ? 'Registro de cio atualizado' : 'Cio registrado');
       await onSaved();
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível salvar o cio.'); }
     finally { setBusy(false); }

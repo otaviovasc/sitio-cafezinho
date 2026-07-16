@@ -15,6 +15,7 @@ Aplicação interna, compartilhada e mobile-first para a rotina diária de uma p
 - importação de JSON transcrito pelo ChatGPT com prévia obrigatória, conferência do rebanho esperado, busca e filtros de inconsistência;
 - compras rápidas, itens opcionais, fornecedores, vencimentos e pagamento simples;
 - receitas esperadas ou recebidas, venda de leite, saída econômica do animal e resultado de caixa registrado;
+- preço mensal editável do leite, histórico e estimativa sobre o volume efetivamente coletado, sem criar receita automática;
 - fotos/PDFs em volume local ou em uma pasta Google Drive, reutilizados por compra, coleta, receita e saída;
 - página Hoje com pendências reais, quatro ações prioritárias, resumo do dia e visão mensal;
 - exportações CSV e backup/restauração PostgreSQL reproduzíveis.
