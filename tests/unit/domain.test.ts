@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { sha256 } from '../../src/domain/files';
 import { allowedNextStatuses, canTransitionStatus, isProductiveCycleTransition, statusEndsMilkingGroup, statusRequiresMilkingGroup } from '../../src/domain/animal-lifecycle';
 import { filterByPeriod } from '../../src/domain/analytics';
-import { calculateDailyMilkTotal, summarizeDailyMilk } from '../../src/domain/daily-milk';
+import { calculateDailyMilkTotal, resolveDailyMilkByDate, summarizeDailyMilk } from '../../src/domain/daily-milk';
 import { formatDate, formatLiters, formatMoney, normalizeLabel, parseDecimal } from '../../src/domain/format';
 import { participatesInMilking, requiresAfternoonMeasurement } from '../../src/domain/herd';
 import { parseChatGptImport, stripMarkdownJson } from '../../src/domain/import';
 import { calculateTotal, confirmedTotal, estimateSplit } from '../../src/domain/milk';
+import { summarizeMilkDay } from '../../src/domain/milk-collection';
+import { isOpenMastitisStatus, mastitisActionTiming, withdrawalState } from '../../src/domain/mastitis';
+import { summarizeRegisteredCash } from '../../src/domain/finance';
 import { dateKeyInSaoPaulo, isOverdue, itemDifference } from '../../src/domain/purchases';
 import { summarizeReproduction } from '../../src/domain/reproduction';
 import { formatWeight, parseWeightImport, weightChange } from '../../src/domain/weight';
@@ -32,6 +35,7 @@ describe('formatação e normalização', () => {
 describe('produção de leite', () => {
   it('calcula o total diário a partir da manhã e da tarde', () => {
     expect(calculateDailyMilkTotal(410.25, 302.1)).toBe(712.35);
+    expect(calculateDailyMilkTotal(210, null)).toBe(210);
   });
   it('aplica a regra configurável do grupo sem inventar ordenha à tarde', () => {
     expect(participatesInMilking('MORNING_AND_AFTERNOON')).toBe(true);
@@ -53,6 +57,26 @@ describe('produção de leite', () => {
       { productionDate: '2026-06-30', totalLiters: 590 },
     ], '2026-07');
     expect(summary).toEqual({ measuredDays: 2, total: 1220, average: 610 });
+  });
+
+  it('aceita produção por lote sem contar duas vezes quando há total do rebanho', () => {
+    const rows = [
+      { id: 'geral', productionDate: '2026-07-01', herdGroupId: null, totalLiters: 385 },
+      { id: 'lote-1', productionDate: '2026-07-01', herdGroupId: 'grupo-1', totalLiters: 210 },
+      { id: 'lote-2', productionDate: '2026-07-01', herdGroupId: 'grupo-2', totalLiters: 175 },
+      { id: 'lote-3', productionDate: '2026-07-02', herdGroupId: 'grupo-1', totalLiters: 200 },
+      { id: 'lote-4', productionDate: '2026-07-02', herdGroupId: 'grupo-2', totalLiters: 150 },
+    ];
+    expect(resolveDailyMilkByDate(rows)).toEqual([
+      { productionDate: '2026-07-01', totalLiters: 385, basis: 'HERD_TOTAL', groupCount: 2, recordIds: ['geral'] },
+      { productionDate: '2026-07-02', totalLiters: 350, basis: 'GROUP_SUM', groupCount: 2, recordIds: ['lote-3', 'lote-4'] },
+    ]);
+    expect(summarizeDailyMilk(rows, '2026-07')).toEqual({ measuredDays: 2, total: 735, average: 367.5 });
+  });
+
+  it('compara produção e coleta como fatos independentes', () => {
+    expect(summarizeMilkDay(385, [360])).toEqual({ productionLiters: 385, collectedLiters: 360, differenceLiters: 25 });
+    expect(summarizeMilkDay(null, [180, 180])).toEqual({ productionLiters: null, collectedLiters: 360, differenceLiters: null });
   });
 
   it('soma manhã e tarde', () => expect(calculateTotal(12, 9)).toBe(21));
@@ -142,6 +166,36 @@ describe('compras', () => {
 
   it('calcula divergência dos itens sem mudar o total', () => {
     expect(itemDifference(100, [{ totalPrice: 40 }, { totalPrice: 55 }])).toBe(-5);
+  });
+
+  it('calcula somente o caixa registrado e ignora cancelados', () => {
+    expect(summarizeRegisteredCash([
+      { status: 'RECEIVED', amount: 1200 }, { status: 'EXPECTED', amount: 500 }, { status: 'CANCELLED', amount: 300 },
+    ], [
+      { status: 'PAID', totalAmount: 450 }, { status: 'OPEN', totalAmount: 200 }, { status: 'CANCELLED', totalAmount: 100 },
+    ])).toEqual({ received: 1200, expected: 500, paid: 450, open: 200, cashResult: 750 });
+  });
+});
+
+describe('mastite', () => {
+  it('mantém recorrência aberta e resolução apenas no histórico', () => {
+    expect(isOpenMastitisStatus('RECURRENT')).toBe(true);
+    expect(isOpenMastitisStatus('NO_IMPROVEMENT')).toBe(true);
+    expect(isOpenMastitisStatus('RESOLVED')).toBe(false);
+    expect(isOpenMastitisStatus('CANCELLED')).toBe(false);
+  });
+
+  it('distingue ação de hoje, atrasada e concluída', () => {
+    expect(mastitisActionTiming({ scheduledFor: '2026-07-15T12:00:00-03:00' }, '2026-07-15')).toBe('TODAY');
+    expect(mastitisActionTiming({ scheduledFor: '2026-07-14T12:00:00-03:00' }, '2026-07-15')).toBe('OVERDUE');
+    expect(mastitisActionTiming({ scheduledFor: '2026-07-14T12:00:00-03:00', completedAt: '2026-07-14T13:00:00-03:00' }, '2026-07-15')).toBe('COMPLETED');
+  });
+
+  it('mantém a carência como data informada e não libera automaticamente', () => {
+    expect(withdrawalState('2026-07-18', 'WITHDRAWAL_PERIOD', '2026-07-15')).toEqual({ days: 3, state: 'ACTIVE' });
+    expect(withdrawalState('2026-07-15', 'WITHDRAWAL_PERIOD', '2026-07-15')).toEqual({ days: 0, state: 'ENDS_TODAY' });
+    expect(withdrawalState('2026-07-14', 'WITHDRAWAL_PERIOD', '2026-07-15')).toEqual({ days: -1, state: 'PAST_DUE' });
+    expect(withdrawalState('2026-07-18', 'RESOLVED', '2026-07-15')).toBeNull();
   });
 });
 

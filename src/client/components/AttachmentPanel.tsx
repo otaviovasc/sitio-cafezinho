@@ -8,8 +8,8 @@ export type Attachment = {
   storageStatus: string; notes: string | null;
 };
 
-export function AttachmentPanel({ attachments, purchaseId, milkSessionId, onChange }: {
-  attachments: Attachment[]; purchaseId?: string; milkSessionId?: string; onChange: () => void;
+export function AttachmentPanel({ attachments, purchaseId, milkSessionId, milkCollectionId, revenueId, animalExitId, onChange }: {
+  attachments: Attachment[]; purchaseId?: string; milkSessionId?: string; milkCollectionId?: string; revenueId?: string; animalExitId?: string; onChange: () => void;
 }) {
   const [documentType, setDocumentType] = useState('OTHER');
   const [busy, setBusy] = useState(false);
@@ -30,6 +30,9 @@ export function AttachmentPanel({ attachments, purchaseId, milkSessionId, onChan
     form.set('documentType', documentType);
     if (purchaseId) form.set('purchaseId', purchaseId);
     if (milkSessionId) form.set('milkSessionId', milkSessionId);
+    if (milkCollectionId) form.set('milkCollectionId', milkCollectionId);
+    if (revenueId) form.set('revenueId', revenueId);
+    if (animalExitId) form.set('animalExitId', animalExitId);
     setBusy(true); setError('');
     try {
       await api('/api/attachments', { method: 'POST', body: form });

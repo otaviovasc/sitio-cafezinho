@@ -72,7 +72,7 @@ Decisão de escopo: seguir a correção 80/20 — local em volume Docker e Railw
 - [x] Criar Lote 1 e Lote 2 como dados iniciais com rotina configurável
 - [x] Registrar histórico datado de mudança de grupo por animal
 - [x] Iniciar todos os animais do seed no Lote 1 e registrar mudanças posteriores
-- [x] Impedir total diário e controle individual na mesma data
+- [x] Permitir total diário e controle individual na mesma data como fatos independentes
 - [x] Exigir controle completo das vacas em lactação dos grupos com ordenha
 - [x] Cadastrar animal durante o controle individual
 - [x] Adicionar filtros, buscas e listas roláveis consistentes
@@ -92,3 +92,15 @@ Decisão de escopo: seguir a correção 80/20 — local em volume Docker e Railw
 - [x] Atualizar seed e testes com ciclos reprodutivos plausíveis
 - [x] Criar guia manual de QA para a família
 - [x] Revalidar Docker, testes reais e screenshots responsivos
+
+## Evolução para operação diária
+
+- [x] Permitir produção total diária do rebanho todo ou por lote, preservando históricos e evitando dupla contagem
+- [x] Remover a exclusividade entre produção agregada e controle individual
+- [x] Adicionar coleta independente, comparação factual e documentos
+- [x] Adicionar casos e ações de mastite, carência informada e histórico no animal
+- [x] Adicionar receitas, caixa registrado e saída econômica sem duplicar receita
+- [x] Transformar a rota principal em Hoje com pendências reais e ações prioritárias
+- [x] Adicionar exportações CSV e scripts de backup/restauração PostgreSQL 17
+- [x] Ensaiar backup e restauração em banco local descartável
+- [ ] Validar Railway e Google Drive em produção — adiado por decisão do responsável

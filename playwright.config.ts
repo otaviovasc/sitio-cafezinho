@@ -8,7 +8,6 @@ export default defineConfig({
   reporter: [['list'], ['html', { open: 'never' }]],
   use: {
     baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:3000',
-    launchOptions: { args: ['--disable-gpu'] },
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },

@@ -1,93 +1,61 @@
-import { AlertTriangle, BookOpen, CalendarClock, ChartNoAxesCombined, FileText, Home, Milk, RefreshCw, Scale, Tags, Upload, WalletCards } from 'lucide-react';
+import { Activity, AlertTriangle, Banknote, CalendarClock, FileText, Home, Milk, Plus, Truck, WalletCards } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { formatDate, formatLiters, formatMoney } from '../../domain/format';
-import { formatWeight } from '../../domain/weight';
 import { CowHead } from '../components/icons';
-import { TimeSeriesChart } from '../components/TimeSeriesChart';
-import { Badge, EmptyState, ErrorState, LoadingState, PageHeader, SectionCard, StatCard } from '../components/ui';
+import { Badge, ErrorState, LoadingState, PageHeader, SectionCard, StatCard } from '../components/ui';
 import { useResource } from '../hooks/useResource';
-import { categoryLabels } from '../lib/labels';
 
 type Dashboard = {
-  dailyProduction: {
-    latest: null | { id: string; productionDate: string; morningLiters: string | null; afternoonLiters: string | null; totalLiters: string; notes: string | null };
-    month: { measuredDays: number; total: number; average: number };
-    recent: Array<{ id: string; productionDate: string; totalLiters: string }>;
-    comparison: { current: { measuredDays: number; total: number; average: number }; previous: { measuredDays: number; total: number; average: number }; previousMonth: string };
-    timeline: Array<{ date: string; totalLiters: number; source: string }>;
+  date: string;
+  today: {
+    production: null | { productionDate: string; totalLiters: number; basis: 'HERD_TOTAL' | 'GROUP_SUM'; groupCount: number };
+    collectionCount: number;
+    milk: { productionLiters: number | null; collectedLiters: number; differenceLiters: number | null };
+    activeTreatmentCount: number;
+    activeCaseCount: number;
+    actionsToday: number;
+    overdueActions: number;
+    withdrawals: Array<{ caseId: string; animalId: string; animalName: string | null; tagNumber: string | null; withdrawalEndsAt: string; days: number; state: string }>;
   };
-  production: null | { sessionId: string; sessionDate: string; confirmedTotal: number; confirmedCount: number; average: number; reviewCount: number; highest: Array<{ id: string; rawAnimalLabel: string; totalLiters: string }>; lowest: Array<{ id: string; rawAnimalLabel: string; totalLiters: string }>; trend: Array<{ sessionId: string; sessionDate: string; total: number }> };
-  purchases: { monthTotal: number; previousMonthTotal: number; openCount: number; overdueCount: number; overdueTotal: number; upcoming: Array<{ id: string; description: string; dueDate: string; totalAmount: string }>; latest: Array<{ id: string; description: string; totalAmount: string; purchaseDate: string }>; categories: Array<[string, number]>; trend: Array<{ month: string; total: number }> };
-  herd: { total: number; lactating: number; dry: number; heifers: number; withoutGroup: number; groups: Array<{ id: string; name: string; milkingRoutine: string; animalCount: number }> };
-  weights: { latestDate: string | null; latestCount: number; latestAverage: number; reviewCount: number };
-  attention: { milkReview: number; weightReview: number; overduePurchases: number; overdueTotal: number; lactatingWithoutGroup: number };
-  documents: { standalone: number; errors: number; storageMode: string };
+  attention: { productionMissing: boolean; productionGroupsMissing: number; collectionMissing: boolean; mastitisActionsToday: number; overdueMastitisActions: number; withdrawals: number; purchasesDueTomorrow: number; overduePurchases: number; overdueTotal: number; milkReview: number; weightReview: number; standaloneDocuments: number; lactatingWithoutGroup: number };
+  month: { productionLiters: number; productionDays: number; collectionLiters: number; revenuesReceived: number; revenuesExpected: number; expensesPaid: number; purchasesOpen: number; cashResult: number; mastitisCases: number };
+  herd: { total: number; lactating: number; dry: number; heifers: number; groups: Array<{ id: string; name: string; milkingRoutine: string; animalCount: number }> };
+  latestIndividualControl: null | { id: string; sessionDate: string; confirmedTotal: number; reviewCount: number };
+  documents: { errors: number; storageMode: string };
 };
-
-function percentageChange(current: number, previous: number) {
-  if (!previous) return null;
-  return ((current - previous) / previous) * 100;
-}
-
-function ChangeDetail({ current, previous, inverse = false }: { current: number; previous: number; inverse?: boolean }) {
-  const change = percentageChange(current, previous);
-  if (change === null) return <span>Sem base no mês anterior</span>;
-  const favorable = inverse ? change <= 0 : change >= 0;
-  return <span className={favorable ? 'text-[var(--success)]' : 'text-[var(--warning)]'}>{change > 0 ? '+' : ''}{change.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% vs. mês anterior</span>;
-}
 
 export function DashboardPage() {
   const { data, loading, error, reload } = useResource<Dashboard>('/api/dashboard');
   if (loading) return <div className="page"><LoadingState /></div>;
   if (error || !data) return <div className="page"><ErrorState message={error || 'Painel indisponível.'} retry={reload} /></div>;
-  const attentionCount = data.attention.milkReview + data.attention.weightReview + data.attention.overduePurchases + data.attention.lactatingWithoutGroup;
-  const productionChart = data.dailyProduction.timeline.map((row) => ({ date: row.date, total: row.totalLiters }));
-  const purchaseChart = data.purchases.trend.map((row) => ({ date: `${row.month}-01`, total: row.total }));
-  return <div className="page">
-    <PageHeader icon={Home} title="Início" subtitle="Resumo operacional com dados registrados — sem preencher dias ausentes" />
-
-    <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-5">
-      <Link className="quick-action quick-action-primary" to="/producao#total-diario"><Milk size={22} aria-hidden /><span><strong>Total do dia</strong><small>Registro rápido</small></span></Link>
-      <Link className="quick-action" to="/producao/importar"><Upload size={22} aria-hidden /><span><strong>Controle individual</strong><small>Importar do ChatGPT</small></span></Link>
-      <Link className="quick-action" to="/pesos/importar"><Scale size={22} aria-hidden /><span><strong>Nova pesagem</strong><small>Parcial ou completa</small></span></Link>
-      <Link className="quick-action" to="/compras/nova"><WalletCards size={22} aria-hidden /><span><strong>Nova compra</strong><small>Menos de um minuto</small></span></Link>
-      <Link className="quick-action col-span-2 lg:col-span-1" to="/rebanho/novo"><CowHead size={22} aria-hidden /><span><strong>Cadastrar rebanho</strong><small>Uma ou várias vacas</small></span></Link>
-    </div>
-
+  const attentionCount = Number(data.attention.productionMissing) + data.attention.productionGroupsMissing + Number(data.attention.collectionMissing) + data.attention.mastitisActionsToday + data.attention.overdueMastitisActions + data.attention.withdrawals + data.attention.purchasesDueTomorrow + data.attention.overduePurchases + data.attention.milkReview + data.attention.weightReview + data.attention.standaloneDocuments + data.attention.lactatingWithoutGroup;
+  return <div className="page"><PageHeader icon={Home} title="Hoje" subtitle={`${formatDate(data.date)} · o que precisa ser registrado ou resolvido`} />
     <div className="grid gap-5">
-      <SectionCard icon={AlertTriangle} title={attentionCount ? `Atenção · ${attentionCount}` : 'Tudo em ordem'}>
-        {!attentionCount ? <div className="notice notice-info">Não há revisões, contas vencidas ou vacas em lactação sem lote.</div> : <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          {data.attention.milkReview > 0 && <Link className="attention-item" to="/producao"><Milk size={20} aria-hidden /><span><strong>{data.attention.milkReview} produção(ões)</strong><small>Aguardando revisão</small></span></Link>}
-          {data.attention.weightReview > 0 && <Link className="attention-item" to="/pesos"><Scale size={20} aria-hidden /><span><strong>{data.attention.weightReview} peso(s)</strong><small>Aguardando revisão</small></span></Link>}
+      <SectionCard icon={AlertTriangle} title={attentionCount ? `Precisa de atenção · ${attentionCount}` : 'Nenhuma pendência importante para hoje'}>
+        {!attentionCount ? <div className="notice notice-info">Nenhuma pendência importante para hoje.</div> : <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {data.attention.productionMissing && <Link className="attention-item" to="/producao#total-diario"><Milk size={20} aria-hidden /><span><strong>Produção de hoje ainda não registrada</strong><small>Abrir registro agregado</small></span></Link>}
+          {data.attention.productionGroupsMissing > 0 && <Link className="attention-item" to="/producao#total-diario"><Milk size={20} aria-hidden /><span><strong>{data.attention.productionGroupsMissing} lote(s) sem produção de hoje</strong><small>Completar registros por lote</small></span></Link>}
+          {data.attention.collectionMissing && <Link className="attention-item" to="/producao/coletas/nova"><Truck size={20} aria-hidden /><span><strong>Coleta de hoje ainda não registrada</strong><small>Registrar litros retirados</small></span></Link>}
+          {data.attention.mastitisActionsToday > 0 && <Link className="attention-item" to="/mastite"><Activity size={20} aria-hidden /><span><strong>{data.attention.mastitisActionsToday} ação(ões) de mastite para hoje</strong><small>Abrir casos</small></span></Link>}
+          {data.attention.overdueMastitisActions > 0 && <Link className="attention-item attention-danger" to="/mastite"><Activity size={20} aria-hidden /><span><strong>{data.attention.overdueMastitisActions} ação(ões) atrasada(s)</strong><small>Atualizar ações</small></span></Link>}
+          {data.attention.withdrawals > 0 && <Link className="attention-item" to="/mastite"><Activity size={20} aria-hidden /><span><strong>{data.attention.withdrawals} vaca(s) com carência informada</strong><small>Confirmar antes de liberar o leite</small></span></Link>}
+          {data.attention.purchasesDueTomorrow > 0 && <Link className="attention-item" to="/compras"><CalendarClock size={20} aria-hidden /><span><strong>{data.attention.purchasesDueTomorrow} conta(s) vence(m) amanhã</strong><small>Abrir compras</small></span></Link>}
           {data.attention.overduePurchases > 0 && <Link className="attention-item attention-danger" to="/compras"><CalendarClock size={20} aria-hidden /><span><strong>{data.attention.overduePurchases} conta(s) vencida(s)</strong><small>{formatMoney(data.attention.overdueTotal)}</small></span></Link>}
-          {data.attention.lactatingWithoutGroup > 0 && <Link className="attention-item" to="/rebanho"><Tags size={20} aria-hidden /><span><strong>{data.attention.lactatingWithoutGroup} sem lote</strong><small>Vacas em lactação</small></span></Link>}
+          {data.attention.milkReview > 0 && <Link className="attention-item" to="/producao"><Milk size={20} aria-hidden /><span><strong>{data.attention.milkReview} medição(ões) aguardando revisão</strong><small>Controle individual</small></span></Link>}
+          {data.attention.weightReview > 0 && <Link className="attention-item" to="/pesos"><CowHead size={20} aria-hidden /><span><strong>{data.attention.weightReview} peso(s) aguardando revisão</strong><small>Abrir pesagens</small></span></Link>}
+          {data.attention.standaloneDocuments > 0 && <Link className="attention-item" to="/documentos"><FileText size={20} aria-hidden /><span><strong>{data.attention.standaloneDocuments} documento(s) sem vínculo</strong><small>Organizar documentos</small></span></Link>}
         </div>}
       </SectionCard>
 
-      <section><div className="mb-3 flex items-center gap-2"><ChartNoAxesCombined className="text-[var(--primary)]" size={20} aria-hidden /><h2 className="text-xl font-bold">Visão do mês</h2></div><div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard label="Produção média/dia medido" value={formatLiters(data.dailyProduction.comparison.current.average)} detail={<><span>{data.dailyProduction.comparison.current.measuredDays} dia(s) registrados</span><br /><ChangeDetail current={data.dailyProduction.comparison.current.average} previous={data.dailyProduction.comparison.previous.average} /></>} />
-        <StatCard label="Produção registrada" value={formatLiters(data.dailyProduction.comparison.current.total)} detail="Total dos dias medidos no mês" />
-        <StatCard label="Compras no mês" value={formatMoney(data.purchases.monthTotal)} detail={<ChangeDetail current={data.purchases.monthTotal} previous={data.purchases.previousMonthTotal} inverse />} />
-        <StatCard label="Rebanho produtivo" value={`${data.herd.lactating} em lactação`} detail={`${data.herd.dry} seca(s) · ${data.herd.heifers} novilha(s) · ${data.herd.total} total`} />
-      </div></section>
+      <section><h2 className="mb-3 text-xl font-bold">Ações rápidas</h2><div className="grid grid-cols-2 gap-3 lg:grid-cols-4"><Link className="quick-action quick-action-primary" to="/producao#total-diario"><Milk size={22} aria-hidden /><span><strong>Registrar produção</strong><small>Manhã e tarde</small></span></Link><Link className="quick-action" to="/producao/coletas/nova"><Truck size={22} aria-hidden /><span><strong>Registrar coleta</strong><small>Data e litros</small></span></Link><Link className="quick-action" to="/mastite/nova"><Activity size={22} aria-hidden /><span><strong>Registrar mastite</strong><small>Fato observado</small></span></Link><Link className="quick-action" to="/compras/nova"><WalletCards size={22} aria-hidden /><span><strong>Registrar saída</strong><small>Compra, conta ou despesa</small></span></Link></div><details className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3"><summary className="min-h-11 cursor-pointer py-2 font-bold">Mais ações</summary><div className="mt-2 flex flex-wrap gap-2"><Link className="button button-secondary" to="/receitas/nova"><Plus size={17} aria-hidden />Registrar entrada</Link><Link className="button button-secondary" to="/documentos">Enviar documento</Link><Link className="button button-secondary" to="/producao/importar">Controle individual</Link><Link className="button button-secondary" to="/configuracoes/dados">Exportar dados</Link></div></details></section>
 
-      <div className="grid gap-5 lg:grid-cols-2">
-        <SectionCard icon={Milk} title="Produção nos últimos registros"><p className="mb-3 text-xs text-[var(--muted)]">Combina total diário e soma do controle individual. Dias sem medição ficam ausentes.</p><TimeSeriesChart data={productionChart} series={[{ key: 'total', label: 'Produção', color: '#315c3b', area: true }]} label="Produção total registrada" /><Link className="button button-secondary mt-3" to="/producao">Analisar produção</Link></SectionCard>
-        <SectionCard icon={WalletCards} title="Compras nos últimos 3 meses"><p className="mb-3 text-xs text-[var(--muted)]">Somente compras não canceladas registradas no sistema.</p><TimeSeriesChart data={purchaseChart} series={[{ key: 'total', label: 'Compras', color: '#8a5a0a', area: true }]} valuePrefix="R$ " valueSuffix="" label="Compras registradas por mês" /><Link className="button button-secondary mt-3" to="/compras">Abrir compras</Link></SectionCard>
-      </div>
+      <section><h2 className="mb-3 text-xl font-bold">Resumo de hoje</h2><div className="grid grid-cols-2 gap-3 lg:grid-cols-5"><StatCard label={data.today.production?.basis === 'GROUP_SUM' ? 'Produção por lote' : 'Produção agregada'} value={data.today.milk.productionLiters === null ? 'Não registrada' : formatLiters(data.today.milk.productionLiters)} detail={data.today.production?.basis === 'GROUP_SUM' ? `Soma de ${data.today.production.groupCount} lote(s) registrado(s)` : data.today.production ? 'Rebanho todo' : undefined} /><StatCard label="Coleta" value={data.today.collectionCount ? formatLiters(data.today.milk.collectedLiters) : 'Não registrada'} detail={data.today.collectionCount ? `${data.today.collectionCount} coleta(s)` : undefined} /><StatCard label="Diferença observada" value={data.today.milk.differenceLiters === null ? '—' : formatLiters(data.today.milk.differenceLiters)} detail="Não classificada como perda" /><StatCard label="Animais em tratamento" value={data.today.activeTreatmentCount} /><StatCard label="Casos de mastite abertos" value={data.today.activeCaseCount} /></div>{data.today.milk.differenceLiters !== null && <p className="mt-2 text-xs text-[var(--muted)]">A diferença pode envolver leite no tanque, descarte, consumo, bezerros, horários ou períodos diferentes.</p>}</section>
 
-      <div className="grid gap-5 lg:grid-cols-2">
-        <SectionCard icon={CowHead} title="Rebanho e lotes"><div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><StatCard label="Em lactação" value={data.herd.lactating} /><StatCard label="Secas" value={data.herd.dry} /><StatCard label="Novilhas" value={data.herd.heifers} /><StatCard label="Total" value={data.herd.total} /></div><div className="mt-4">{data.herd.groups.map((group) => <div className="mobile-item" key={group.id}><span><strong>{group.name}</strong><span className="block text-xs text-[var(--muted)]">{group.milkingRoutine === 'MORNING_ONLY' ? 'Somente manhã' : 'Manhã e tarde'}</span></span><Badge tone="neutral">{group.animalCount} vaca(s)</Badge></div>)}</div><Link className="button button-secondary mt-3" to="/rebanho">Gerenciar rebanho</Link></SectionCard>
-        <SectionCard icon={Scale} title="Última pesagem">{!data.weights.latestDate ? <EmptyState title="Nenhuma pesagem" description="Pesagens podem ser parciais e são revisadas antes de entrar no histórico." action={<Link className="button button-primary" to="/pesos/importar">Registrar pesagem</Link>} /> : <><div className="grid grid-cols-2 gap-3"><StatCard label="Data" value={formatDate(data.weights.latestDate)} /><StatCard label="Animais confirmados" value={data.weights.latestCount} /><StatCard label="Peso médio" value={formatWeight(data.weights.latestAverage)} /><StatCard label="A revisar" value={data.weights.reviewCount} /></div><Link className="button button-secondary mt-3" to="/pesos">Analisar pesos</Link></>}</SectionCard>
-      </div>
+      {data.today.withdrawals.length > 0 && <SectionCard title="Carência informada">{data.today.withdrawals.map((item) => <Link className="mobile-item" key={item.caseId} to={`/mastite/${item.caseId}`}><span><strong>{item.animalName || `Brinco ${item.tagNumber}`}</strong><span className="block text-xs text-[var(--muted)]">Carência informada até {formatDate(item.withdrawalEndsAt)} · confirme o encerramento</span></span><Badge tone={item.state === 'PAST_DUE' ? 'danger' : 'warning'}>{item.state === 'ENDS_TODAY' ? 'Termina hoje' : item.state === 'PAST_DUE' ? 'Atualização atrasada' : `${item.days} dia(s)`}</Badge></Link>)}</SectionCard>}
 
-      <SectionCard icon={WalletCards} title="Compras e vencimentos"><div className="grid grid-cols-3 gap-3"><StatCard label="Contas abertas" value={data.purchases.openCount} /><StatCard label="Vencidas" value={data.purchases.overdueCount} /><StatCard label="Total vencido" value={formatMoney(data.purchases.overdueTotal)} /></div>{data.purchases.upcoming.length > 0 && <div className="mt-4 min-w-0"><h3 className="text-sm font-bold">Próximos vencimentos</h3>{data.purchases.upcoming.map((purchase) => <Link to={`/compras/${purchase.id}`} className="mobile-item" key={purchase.id}><span className="min-w-0"><strong className="block truncate">{purchase.description}</strong><span className="text-xs text-[var(--muted)]">Vence {formatDate(purchase.dueDate)}</span></span><strong className="shrink-0">{formatMoney(purchase.totalAmount)}</strong></Link>)}</div>}<div className="mt-4 grid min-w-0 gap-4 sm:grid-cols-2"><div className="min-w-0"><h3 className="text-sm font-bold">Últimas compras</h3>{data.purchases.latest.slice(0, 4).map((purchase) => <Link to={`/compras/${purchase.id}`} className="mobile-item" key={purchase.id}><span className="min-w-0"><span className="block truncate">{purchase.description}</span><span className="text-xs text-[var(--muted)]">{formatDate(purchase.purchaseDate)}</span></span><strong className="shrink-0">{formatMoney(purchase.totalAmount)}</strong></Link>)}</div><div className="min-w-0"><h3 className="text-sm font-bold">Categorias no mês</h3>{data.purchases.categories.map(([category, total]) => <div className="mobile-item" key={category}><span className="min-w-0 truncate">{categoryLabels[category] ?? category}</span><strong className="shrink-0">{formatMoney(total)}</strong></div>)}</div></div></SectionCard>
+      <section><h2 className="mb-3 text-xl font-bold">Visão mensal</h2><div className="grid grid-cols-2 gap-3 lg:grid-cols-3"><StatCard label="Produção registrada no mês" value={formatLiters(data.month.productionLiters)} detail={`${data.month.productionDays} dia(s) medido(s)`} /><StatCard label="Leite coletado no mês" value={formatLiters(data.month.collectionLiters)} /><StatCard label="Receitas recebidas" value={formatMoney(data.month.revenuesReceived)} /><StatCard label="Despesas pagas" value={formatMoney(data.month.expensesPaid)} /><StatCard label="Resultado de caixa registrado" value={formatMoney(data.month.cashResult)} detail="Não representa lucro econômico completo" /><StatCard label="Casos de mastite" value={data.month.mastitisCases} /></div><Link className="button button-secondary mt-3" to="/financeiro"><Banknote size={17} aria-hidden />Abrir financeiro</Link></section>
 
-      {data.production && <SectionCard icon={CowHead} title="Último controle individual"><div className="grid grid-cols-2 gap-3 lg:grid-cols-4"><StatCard label="Data" value={formatDate(data.production.sessionDate)} /><StatCard label="Total confirmado" value={formatLiters(data.production.confirmedTotal)} /><StatCard label="Vacas confirmadas" value={data.production.confirmedCount} /><StatCard label="Média por vaca" value={formatLiters(data.production.average)} /></div>{data.production.reviewCount > 0 && <div className="notice notice-warning mt-4">{data.production.reviewCount} medição(ões) aguardando revisão e fora do total.</div>}<Link className="button button-secondary mt-4" to={`/producao/${data.production.sessionId}`}>Revisar controle</Link></SectionCard>}
-
-      <SectionCard icon={BookOpen} title="Guia rápido"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5"><div className="guide-step"><span className="guide-number">1</span><Milk size={22} aria-hidden /><strong>Dia comum</strong><p>Registre manhã e tarde; o total é calculado.</p></div><div className="guide-step"><span className="guide-number">2</span><Upload size={22} aria-hidden /><strong>Dia de controle</strong><p>Importe manhã e tarde de todas as vacas em lactação.</p></div><div className="guide-step"><span className="guide-number">3</span><RefreshCw size={22} aria-hidden /><strong>Ciclo produtivo</strong><p>Registre seca, parto, cio e resultado da cobertura no animal.</p></div><div className="guide-step"><span className="guide-number">4</span><Scale size={22} aria-hidden /><strong>Pesagem</strong><p>Pode pesar somente parte do rebanho.</p></div><div className="guide-step"><span className="guide-number">5</span><WalletCards size={22} aria-hidden /><strong>Compras</strong><p>Uma compra pode ter nota, boleto e comprovante.</p></div></div></SectionCard>
-
-      <SectionCard icon={FileText} title="Documentos"><div className="grid grid-cols-2 gap-3"><StatCard label="Avulsos" value={data.documents.standalone} /><StatCard label="Uploads com erro" value={data.documents.errors} /></div><p className="mt-3 text-sm text-[var(--muted)]">Armazenamento: {data.documents.storageMode === 'google_drive' ? 'Google Drive' : 'volume local persistente'}.</p></SectionCard>
+      {data.latestIndividualControl && <SectionCard title="Último controle individual"><div className="flex flex-wrap items-center justify-between gap-3"><div><strong>{formatDate(data.latestIndividualControl.sessionDate)} · {formatLiters(data.latestIndividualControl.confirmedTotal)}</strong>{data.latestIndividualControl.reviewCount > 0 && <span className="ml-2"><Badge tone="warning">{data.latestIndividualControl.reviewCount} a revisar</Badge></span>}</div><Link className="button button-secondary" to={`/producao/${data.latestIndividualControl.id}`}>Abrir controle</Link></div></SectionCard>}
     </div>
   </div>;
 }

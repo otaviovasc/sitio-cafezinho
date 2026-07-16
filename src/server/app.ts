@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
-import { logger } from 'hono/logger';
 import { requireSession } from './auth.js';
 import { ApiError } from './http/api-error.js';
 import { animalRoutes } from './routes/animals.routes.js';
@@ -10,6 +9,10 @@ import { dashboardRoutes } from './routes/dashboard.routes.js';
 import { dailyMilkRoutes } from './routes/daily-milk.routes.js';
 import { herdGroupRoutes } from './routes/herd-groups.routes.js';
 import { milkRoutes } from './routes/milk.routes.js';
+import { milkCollectionRoutes } from './routes/milk-collections.routes.js';
+import { mastitisRoutes } from './routes/mastitis.routes.js';
+import { revenueRoutes } from './routes/revenues.routes.js';
+import { dataExportRoutes } from './routes/data-exports.routes.js';
 import { purchaseRoutes } from './routes/purchases.routes.js';
 import { sessionRoutes } from './routes/session.routes.js';
 import { supplierRoutes } from './routes/suppliers.routes.js';
@@ -23,7 +26,11 @@ export function createApp() {
     c.header('x-request-id', c.req.header('x-request-id') ?? randomUUID());
     await next();
   });
-  app.use('/api/*', logger());
+  app.use('/api/*', async (c, next) => {
+    const startedAt = Date.now();
+    await next();
+    console.log(JSON.stringify({ level: 'info', requestId: c.res.headers.get('x-request-id'), method: c.req.method, path: c.req.path, status: c.res.status, durationMs: Date.now() - startedAt }));
+  });
 
   app.route('/api', systemRoutes);
   app.route('/api/session', sessionRoutes);
@@ -32,6 +39,10 @@ export function createApp() {
   app.route('/api', herdGroupRoutes);
   app.route('/api', milkRoutes);
   app.route('/api', dailyMilkRoutes);
+  app.route('/api', milkCollectionRoutes);
+  app.route('/api', mastitisRoutes);
+  app.route('/api', revenueRoutes);
+  app.route('/api', dataExportRoutes);
   app.route('/api', supplierRoutes);
   app.route('/api', purchaseRoutes);
   app.route('/api', attachmentRoutes);
@@ -42,7 +53,7 @@ export function createApp() {
     const known = error instanceof ApiError;
     const status = known ? error.status : 500;
     const requestId = c.res.headers.get('x-request-id');
-    if (!known) console.error(`[${requestId}] Erro interno:`, error.message);
+    if (!known) console.error(JSON.stringify({ level: 'error', requestId, code: 'INTERNAL_ERROR', message: error.message }));
     return c.json({
       error: {
         code: known ? error.code : 'INTERNAL_ERROR',

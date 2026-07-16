@@ -22,7 +22,12 @@ export const attachmentRoutes = new Hono()
     if (file.size > MAX_FILE_SIZE) return fail('O arquivo deve ter no máximo 15 MB.', 413, 'FILE_TOO_LARGE');
     const purchaseId = String(form.get('purchaseId') || '') || null;
     const milkSessionId = String(form.get('milkSessionId') || '') || null;
-    if (purchaseId && milkSessionId) return fail('Um documento não pode estar ligado a compra e produção ao mesmo tempo.');
+    const milkCollectionId = String(form.get('milkCollectionId') || '') || null;
+    const revenueId = String(form.get('revenueId') || '') || null;
+    const animalExitId = String(form.get('animalExitId') || '') || null;
+    if ([purchaseId, milkSessionId, milkCollectionId, revenueId, animalExitId].filter(Boolean).length > 1) {
+      return fail('Um documento deve estar ligado a apenas um registro.');
+    }
     const documentType = validate(documentTypeSchema, String(form.get('documentType') || 'OTHER'));
     const notes = String(form.get('notes') || '') || null;
     const buffer = Buffer.from(await file.arrayBuffer());
@@ -50,6 +55,9 @@ export const attachmentRoutes = new Hono()
         documentType,
         purchaseId,
         milkSessionId,
+        milkCollectionId,
+        revenueId,
+        animalExitId,
         notes,
       }).returning();
       return c.json(created, 201);

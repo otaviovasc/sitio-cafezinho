@@ -8,6 +8,10 @@ import { DashboardPage } from './pages/DashboardPage';
 import { DocumentsPage } from './pages/DocumentsPage';
 import { LoginPage } from './pages/LoginPage';
 import { ImportMilkPage, MilkSessionDetailPage, MilkSessionsPage } from './pages/MilkPages';
+import { MilkCollectionDetailPage, NewMilkCollectionPage } from './pages/MilkCollectionPages';
+import { MastitisCaseDetailPage, MastitisCasesPage, NewMastitisCasePage } from './pages/MastitisPages';
+import { FinancePage, NewRevenuePage, RevenueDetailPage } from './pages/FinancePages';
+import { DataSettingsPage } from './pages/DataSettingsPage';
 import { NewPurchasePage, PurchaseDetailPage, PurchasesPage, SupplierDetailPage, SuppliersPage } from './pages/PurchasePages';
 import { ImportWeightsPage, WeightSessionDetailPage, WeightSessionsPage } from './pages/WeightPages';
 
@@ -38,6 +42,15 @@ export function App() {
     <Route path="/producao" element={<MilkSessionsPage />} />
     <Route path="/producao/nova" element={<Navigate to="/producao/importar" replace />} />
     <Route path="/producao/importar" element={<ImportMilkPage />} />
+    <Route path="/producao/coletas/nova" element={<NewMilkCollectionPage />} />
+    <Route path="/producao/coletas/:id" element={<MilkCollectionDetailPage />} />
+    <Route path="/mastite" element={<MastitisCasesPage />} />
+    <Route path="/mastite/nova" element={<NewMastitisCasePage />} />
+    <Route path="/mastite/:id" element={<MastitisCaseDetailPage />} />
+    <Route path="/financeiro" element={<FinancePage />} />
+    <Route path="/receitas/nova" element={<NewRevenuePage />} />
+    <Route path="/receitas/:id" element={<RevenueDetailPage />} />
+    <Route path="/configuracoes/dados" element={<DataSettingsPage />} />
     <Route path="/producao/:id" element={<MilkSessionDetailPage />} />
     <Route path="/compras" element={<PurchasesPage />} />
     <Route path="/compras/nova" element={<NewPurchasePage />} />

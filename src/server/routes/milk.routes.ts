@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { getDb } from '../../db/client.js';
 import { animalAliases, animals, attachments, dailyMilkTotals, milkMeasurements, milkSessions } from '../../db/schema.js';
 import { decimalString, normalizeLabel } from '../../domain/format.js';
+import { resolveDailyMilkByDate } from '../../domain/daily-milk.js';
 import { parseChatGptImport } from '../../domain/import.js';
 import { estimateSplit } from '../../domain/milk.js';
 import { fail } from '../http/api-error.js';
@@ -65,6 +66,7 @@ export const milkRoutes = new Hono()
   })
   .get('/milk-production-timeline', async (c) => {
     const daily = await getDb().select().from(dailyMilkTotals).orderBy(asc(dailyMilkTotals.productionDate));
+    const resolvedDaily = resolveDailyMilkByDate(daily);
     const sessions = await getDb().select({
       id: milkSessions.id,
       date: milkSessions.sessionDate,
@@ -72,7 +74,7 @@ export const milkRoutes = new Hono()
     }).from(milkSessions).leftJoin(milkMeasurements, eq(milkMeasurements.milkSessionId, milkSessions.id))
       .groupBy(milkSessions.id).orderBy(asc(milkSessions.sessionDate));
     return c.json([
-      ...daily.map((row) => ({ id: row.id, date: row.productionDate, totalLiters: row.totalLiters, source: 'DAILY_TOTAL' as const })),
+      ...resolvedDaily.map((row) => ({ id: row.recordIds[0] ?? `daily-groups-${row.productionDate}`, date: row.productionDate, totalLiters: decimalString(row.totalLiters), source: 'DAILY_TOTAL' as const, basis: row.basis, groupCount: row.groupCount })),
       ...sessions.map((row) => ({ id: row.id, date: row.date, totalLiters: row.totalLiters, source: 'INDIVIDUAL_CONTROL' as const })),
     ].sort((a, b) => a.date.localeCompare(b.date)));
   })

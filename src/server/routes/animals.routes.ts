@@ -1,21 +1,26 @@
-import { and, asc, desc, eq, gt, ilike, isNotNull, isNull, lte, ne, or } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, ilike, isNotNull, isNull, lte, ne, or, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb } from '../../db/client.js';
 import {
   animalAliases,
+  animalExits,
   animalGroupAssignments,
   animalReproductiveEvents,
   animals,
   animalStatusEvents,
+  attachments,
   animalWeights,
   herdGroups,
+  mastitisActions,
+  mastitisCases,
   milkMeasurements,
   milkSessions,
+  revenues,
   weightSessions,
 } from '../../db/schema.js';
 import { animalStatuses, canTransitionStatus, statusRequiresMilkingGroup } from '../../domain/animal-lifecycle.js';
-import { normalizeLabel } from '../../domain/format.js';
+import { decimalString, normalizeLabel, parseDecimal } from '../../domain/format.js';
 import { reproductiveOutcomes, summarizeReproduction } from '../../domain/reproduction.js';
 import { fail } from '../http/api-error.js';
 import { optionalText, readJson, validate } from '../http/validation.js';
@@ -23,6 +28,23 @@ import { optionalText, readJson, validate } from '../http/validation.js';
 const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
 const statusSchema = z.enum(animalStatuses);
 const reproductiveOutcomeSchema = z.enum(reproductiveOutcomes);
+const exitTypes = ['CALF_SALE', 'BREEDING_SALE', 'PRODUCTIVE_CULL', 'HEALTH_CULL', 'MEAT_SALE', 'OTHER'] as const;
+const optionalPositiveDecimal = z.union([z.string(), z.number(), z.null()]).optional().transform((value, context): number | null => {
+  const parsed = parseDecimal(value);
+  if (parsed === null) return null;
+  if (parsed <= 0) { context.addIssue({ code: 'custom', message: 'Use um valor maior que zero.' }); return null; }
+  return parsed;
+});
+const exitSchema = z.object({
+  exitType: z.enum(exitTypes).nullable().optional(),
+  reason: optionalText,
+  buyerName: optionalText,
+  weightKg: optionalPositiveDecimal,
+  amount: optionalPositiveDecimal,
+  notes: optionalText,
+  createRevenue: z.boolean().optional().default(false),
+  existingRevenueId: z.string().uuid().nullable().optional(),
+}).nullable().optional();
 
 const reproductiveEventSchema = z.object({
   occurredOn: z.string().date(),
@@ -171,7 +193,7 @@ export const animalRoutes = new Hono()
     const db = getDb();
     const [animal] = await db.select().from(animals).where(eq(animals.id, id)).limit(1);
     if (!animal) return fail('Animal não encontrado.', 404, 'NOT_FOUND');
-    const [aliases, weights, history, groupHistory, statusHistory, reproductiveEvents] = await Promise.all([
+    const [aliases, weights, history, groupHistory, statusHistory, reproductiveEvents, mastitisHistory, mastitisActionRows, exitHistory, animalRevenueRows, animalExitDocuments] = await Promise.all([
       db.select().from(animalAliases).where(eq(animalAliases.animalId, id)).orderBy(asc(animalAliases.alias)),
       db.select({
         id: animalWeights.id,
@@ -207,6 +229,22 @@ export const animalRoutes = new Hono()
         .orderBy(desc(animalStatusEvents.changedOn), desc(animalStatusEvents.createdAt)),
       db.select().from(animalReproductiveEvents).where(eq(animalReproductiveEvents.animalId, id))
         .orderBy(desc(animalReproductiveEvents.occurredOn), desc(animalReproductiveEvents.createdAt)),
+      db.select().from(mastitisCases).where(eq(mastitisCases.animalId, id)).orderBy(desc(mastitisCases.detectedAt)),
+      db.select({
+        id: mastitisActions.id, mastitisCaseId: mastitisActions.mastitisCaseId, scheduledFor: mastitisActions.scheduledFor,
+        actionDescription: mastitisActions.actionDescription, completedAt: mastitisActions.completedAt,
+        completionNotes: mastitisActions.completionNotes, cancelledAt: mastitisActions.cancelledAt,
+      }).from(mastitisActions).innerJoin(mastitisCases, eq(mastitisActions.mastitisCaseId, mastitisCases.id))
+        .where(eq(mastitisCases.animalId, id)).orderBy(asc(mastitisActions.scheduledFor)),
+      db.select({
+        id: animalExits.id, statusEventId: animalExits.statusEventId, exitType: animalExits.exitType, reason: animalExits.reason,
+        buyerName: animalExits.buyerName, weightKg: animalExits.weightKg, amount: animalExits.amount, revenueId: animalExits.revenueId,
+        notes: animalExits.notes, changedOn: animalStatusEvents.changedOn, status: animalStatusEvents.status,
+      }).from(animalExits).innerJoin(animalStatusEvents, eq(animalExits.statusEventId, animalStatusEvents.id))
+        .where(eq(animalExits.animalId, id)).orderBy(desc(animalStatusEvents.changedOn)),
+      db.select().from(revenues).where(eq(revenues.animalId, id)).orderBy(desc(revenues.revenueDate)),
+      db.select().from(attachments).innerJoin(animalExits, eq(attachments.animalExitId, animalExits.id))
+        .where(and(eq(animalExits.animalId, id), isNull(attachments.deletedAt))),
     ]);
     const currentAssignment = groupHistory.find((assignment) => assignment.endedOn === null);
     const currentGroup = currentAssignment ? { id: currentAssignment.groupId, name: currentAssignment.groupName, milkingRoutine: currentAssignment.milkingRoutine } : null;
@@ -218,6 +256,9 @@ export const animalRoutes = new Hono()
       groupHistory,
       statusHistory,
       reproductiveEvents,
+      mastitisCases: mastitisHistory.map((item) => ({ ...item, actions: mastitisActionRows.filter((action) => action.mastitisCaseId === item.id) })),
+      exits: exitHistory.map((item) => ({ ...item, attachments: animalExitDocuments.filter((row) => row.attachments.animalExitId === item.id).map((row) => row.attachments) })),
+      revenues: animalRevenueRows,
       reproductiveSummary: summarizeReproduction(reproductiveEvents),
       currentGroup,
     });
@@ -232,7 +273,7 @@ export const animalRoutes = new Hono()
   })
   .post('/animals/:id/status-changes', async (c) => {
     const animalId = c.req.param('id');
-    const body = validate(z.object({ status: statusSchema, changedOn: z.string().date(), notes: optionalText, groupId: z.string().uuid().nullable().optional() }), await readJson(c));
+    const body = validate(z.object({ status: statusSchema, changedOn: z.string().date(), notes: optionalText, groupId: z.string().uuid().nullable().optional(), exit: exitSchema }), await readJson(c));
     if (body.changedOn > today()) return fail('A data da mudança não pode estar no futuro.', 400, 'FUTURE_STATUS_DATE');
     const db = getDb();
     const [animal] = await db.select().from(animals).where(eq(animals.id, animalId)).limit(1);
@@ -240,12 +281,22 @@ export const animalRoutes = new Hono()
     if (animal.status === body.status) return fail('A vaca já está nesta situação.', 409, 'SAME_STATUS');
     if (!canTransitionStatus(animal.status, body.status)) return fail('Esta mudança não faz parte do ciclo produtivo esperado. Corrija a última mudança se a situação atual estiver errada.', 409, 'INVALID_STATUS_TRANSITION');
     if ((body.status === 'SOLD' || body.status === 'DEAD') && !body.notes) return fail('Informe uma observação para preservar o motivo desta saída do rebanho.', 400, 'STATUS_NOTES_REQUIRED');
+    if (body.status === 'DEAD' && body.exit && (body.exit.amount || body.exit.createRevenue || body.exit.existingRevenueId || body.exit.buyerName || body.exit.exitType)) {
+      return fail('Morte não utiliza o fluxo comercial de venda.', 400, 'DEATH_COMMERCIAL_DATA');
+    }
+    if (body.status === 'SOLD' && body.exit?.createRevenue && body.exit.existingRevenueId) return fail('Escolha entre criar ou vincular uma receita.', 400, 'MULTIPLE_REVENUE_OPTIONS');
+    if (body.status === 'SOLD' && body.exit?.createRevenue && !body.exit.amount) return fail('Informe o valor para criar a receita da venda.', 400, 'SALE_AMOUNT_REQUIRED');
+    const [existingRevenue] = body.status === 'SOLD' && body.exit?.existingRevenueId
+      ? await db.select().from(revenues).where(eq(revenues.id, body.exit.existingRevenueId)).limit(1)
+      : [];
+    if (body.exit?.existingRevenueId && !existingRevenue) return fail('Receita não encontrada.', 404, 'REVENUE_NOT_FOUND');
+    if (existingRevenue?.animalId && existingRevenue.animalId !== animalId) return fail('A receita já está vinculada a outro animal.', 409, 'REVENUE_ANIMAL_CONFLICT');
     const [latestEvent] = await db.select().from(animalStatusEvents).where(eq(animalStatusEvents.animalId, animalId)).orderBy(desc(animalStatusEvents.changedOn), desc(animalStatusEvents.createdAt)).limit(1);
     if (latestEvent && body.changedOn < latestEvent.changedOn) return fail('A mudança não pode ser anterior à situação atual.', 400, 'INVALID_STATUS_DATE');
     const group = statusRequiresMilkingGroup(body.status) ? await getActiveMilkingGroup(body.groupId) : null;
     if (statusRequiresMilkingGroup(body.status) && !group) return fail('Ao entrar em lactação, escolha o lote de ordenha.', 400, 'GROUP_REQUIRED');
     const [currentGroup] = await db.select().from(animalGroupAssignments).where(and(eq(animalGroupAssignments.animalId, animalId), isNull(animalGroupAssignments.endedOn))).limit(1);
-    const event = await db.transaction(async (tx) => {
+    const result = await db.transaction(async (tx) => {
       if (currentGroup) await tx.update(animalGroupAssignments).set({ endedOn: body.changedOn }).where(eq(animalGroupAssignments.id, currentGroup.id));
       if (group) await tx.insert(animalGroupAssignments).values({ animalId, groupId: group.id, startedOn: body.changedOn, notes: 'Lote definido ao entrar em lactação.' });
       await tx.update(animals).set({ status: body.status, updatedAt: new Date() }).where(eq(animals.id, animalId));
@@ -259,9 +310,47 @@ export const animalRoutes = new Hono()
           notes: body.notes,
         });
       }
-      return created;
+      let revenueId = body.status === 'SOLD' ? (body.exit?.existingRevenueId ?? null) : null;
+      let revenueCreatedHere = false;
+      if (body.status === 'SOLD' && body.exit?.createRevenue && body.exit.amount) {
+        const category = body.exit.exitType === 'CALF_SALE' ? 'CALF_SALE' as const
+          : ['PRODUCTIVE_CULL', 'HEALTH_CULL', 'MEAT_SALE'].includes(body.exit.exitType ?? '') ? 'CULL_SALE' as const
+            : 'ANIMAL_SALE' as const;
+        const [revenue] = await tx.insert(revenues).values({
+          revenueDate: body.changedOn,
+          category,
+          description: `Venda de ${animal.name || `animal ${animal.tagNumber}`}`,
+          amount: decimalString(body.exit.amount),
+          status: 'RECEIVED',
+          receivedAt: new Date(),
+          animalId,
+          buyerName: body.exit.buyerName,
+          notes: body.exit.reason ?? body.notes,
+        }).returning();
+        revenueId = revenue.id;
+        revenueCreatedHere = true;
+      } else if (revenueId) {
+        await tx.update(revenues).set({ animalId, updatedAt: new Date() }).where(eq(revenues.id, revenueId));
+      }
+      let exitId: string | null = null;
+      if (body.status === 'SOLD' || body.status === 'DEAD') {
+        const [exit] = await tx.insert(animalExits).values({
+          animalId,
+          statusEventId: created.id,
+          exitType: body.status === 'SOLD' ? (body.exit?.exitType ?? null) : null,
+          reason: body.exit?.reason ?? body.notes,
+          buyerName: body.status === 'SOLD' ? (body.exit?.buyerName ?? null) : null,
+          weightKg: body.exit?.weightKg ? decimalString(body.exit.weightKg) : null,
+          amount: body.status === 'SOLD' && body.exit?.amount ? decimalString(body.exit.amount) : existingRevenue?.amount ?? null,
+          revenueId,
+          revenueCreatedHere,
+          notes: body.exit?.notes ?? null,
+        }).returning();
+        exitId = exit.id;
+      }
+      return { ...created, exitId, revenueId };
     });
-    return c.json(event, 201);
+    return c.json(result, 201);
   })
   .delete('/animals/:id/status-changes/:eventId', async (c) => {
     const animalId = c.req.param('id');
@@ -289,6 +378,14 @@ export const animalRoutes = new Hono()
     if (latest.previousStatus === 'LACTATING' && (!previousGroup || currentGroup)) {
       return fail('O histórico de lote mudou depois desta situação e impede o desfazimento seguro.', 409, 'STATUS_UNDO_GROUP_CHANGED');
     }
+    const [exit] = await db.select().from(animalExits).where(eq(animalExits.statusEventId, latest.id)).limit(1);
+    if (exit) {
+      const linkedDocuments = await db.select({ id: attachments.id }).from(attachments).where(or(
+        eq(attachments.animalExitId, exit.id),
+        exit.revenueId ? eq(attachments.revenueId, exit.revenueId) : sql`false`,
+      )).limit(1);
+      if (linkedDocuments.length) return fail('A saída possui documento vinculado. Remova o documento antes de desfazer.', 409, 'EXIT_HAS_DOCUMENTS');
+    }
     await db.transaction(async (tx) => {
       if (latest.status === 'LACTATING' && currentGroup) {
         await tx.delete(animalGroupAssignments).where(eq(animalGroupAssignments.id, currentGroup.id));
@@ -297,6 +394,7 @@ export const animalRoutes = new Hono()
         await tx.update(animalGroupAssignments).set({ endedOn: null }).where(eq(animalGroupAssignments.id, previousGroup.id));
       }
       await tx.update(animals).set({ status: latest.previousStatus!, updatedAt: new Date() }).where(eq(animals.id, animalId));
+      if (exit?.revenueCreatedHere && exit.revenueId) await tx.delete(revenues).where(eq(revenues.id, exit.revenueId));
       await tx.delete(animalStatusEvents).where(eq(animalStatusEvents.id, latest.id));
     });
     return c.json({ deleted: true, restoredStatus: latest.previousStatus });

@@ -4,6 +4,7 @@ import { closeDb, getDb } from './client.js';
 import { confirmedSeed, excludedSeed, pendingSeed } from './seed-data.js';
 import {
   animalAliases,
+  animalExits,
   animalGroupAssignments,
   animalReproductiveEvents,
   animals,
@@ -12,9 +13,13 @@ import {
   dailyMilkTotals,
   herdGroups,
   milkMeasurements,
+  milkCollections,
   milkSessions,
+  mastitisActions,
+  mastitisCases,
   purchaseItems,
   purchases,
+  revenues,
   suppliers,
   weightSessions,
 } from './schema.js';
@@ -170,6 +175,30 @@ async function runSeed() {
     }
 
     const [demoMarker] = await tx.select({ id: milkSessions.id }).from(milkSessions).where(eq(milkSessions.title, demoMarkerTitle)).limit(1);
+
+    const [demoCollection] = await tx.select({ id: milkCollections.id }).from(milkCollections).where(eq(milkCollections.notes, 'Coleta fictícia para demonstração local.')).limit(1);
+    if (!demoCollection) await tx.insert(milkCollections).values({ collectionDate: '2026-07-14', collectedAt: new Date('2026-07-14T09:10:00-03:00'), liters: '690.00', source: 'DRIVER_READING', notes: 'Coleta fictícia para demonstração local.' });
+
+    const caruja = animalByLabel.get(normalizeLabel('Caruja'));
+    if (caruja) {
+      let [demoCase] = await tx.select().from(mastitisCases).where(and(eq(mastitisCases.animalId, caruja.id), eq(mastitisCases.notes, 'Caso fictício para demonstração local.'))).limit(1);
+      if (!demoCase) [demoCase] = await tx.insert(mastitisCases).values({ animalId: caruja.id, detectedAt: new Date('2026-07-14T07:30:00-03:00'), affectedQuarter: 'FRONT_LEFT', detectionMethod: 'VISUAL', observedSigns: 'Grumos observados no leite — dado demonstrativo.', status: 'IN_TREATMENT', treatmentSummary: 'Tratamento informado pela família conforme orientação recebida.', treatmentStartedAt: new Date('2026-07-14T08:00:00-03:00'), withdrawalEndsAt: '2026-07-18', milkDiscardRequired: true, notes: 'Caso fictício para demonstração local.' }).returning();
+      const [demoAction] = await tx.select({ id: mastitisActions.id }).from(mastitisActions).where(and(eq(mastitisActions.mastitisCaseId, demoCase.id), eq(mastitisActions.actionDescription, 'Reavaliar leite — ação demonstrativa'))).limit(1);
+      if (!demoAction) await tx.insert(mastitisActions).values({ mastitisCaseId: demoCase.id, scheduledFor: new Date('2026-07-15T12:00:00-03:00'), actionDescription: 'Reavaliar leite — ação demonstrativa' });
+    }
+
+    const [demoMilkRevenue] = await tx.select({ id: revenues.id }).from(revenues).where(eq(revenues.description, 'Pagamento demonstrativo do laticínio')).limit(1);
+    if (!demoMilkRevenue) await tx.insert(revenues).values({ revenueDate: '2026-07-10', category: 'MILK_SALE', description: 'Pagamento demonstrativo do laticínio', amount: '18450.00', status: 'RECEIVED', receivedAt: new Date('2026-07-10T12:00:00-03:00'), periodStart: '2026-06-16', periodEnd: '2026-06-30', quantity: '10800.000', unitPrice: '1.7083', bonusAmount: '300.00', discountAmount: '300.00', buyerName: 'Laticínio demonstrativo', notes: 'Receita fictícia para demonstração local.' });
+
+    let [soldDemoAnimal] = await tx.select().from(animals).where(eq(animals.name, 'Bezerro fictício vendido')).limit(1);
+    if (!soldDemoAnimal) [soldDemoAnimal] = await tx.insert(animals).values({ name: 'Bezerro fictício vendido', tagNumber: 'DEMO-VENDA', status: 'SOLD', notes: 'Animal exclusivamente demonstrativo.' }).returning();
+    let [soldStatusEvent] = await tx.select().from(animalStatusEvents).where(and(eq(animalStatusEvents.animalId, soldDemoAnimal.id), eq(animalStatusEvents.status, 'SOLD'))).limit(1);
+    if (!soldStatusEvent) [soldStatusEvent] = await tx.insert(animalStatusEvents).values({ animalId: soldDemoAnimal.id, previousStatus: 'HEIFER', status: 'SOLD', changedOn: '2026-07-05', notes: 'Venda fictícia para demonstração local.' }).returning();
+    let [saleRevenue] = await tx.select().from(revenues).where(and(eq(revenues.animalId, soldDemoAnimal.id), eq(revenues.description, 'Venda demonstrativa de animal'))).limit(1);
+    if (!saleRevenue) [saleRevenue] = await tx.insert(revenues).values({ revenueDate: '2026-07-05', category: 'CALF_SALE', description: 'Venda demonstrativa de animal', amount: '1850.00', status: 'RECEIVED', receivedAt: new Date('2026-07-05T12:00:00-03:00'), animalId: soldDemoAnimal.id, buyerName: 'Comprador demonstrativo', notes: 'Receita fictícia vinculada à saída.' }).returning();
+    const [demoExit] = await tx.select({ id: animalExits.id }).from(animalExits).where(eq(animalExits.statusEventId, soldStatusEvent.id)).limit(1);
+    if (!demoExit) await tx.insert(animalExits).values({ animalId: soldDemoAnimal.id, statusEventId: soldStatusEvent.id, exitType: 'CALF_SALE', reason: 'Venda de cria — dado demonstrativo.', buyerName: 'Comprador demonstrativo', weightKg: '185.00', amount: '1850.00', revenueId: saleRevenue.id, revenueCreatedHere: true, notes: 'Saída fictícia para demonstração local.' });
+
     if (demoMarker) return;
 
     async function closeCurrentAssignment(label: string, endedOn: string) {

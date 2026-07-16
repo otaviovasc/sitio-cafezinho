@@ -44,6 +44,13 @@ a { color: inherit; text-decoration: none; }
   .input { background: var(--surface); border-color: var(--border); min-height: 46px; min-width: 0; @apply w-full rounded-xl border px-3 py-2.5 outline-none transition; }
   .input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
   .input-error { border-color: var(--danger); }
+  .choice-card { background: var(--surface); border-color: var(--border); min-height: 68px; @apply flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition; }
+  .choice-card:hover { border-color: var(--primary); }
+  .choice-card:has(input:focus-visible) { box-shadow: 0 0 0 3px var(--primary-soft); }
+  .choice-card input { accent-color: var(--primary); @apply h-5 w-5 shrink-0; }
+  .choice-card strong, .choice-card small { @apply block; }
+  .choice-card small { color: var(--muted); @apply mt-0.5 text-xs leading-4; }
+  .choice-card-active { background: var(--primary-soft); border-color: var(--primary); }
   .button { min-height: 44px; border-radius: 12px; @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50; }
   .button-primary { background: var(--primary); color: white; }
   .button-primary:hover { background: var(--primary-strong); }
@@ -86,6 +93,24 @@ a { color: inherit; text-decoration: none; }
   .attention-item strong, .attention-item small { @apply block; }
   .attention-item small { @apply mt-0.5 text-xs; }
   .attention-danger { background: #fff4f2; border-color: #f0c9c5; color: var(--danger); }
+  .finance-direction-switch { background: var(--surface); border-color: var(--border); @apply grid grid-cols-2 gap-1 rounded-[var(--radius)] border p-1; }
+  .finance-direction-option { color: var(--muted); min-height: 64px; @apply flex min-w-0 items-center gap-2 rounded-xl px-3 py-2; }
+  .finance-direction-option svg { @apply shrink-0; }
+  .finance-direction-option > span, .finance-action > span { @apply min-w-0; }
+  .finance-direction-option strong, .finance-direction-option small { @apply block; }
+  .finance-direction-option small { @apply mt-0.5 truncate text-xs; }
+  .finance-direction-option-active { background: var(--primary-soft); color: var(--primary-strong); }
+  .finance-direction-income svg { color: var(--success); }
+  .finance-direction-expense svg { color: var(--warning); }
+  .finance-action { background: var(--surface); border-color: var(--border); border-radius: var(--radius); min-height: 94px; @apply flex items-center gap-3 border p-4 transition; }
+  .finance-action:hover { border-color: var(--primary); }
+  .finance-action > svg { @apply shrink-0; }
+  .finance-action strong, .finance-action small { @apply block; }
+  .finance-action small { color: var(--muted); @apply mt-1 text-xs leading-4; }
+  .finance-action-income > svg { color: var(--success); }
+  .finance-action-expense > svg { color: var(--warning); }
+  .form-submit-bar { background: color-mix(in srgb, var(--background) 92%, transparent); bottom: calc(4.2rem + env(safe-area-inset-bottom)); @apply sticky z-10 -mx-1 rounded-xl p-1 backdrop-blur-sm sm:static sm:mx-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none; }
+  .form-submit-bar .button { @apply w-full sm:w-auto; }
 }
 
 @media (min-width: 768px) {

@@ -11,9 +11,9 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await expect(page.getByText('Senha incorreta.')).toBeVisible();
   await page.getByLabel('Senha', { exact: true }).fill(process.env.APP_PASSWORD ?? 'senha-local-segura');
   await page.getByRole('button', { name: 'Entrar' }).click();
-  await expect(page.getByRole('heading', { name: 'Início' })).toBeVisible();
-  await expect(page.getByText('Visão do mês')).toBeVisible();
-  await expect(page.getByText('Rebanho e lotes')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Hoje', exact: true })).toBeVisible();
+  await expect(page.getByText('Visão mensal')).toBeVisible();
+  await expect(page.getByText('Resumo de hoje')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('dashboard.png'), fullPage: true });
 
   await page.goto('/rebanho');
@@ -55,13 +55,13 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await page.getByLabel('Motivo ou observação').fill('Retorno à lactação de teste');
   await page.getByRole('button', { name: 'Registrar parto e iniciar lactação' }).click();
   await expect(page.getByText('Em lactação', { exact: true }).first()).toBeVisible();
-  await page.getByRole('button', { name: 'Registrar cio' }).click();
+  await page.getByRole('button', { name: 'Registrar cio', exact: true }).click();
   await page.getByRole('button', { name: 'Sim' }).click();
   await page.getByLabel('Touro (opcional)').fill('Touro teste');
   await page.getByRole('button', { name: 'Salvar cio' }).click();
   await expect(page.getByText('Cio com cobertura')).toBeVisible();
   await expect(page.getByText('Aguardando confirmação', { exact: true }).first()).toBeVisible();
-  await page.getByRole('button', { name: 'Mudar lote' }).click();
+  await page.getByRole('button', { name: 'Mudar lote' }).first().click();
   await page.getByLabel('Novo lote de ordenha').selectOption({ label: 'Lote 2' });
   await page.getByLabel('Data da mudança').fill('2026-07-15');
   await page.getByRole('button', { name: 'Registrar mudança' }).click();
@@ -103,30 +103,161 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await page.goto('/producao');
   await page.evaluate(async () => {
     const rows = await fetch('/api/daily-milk-totals').then((response) => response.json()) as Array<{ id: string; productionDate: string }>;
-    const existing = rows.find((row) => row.productionDate === '2026-07-15');
-    if (existing) await fetch(`/api/daily-milk-totals/${existing.id}`, { method: 'DELETE' });
+    for (const existing of rows.filter((row) => row.productionDate === '2026-05-06')) await fetch(`/api/daily-milk-totals/${existing.id}`, { method: 'DELETE' });
   });
   await page.reload();
-  await page.getByLabel('Data', { exact: true }).fill('2026-07-15');
-  await page.getByLabel('Manhã (L)').fill('410,5');
-  await page.getByLabel('Tarde (L)').fill('300');
+  await page.getByLabel('Data', { exact: true }).fill('2026-05-06');
+  await page.getByLabel('Manhã (L)').fill('210');
+  await page.getByLabel('Tarde (L)').fill('175');
   await page.getByRole('button', { name: 'Registrar total' }).click();
-  await expect(page.getByText('710,5 L', { exact: true })).toBeVisible();
+  await expect(page.getByText('385 L', { exact: true })).toBeVisible();
+
+  await page.getByLabel('Data', { exact: true }).fill('2026-05-06');
+  await page.getByLabel('Produção de').selectOption({ label: 'Lote 1' });
+  await page.getByLabel('Manhã (L)').fill('120');
+  await page.getByLabel('Tarde (L)').fill('80');
+  await page.getByRole('button', { name: 'Registrar total' }).click();
+  await expect(page.getByText('Lote: Lote 1', { exact: true })).toBeVisible();
+  await expect(page.getByText('200 L', { exact: true })).toBeVisible();
+
+  await page.getByLabel('Data', { exact: true }).fill('2026-05-06');
+  await page.getByLabel('Produção de').selectOption({ label: 'Lote 2' });
+  await expect(page.getByLabel('Tarde (L)')).toBeDisabled();
+  await page.getByLabel('Manhã (L)').fill('95');
+  await page.getByRole('button', { name: 'Registrar total' }).click();
+  await expect(page.getByText('Lote: Lote 2', { exact: true })).toBeVisible();
+
+  await page.getByLabel('Data', { exact: true }).fill('2026-05-06');
+  await page.getByLabel('Produção de').selectOption({ label: 'Lote 2' });
+  await page.getByLabel('Manhã (L)').fill('96');
+  await page.getByRole('button', { name: 'Registrar total' }).click();
+  await expect(page.getByText(/Já existe produção do lote Lote 2 nesta data/)).toBeVisible();
+
+  await page.evaluate(async () => {
+    const rows = await fetch('/api/milk-collections').then((response) => response.json()) as Array<{ id: string; collectionDate: string }>;
+    for (const row of rows.filter((item) => item.collectionDate === '2026-05-06')) await fetch(`/api/milk-collections/${row.id}`, { method: 'DELETE' });
+  });
+  await page.goto('/producao/coletas/nova');
+  await page.getByLabel('Data', { exact: true }).fill('2026-05-06');
+  await page.getByLabel('Litros retirados').fill('360');
+  await page.getByRole('button', { name: 'Registrar coleta' }).click();
+  await expect(page.getByRole('heading', { name: 'Coleta de 06/05/2026' })).toBeVisible();
+  await expect(page.getByText(/Produção agregada registrada/)).toBeVisible();
+  await expect(page.getByText(/Coleta registrada/)).toBeVisible();
+  await expect(page.getByText(/Diferença observada/)).toBeVisible();
+  const milkFacts = await page.evaluate(async () => {
+    const [daily, sessions, collections] = await Promise.all([
+      fetch('/api/daily-milk-totals').then((response) => response.json()) as Promise<Array<{ productionDate: string; herdGroupId: string | null; herdGroupName: string | null; morningLiters: string | null; afternoonLiters: string | null; totalLiters: string }>>,
+      fetch('/api/milk-sessions').then((response) => response.json()) as Promise<Array<{ sessionDate: string }>>,
+      fetch('/api/milk-collections').then((response) => response.json()) as Promise<Array<{ collectionDate: string; liters: string }>>,
+    ]);
+    const dayRows = daily.filter((row) => row.productionDate === '2026-05-06');
+    return {
+      overall: dayRows.find((row) => row.herdGroupId === null)?.totalLiters,
+      lot: dayRows.find((row) => row.herdGroupName === 'Lote 1')?.totalLiters,
+      morningOnlyLot: dayRows.find((row) => row.herdGroupName === 'Lote 2'),
+      session: sessions.some((row) => row.sessionDate === '2026-05-06'),
+      collection: collections.find((row) => row.collectionDate === '2026-05-06')?.liters,
+    };
+  });
+  expect(milkFacts).toEqual({
+    overall: '385.00',
+    lot: '200.00',
+    morningOnlyLot: expect.objectContaining({ morningLiters: '95.00', afternoonLiters: null, totalLiters: '95.00' }),
+    session: true,
+    collection: '360.00',
+  });
+
+  await page.goto('/mastite/nova');
+  await page.getByLabel('Animal').selectOption({ label: cowName });
+  await page.getByLabel('Sinal percebido ou observação').fill('Grumos observados no teste automatizado');
+  await page.getByText('Mais detalhes', { exact: true }).click();
+  await page.getByLabel('Carência informada até').fill('2026-07-18');
+  await page.getByLabel('Descarte de leite informado').check();
+  await page.getByRole('button', { name: 'Abrir caso de mastite' }).click();
+  await expect(page.getByRole('heading', { name: new RegExp(`Mastite — ${cowName}`) })).toBeVisible();
+  await expect(page.getByText(/Carência informada até 18\/07\/2026/)).toBeVisible();
+  await page.getByLabel('Data da ação').fill('2026-07-15');
+  await page.getByLabel('Ação informada').fill('Reavaliar leite no teste');
+  await page.getByRole('button', { name: 'Adicionar ação' }).click();
+  await expect(page.getByText('Reavaliar leite no teste')).toBeVisible();
+  await page.getByRole('button', { name: 'Concluir' }).click();
+  await expect(page.getByText('Realizada', { exact: true })).toBeVisible();
+
+  await page.goto('/receitas/nova');
+  await expect(page.getByRole('link', { name: /Entrada Venda ou receita/ })).toHaveAttribute('aria-current', 'page');
+  await page.screenshot({ path: testInfo.outputPath('nova-entrada.png'), fullPage: true });
+  await page.getByLabel('Descrição').fill(`Venda de leite ${suffix}`);
+  await page.getByLabel('Valor da entrada').fill('1250,50');
+  await page.getByRole('radio', { name: /Já recebi/ }).check();
+  await page.getByLabel('Categoria').selectOption('MILK_SALE');
+  await page.getByRole('button', { name: 'Registrar entrada' }).click();
+  await expect(page.getByText('R$ 1.250,50')).toBeVisible();
+
+  const saleAnimalName = `Animal venda ${suffix}`;
+  await page.goto('/rebanho/novo');
+  await page.getByLabel('Nome', { exact: true }).fill(saleAnimalName);
+  await page.getByRole('button', { name: 'Salvar animal' }).click();
+  await expect(page.getByRole('heading', { name: saleAnimalName })).toBeVisible();
+  const saleAnimalId = page.url().split('/').pop()!;
+  await page.getByRole('button', { name: 'Registrar saída' }).click();
+  await page.getByLabel('Motivo ou observação').fill('Venda automatizada de teste');
+  await page.getByLabel('Motivo', { exact: true }).fill('Venda de cria');
+  await page.getByLabel('Valor recebido').fill('1850');
+  await page.getByLabel('Criar receita de venda de animal').check();
+  await page.getByRole('button', { name: 'Registrar mudança' }).click();
+  await expect(page.getByText('Vendida', { exact: true }).first()).toBeVisible();
+  const saleFacts = await page.evaluate(async (animalId) => fetch(`/api/animals/${animalId}`).then((response) => response.json()) as Promise<{ exits: unknown[]; revenues: unknown[] }>, saleAnimalId);
+  expect(saleFacts.exits).toHaveLength(1);
+  expect(saleFacts.revenues).toHaveLength(1);
+
+  const deadAnimalName = `Animal morte ${suffix}`;
+  await page.goto('/rebanho/novo');
+  await page.getByLabel('Nome', { exact: true }).fill(deadAnimalName);
+  await page.getByRole('button', { name: 'Salvar animal' }).click();
+  await expect(page.getByRole('heading', { name: deadAnimalName })).toBeVisible();
+  const deadAnimalId = page.url().split('/').pop()!;
+  await page.getByRole('button', { name: 'Alterar situação' }).click();
+  await page.getByLabel('Nova situação').selectOption('DEAD');
+  await page.getByLabel('Motivo', { exact: true }).fill('Ocorrência automatizada de teste');
+  await page.getByLabel('Motivo ou observação').fill('Morte registrada somente para validar o fluxo');
+  await page.getByRole('button', { name: 'Registrar mudança' }).click();
+  await expect(page.getByText('Morta', { exact: true }).first()).toBeVisible();
+  const deathFacts = await page.evaluate(async (animalId) => fetch(`/api/animals/${animalId}`).then((response) => response.json()) as Promise<{ exits: unknown[]; revenues: unknown[] }>, deadAnimalId);
+  expect(deathFacts.exits).toHaveLength(1);
+  expect(deathFacts.revenues).toHaveLength(0);
 
   await page.goto('/compras/nova');
+  await expect(page.getByRole('link', { name: /Saída Compra ou despesa/ })).toHaveAttribute('aria-current', 'page');
+  await page.screenshot({ path: testInfo.outputPath('nova-saida.png'), fullPage: true });
   const purchaseName = `Ração teste ${suffix}`;
   await page.getByLabel('Descrição').fill(purchaseName);
-  await page.getByLabel('Valor total').fill('7340,14');
-  await page.getByText('Mais detalhes', { exact: true }).click();
+  await page.getByLabel('Valor total da saída').fill('7340,14');
+  await expect(page.getByRole('radio', { name: /Pagar depois/ })).toBeChecked();
+  await page.getByRole('radio', { name: /Já paguei/ }).check();
+  await expect(page.getByLabel('Vencimento (opcional)')).toHaveCount(0);
+  await page.getByRole('radio', { name: /Pagar depois/ }).check();
   await page.getByLabel('Fornecedor').selectOption({ label: 'Raca forte' });
-  await page.getByRole('button', { name: 'Salvar compra' }).click();
+  await page.getByRole('button', { name: 'Registrar saída' }).click();
   await expect(page.getByText(/7\.340,14/).first()).toBeVisible();
+  await expect(page.getByText('A pagar', { exact: true })).toBeVisible();
   const filename = `comprovante-${suffix}.pdf`;
   await page.getByLabel('Arquivo').setInputFiles({ name: filename, mimeType: 'application/pdf', buffer: Buffer.from(`%PDF-1.4\n${suffix}\n%%EOF`) });
   await page.getByRole('button', { name: 'Enviar' }).click();
   await expect(page.getByText(filename)).toBeVisible();
   await page.goto('/documentos');
   await expect(page.getByText(filename)).toBeVisible();
+
+  await page.goto('/financeiro');
+  await expect(page.getByRole('heading', { name: 'Financeiro' })).toBeVisible();
+  await expect(page.getByRole('link', { name: /Registrar entrada/ })).toBeVisible();
+  await expect(page.getByRole('link', { name: /Registrar saída/ })).toBeVisible();
+  await expect(page.getByText('Resultado de caixa registrado', { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('financeiro.png'), fullPage: true });
+  await page.goto('/configuracoes/dados');
+  const download = page.waitForEvent('download');
+  await page.getByRole('link', { name: 'Baixar CSV' }).first().click();
+  expect((await download).suggestedFilename()).toMatch(/\.csv$/);
 
   await page.getByRole('button', { name: 'Sair' }).click();
   await expect(page).toHaveURL(/\/entrar$/);

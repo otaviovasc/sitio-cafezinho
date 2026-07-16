@@ -2,9 +2,9 @@ import { expect, test, type Page } from '@playwright/test';
 import { login } from './helpers';
 
 async function capturePaintedViewport(page: Page, path: string) {
-  await page.screenshot({ fullPage: false, animations: 'disabled' });
+  await page.screenshot({ fullPage: true, animations: 'disabled' });
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-  await page.screenshot({ path, fullPage: false, animations: 'disabled' });
+  await page.screenshot({ path, fullPage: true, animations: 'disabled' });
 }
 
 async function captureTallPage(page: Page, path: string) {
@@ -26,6 +26,12 @@ test('captura estados principais sem rolagem horizontal', async ({ page }, testI
     ['pesos', '/pesos'],
     ['compras', '/compras'],
     ['documentos', '/documentos'],
+    ['registrar-coleta', '/producao/coletas/nova'],
+    ['mastite', '/mastite'],
+    ['nova-receita', '/receitas/nova'],
+    ['nova-compra', '/compras/nova'],
+    ['financeiro', '/financeiro'],
+    ['exportacao-dados', '/configuracoes/dados'],
   ] as const;
   for (const [name, route] of routes) {
     await page.goto(route);
@@ -38,6 +44,13 @@ test('captura estados principais sem rolagem horizontal', async ({ page }, testI
     expect(layout.scrollWidth > layout.clientWidth, `${route} não deve ter rolagem horizontal: ${JSON.stringify(layout)}`).toBe(false);
     await capturePaintedViewport(page, testInfo.outputPath(`${name}.png`));
   }
+
+  await page.goto('/producao');
+  await page.getByLabel('Produção de').selectOption({ label: 'Lote 2' });
+  await page.getByLabel('Manhã (L)').fill('210,5');
+  await expect(page.getByLabel('Tarde (L)')).toBeDisabled();
+  await expect(page.getByText('Este lote possui ordenha somente pela manhã.')).toBeVisible();
+  await capturePaintedViewport(page, testInfo.outputPath('producao-lote-so-manha.png'));
 
   const ids = await page.evaluate(async () => {
     const [animals, sessions] = await Promise.all([
@@ -72,4 +85,16 @@ test('captura estados principais sem rolagem horizontal', async ({ page }, testI
   await page.getByRole('button', { name: 'Validar dados' }).click();
   await expect(page.getByText('O conteúdo não é um JSON válido.')).toBeVisible();
   await capturePaintedViewport(page, testInfo.outputPath('importacao-validacao.png'));
+
+  await page.goto('/receitas/nova');
+  await page.getByRole('button', { name: 'Registrar entrada' }).click();
+  await expect(page.getByText('Descreva de onde vem esta entrada.')).toBeVisible();
+  await expect(page.getByText('Informe um valor maior que zero.')).toBeVisible();
+  await capturePaintedViewport(page, testInfo.outputPath('entrada-validacao.png'));
+
+  await page.goto('/compras/nova');
+  await page.getByRole('button', { name: 'Registrar saída' }).click();
+  await expect(page.getByText('Descreva o que foi comprado ou pago.')).toBeVisible();
+  await expect(page.getByText('Informe um valor maior que zero.')).toBeVisible();
+  await capturePaintedViewport(page, testInfo.outputPath('saida-validacao.png'));
 });

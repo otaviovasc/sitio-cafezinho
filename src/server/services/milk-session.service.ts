@@ -1,6 +1,6 @@
 import { and, desc, eq, gt, isNull, lte, ne, or } from 'drizzle-orm';
 import { getDb } from '../../db/client.js';
-import { animalGroupAssignments, animals, animalStatusEvents, dailyMilkTotals, herdGroups, milkMeasurements, milkSessions } from '../../db/schema.js';
+import { animalGroupAssignments, animals, animalStatusEvents, herdGroups, milkMeasurements, milkSessions } from '../../db/schema.js';
 import { decimalString } from '../../domain/format.js';
 import { requiresAfternoonMeasurement } from '../../domain/herd.js';
 import { fail } from '../http/api-error.js';
@@ -50,8 +50,6 @@ export async function loadMilkingHerdOnDate(sessionDate: string) {
 export async function createMilkSession(draft: MilkSessionDraft) {
   const [sameDate] = await getDb().select({ id: milkSessions.id }).from(milkSessions).where(eq(milkSessions.sessionDate, draft.sessionDate)).limit(1);
   if (sameDate) return fail('Já existe um controle individual nesta data.', 409, 'SESSION_DATE_EXISTS');
-  const [dailyTotal] = await getDb().select({ id: dailyMilkTotals.id }).from(dailyMilkTotals).where(eq(dailyMilkTotals.productionDate, draft.sessionDate)).limit(1);
-  if (dailyTotal) return fail('Esta data já possui um total diário. Edite ou exclua esse registro antes do controle individual.', 409, 'DAILY_TOTAL_EXISTS');
 
   if (draft.source === 'MANUAL' || draft.source === 'CHATGPT_IMPORT') {
     if (draft.inputMode !== 'SEPARATE_MORNING_AFTERNOON') return fail('O controle manual deve registrar manhã e tarde.', 400, 'SEPARATE_VALUES_REQUIRED');

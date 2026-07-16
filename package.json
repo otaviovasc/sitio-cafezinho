@@ -13,12 +13,14 @@
     "start": "node dist/server/index.js",
     "start:container": "node dist/db/migrate.js && node dist/db/seed.js && node dist/server/index.js",
     "lint": "eslint . --max-warnings=0",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.scripts.json",
     "test": "vitest run",
-    "test:e2e": "node --env-file=.env ./node_modules/@playwright/test/cli.js test",
+    "test:e2e": "env -u APP_PASSWORD node --env-file=.env ./node_modules/@playwright/test/cli.js test",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:seed": "tsx src/db/seed.ts",
+    "backup:create": "tsx scripts/backup-create.ts",
+    "backup:restore": "tsx scripts/backup-restore.ts",
     "google-drive:authorize": "tsx scripts/google-drive-authorize.ts"
   },
   "dependencies": {
@@ -32,6 +34,7 @@
     "react-dom": "^19.1.0",
     "react-router-dom": "^7.6.2",
     "recharts": "^3.9.2",
+    "tsx": "^4.19.4",
     "zod": "^3.25.64"
   },
   "devDependencies": {
@@ -51,7 +54,6 @@
     "globals": "^16.2.0",
     "postcss": "^8.5.4",
     "tailwindcss": "^3.4.17",
-    "tsx": "^4.19.4",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.34.0",
     "vite": "^6.3.5",

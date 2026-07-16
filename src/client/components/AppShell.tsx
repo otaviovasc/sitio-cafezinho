@@ -5,11 +5,11 @@ import { CowHead } from './icons';
 import { api, json } from '../lib/api';
 
 const nav: Array<{ to: string; label: string; icon: ComponentType<LucideProps> }> = [
-  { to: '/', label: 'Início', icon: Home },
+  { to: '/', label: 'Hoje', icon: Home },
   { to: '/producao', label: 'Produção', icon: Milk },
   { to: '/rebanho', label: 'Rebanho', icon: CowHead },
   { to: '/pesos', label: 'Peso', icon: Scale },
-  { to: '/compras', label: 'Compras', icon: WalletCards },
+  { to: '/financeiro', label: 'Financeiro', icon: WalletCards },
   { to: '/documentos', label: 'Documentos', icon: Files },
 ];
 

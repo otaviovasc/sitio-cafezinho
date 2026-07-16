@@ -1,8 +1,13 @@
 # Regras de domínio
 
 - PostgreSQL é a fonte oficial dos metadados.
-- Total diário de leite é a medição real retirada do rebanho em uma data. Novos registros guardam manhã e tarde separadas e derivam o total; registros históricos sem divisão continuam válidos. Há no máximo um registro por data.
-- Uma data contém o total diário do rebanho ou um controle individual, nunca ambos.
+- Produção total diária é uma medição agregada real do rebanho todo ou de um lote específico. O lote é opcional: registros existentes e novos registros sem lote representam o rebanho todo.
+- Há no máximo um total do rebanho todo por data e um total por lote/data. Geral e lotes podem coexistir sem se sobrescrever.
+- Novos registros guardam manhã e tarde e derivam o total. Para lote com ordenha somente pela manhã, tarde permanece `null`; registros históricos sem divisão continuam válidos.
+- Nos indicadores diários e mensais, o total do rebanho todo tem preferência. Quando ele não existe, o sistema soma somente os lotes efetivamente registrados e identifica a origem como “soma dos lotes registrados”; nunca soma geral e lotes duas vezes nem completa lote ou dia ausente.
+- Produção total agregada e controle individual são fatos independentes e podem existir na mesma data; nenhum sobrescreve, invalida ou completa o outro.
+- Coleta do laticínio é um terceiro fato independente. Pode haver várias coletas na data, mas nenhuma cria produção, altera controle individual ou recebe uma causa automática para a diferença.
+- A comparação de leite mostra o total do rebanho todo ou, na ausência dele, a soma identificada dos lotes registrados, além da soma das coletas e da diferença observada. Essa diferença pode refletir horários, leite no tanque, descarte, consumo, bezerros, lotes ainda não registrados ou períodos distintos; o sistema não escolhe uma explicação.
 - O total diário não é distribuído entre animais e não substitui o controle individual completo.
 - Dias sem medição diária permanecem ausentes; médias consideram somente os dias efetivamente medidos.
 - Controle leiteiro individual é uma medição pontual, não uma série diária presumida por vaca.
@@ -30,3 +35,11 @@
 - Compra cancelada não entra em totais; vencida é derivada de compra aberta com data anterior a hoje.
 - Nota, boleto e comprovante vinculados à mesma compra são documentos da mesma obrigação.
 - Itens são opcionais; divergência com o total alerta, mas não bloqueia.
+- Caso de mastite registra sinal observado, estado escolhido, tratamento informado e resultado. Não representa diagnóstico ou protocolo automático.
+- Ações de mastite são textos e datas informados pelo usuário. Concluir, desfazer ou cancelar uma ação não muda o tratamento por conta própria.
+- Carência é uma data informada. Enquanto o caso estiver aberto, o sistema mostra dias restantes ou atraso, mas nunca afirma que o leite foi liberado.
+- `RECURRENT` e `NO_IMPROVEMENT` permanecem casos abertos; `RESOLVED` e `CANCELLED` saem das pendências sem apagar o histórico.
+- Receita `EXPECTED` fica separada de `RECEIVED`; `CANCELLED` não entra nos totais. Compras seguem a separação entre `OPEN`, `PAID` e `CANCELLED`.
+- Resultado de caixa registrado é receitas recebidas menos compras pagas. Não inclui trabalho familiar, depreciação, terra, ativos ou fatos não lançados.
+- Uma venda pode criar uma receita, vincular uma receita existente ou não ter valor conhecido. A transação cria no máximo uma receita e a vincula ao animal e à saída.
+- Morte preserva motivo, observação, peso e documento quando informados, mas nunca cria receita nem aceita comprador ou tipo comercial.

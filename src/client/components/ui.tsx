@@ -36,6 +36,13 @@ export function Input(props: InputHTMLAttributes<HTMLInputElement>) { return <in
 export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) { return <select {...props} className={`input ${props.className || ''}`} />; }
 export function Textarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) { return <textarea {...props} className={`input min-h-24 resize-y ${props.className || ''}`} />; }
 
+export function ChoiceCard({ name, value, checked, onChange, title, description }: { name: string; value: string; checked: boolean; onChange: () => void; title: string; description: string }) {
+  return <label className={`choice-card ${checked ? 'choice-card-active' : ''}`}>
+    <input type="radio" name={name} value={value} checked={checked} onChange={onChange} />
+    <span><strong>{title}</strong><small>{description}</small></span>
+  </label>;
+}
+
 export function Button({ variant = 'primary', className = '', ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' | 'danger' }) {
   return <button {...props} className={`button button-${variant} ${className}`} />;
 }

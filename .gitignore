@@ -9,6 +9,7 @@ playwright-report/
 test-results/
 uploads/
 volumes/
+backups/
 *.log
 *.tsbuildinfo
 .DS_Store

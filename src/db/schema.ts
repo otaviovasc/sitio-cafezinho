@@ -43,6 +43,14 @@ export const documentType = pgEnum('document_type', [
   'INVOICE', 'BOLETO', 'PAYMENT_RECEIPT', 'MILK_NOTEBOOK', 'OTHER',
 ]);
 export const weightSource = pgEnum('weight_source', ['MANUAL', 'CHATGPT_IMPORT', 'DEMO_SEED']);
+export const milkCollectionSource = pgEnum('milk_collection_source', ['DRIVER_READING', 'TANK_READING', 'RECEIPT', 'OTHER']);
+export const mastitisQuarter = pgEnum('mastitis_quarter', ['FRONT_LEFT', 'FRONT_RIGHT', 'REAR_LEFT', 'REAR_RIGHT', 'MULTIPLE', 'UNKNOWN']);
+export const mastitisDetectionMethod = pgEnum('mastitis_detection_method', ['VISUAL', 'BLACK_PLATE', 'CMT', 'VETERINARY', 'OTHER', 'UNKNOWN']);
+export const mastitisStatus = pgEnum('mastitis_status', ['OBSERVATION', 'IN_TREATMENT', 'WITHDRAWAL_PERIOD', 'RESOLVED', 'RECURRENT', 'NO_IMPROVEMENT', 'CANCELLED']);
+export const mastitisOutcome = pgEnum('mastitis_outcome', ['RESOLVED', 'IMPROVED', 'RECURRENT', 'NO_IMPROVEMENT', 'ANIMAL_CULLED', 'UNKNOWN']);
+export const revenueCategory = pgEnum('revenue_category', ['MILK_SALE', 'CALF_SALE', 'CULL_SALE', 'ANIMAL_SALE', 'OTHER']);
+export const revenueStatus = pgEnum('revenue_status', ['EXPECTED', 'RECEIVED', 'CANCELLED']);
+export const animalExitType = pgEnum('animal_exit_type', ['CALF_SALE', 'BREEDING_SALE', 'PRODUCTIVE_CULL', 'HEALTH_CULL', 'MEAT_SALE', 'OTHER']);
 
 export const herdGroups = pgTable('herd_groups', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -191,13 +199,16 @@ export const milkMeasurements = pgTable('milk_measurements', {
 export const dailyMilkTotals = pgTable('daily_milk_totals', {
   id: uuid('id').primaryKey().defaultRandom(),
   productionDate: date('production_date').notNull(),
+  herdGroupId: uuid('herd_group_id').references(() => herdGroups.id, { onDelete: 'restrict' }),
   morningLiters: numeric('morning_liters', { precision: 12, scale: 2 }),
   afternoonLiters: numeric('afternoon_liters', { precision: 12, scale: 2 }),
   totalLiters: numeric('total_liters', { precision: 12, scale: 2 }).notNull(),
   notes: text('notes'),
   ...auditColumns,
 }, (table) => [
-  uniqueIndex('daily_milk_totals_date_unique').on(table.productionDate),
+  uniqueIndex('daily_milk_totals_date_overall_unique').on(table.productionDate).where(sql`${table.herdGroupId} is null`),
+  uniqueIndex('daily_milk_totals_date_group_unique').on(table.productionDate, table.herdGroupId).where(sql`${table.herdGroupId} is not null`),
+  index('daily_milk_totals_group_idx').on(table.herdGroupId),
   check('daily_milk_totals_non_negative', sql`
     ${table.totalLiters} >= 0 and
     (${table.morningLiters} is null or ${table.morningLiters} >= 0) and
@@ -206,8 +217,106 @@ export const dailyMilkTotals = pgTable('daily_milk_totals', {
   check('daily_milk_totals_periods', sql`
     (${table.morningLiters} is null and ${table.afternoonLiters} is null)
     or
+    (${table.morningLiters} is not null and ${table.afternoonLiters} is null and ${table.totalLiters} = ${table.morningLiters})
+    or
     (${table.morningLiters} is not null and ${table.afternoonLiters} is not null and ${table.totalLiters} = ${table.morningLiters} + ${table.afternoonLiters})
   `),
+]);
+
+export const milkCollections = pgTable('milk_collections', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  collectionDate: date('collection_date').notNull(),
+  collectedAt: timestamp('collected_at', { withTimezone: true }),
+  liters: numeric('liters', { precision: 12, scale: 2 }).notNull(),
+  source: milkCollectionSource('source').notNull().default('TANK_READING'),
+  notes: text('notes'),
+  ...auditColumns,
+}, (table) => [
+  index('milk_collections_date_idx').on(table.collectionDate),
+  check('milk_collections_positive', sql`${table.liters} > 0`),
+]);
+
+export const mastitisCases = pgTable('mastitis_cases', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  animalId: uuid('animal_id').notNull().references(() => animals.id, { onDelete: 'cascade' }),
+  detectedAt: timestamp('detected_at', { withTimezone: true }).notNull(),
+  affectedQuarter: mastitisQuarter('affected_quarter'),
+  detectionMethod: mastitisDetectionMethod('detection_method'),
+  observedSigns: text('observed_signs'),
+  status: mastitisStatus('status').notNull().default('OBSERVATION'),
+  treatmentSummary: text('treatment_summary'),
+  treatmentStartedAt: timestamp('treatment_started_at', { withTimezone: true }),
+  treatmentExpectedEndAt: timestamp('treatment_expected_end_at', { withTimezone: true }),
+  withdrawalEndsAt: date('withdrawal_ends_at'),
+  milkDiscardRequired: boolean('milk_discard_required').notNull().default(false),
+  outcome: mastitisOutcome('outcome'),
+  notes: text('notes'),
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  ...auditColumns,
+}, (table) => [
+  index('mastitis_cases_animal_date_idx').on(table.animalId, table.detectedAt),
+  index('mastitis_cases_status_idx').on(table.status),
+]);
+
+export const mastitisActions = pgTable('mastitis_actions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  mastitisCaseId: uuid('mastitis_case_id').notNull().references(() => mastitisCases.id, { onDelete: 'cascade' }),
+  scheduledFor: timestamp('scheduled_for', { withTimezone: true }).notNull(),
+  actionDescription: text('action_description').notNull(),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
+  completionNotes: text('completion_notes'),
+  cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+  ...auditColumns,
+}, (table) => [index('mastitis_actions_case_schedule_idx').on(table.mastitisCaseId, table.scheduledFor)]);
+
+export const revenues = pgTable('revenues', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  revenueDate: date('revenue_date').notNull(),
+  category: revenueCategory('category').notNull(),
+  description: text('description').notNull(),
+  amount: numeric('amount', { precision: 12, scale: 2 }).notNull(),
+  status: revenueStatus('status').notNull().default('EXPECTED'),
+  receivedAt: timestamp('received_at', { withTimezone: true }),
+  animalId: uuid('animal_id').references(() => animals.id, { onDelete: 'set null' }),
+  periodStart: date('period_start'),
+  periodEnd: date('period_end'),
+  quantity: numeric('quantity', { precision: 14, scale: 3 }),
+  unitPrice: numeric('unit_price', { precision: 12, scale: 4 }),
+  bonusAmount: numeric('bonus_amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  discountAmount: numeric('discount_amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  buyerName: text('buyer_name'),
+  notes: text('notes'),
+  ...auditColumns,
+}, (table) => [
+  index('revenues_date_idx').on(table.revenueDate),
+  index('revenues_animal_idx').on(table.animalId),
+  check('revenues_positive_amount', sql`${table.amount} > 0`),
+  check('revenues_non_negative_details', sql`
+    (${table.quantity} is null or ${table.quantity} > 0) and
+    (${table.unitPrice} is null or ${table.unitPrice} >= 0) and
+    ${table.bonusAmount} >= 0 and ${table.discountAmount} >= 0
+  `),
+  check('revenues_period', sql`${table.periodEnd} is null or ${table.periodStart} is null or ${table.periodEnd} >= ${table.periodStart}`),
+]);
+
+export const animalExits = pgTable('animal_exits', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  animalId: uuid('animal_id').notNull().references(() => animals.id, { onDelete: 'cascade' }),
+  statusEventId: uuid('status_event_id').notNull().references(() => animalStatusEvents.id, { onDelete: 'cascade' }),
+  exitType: animalExitType('exit_type'),
+  reason: text('reason'),
+  buyerName: text('buyer_name'),
+  weightKg: numeric('weight_kg', { precision: 10, scale: 2 }),
+  amount: numeric('amount', { precision: 12, scale: 2 }),
+  revenueId: uuid('revenue_id').references(() => revenues.id, { onDelete: 'set null' }),
+  revenueCreatedHere: boolean('revenue_created_here').notNull().default(false),
+  notes: text('notes'),
+  ...auditColumns,
+}, (table) => [
+  uniqueIndex('animal_exits_status_event_unique').on(table.statusEventId),
+  index('animal_exits_animal_idx').on(table.animalId),
+  check('animal_exits_positive_weight', sql`${table.weightKg} is null or ${table.weightKg} > 0`),
+  check('animal_exits_positive_amount', sql`${table.amount} is null or ${table.amount} > 0`),
 ]);
 
 export const suppliers = pgTable('suppliers', {
@@ -270,6 +379,9 @@ export const attachments = pgTable('attachments', {
   documentType: documentType('document_type').notNull(),
   purchaseId: uuid('purchase_id').references(() => purchases.id, { onDelete: 'set null' }),
   milkSessionId: uuid('milk_session_id').references(() => milkSessions.id, { onDelete: 'set null' }),
+  milkCollectionId: uuid('milk_collection_id').references(() => milkCollections.id, { onDelete: 'set null' }),
+  revenueId: uuid('revenue_id').references(() => revenues.id, { onDelete: 'set null' }),
+  animalExitId: uuid('animal_exit_id').references(() => animalExits.id, { onDelete: 'set null' }),
   notes: text('notes'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
@@ -277,7 +389,10 @@ export const attachments = pgTable('attachments', {
   index('attachments_sha_idx').on(table.sha256),
   index('attachments_purchase_idx').on(table.purchaseId),
   index('attachments_session_idx').on(table.milkSessionId),
-  check('attachments_single_parent', sql`not (${table.purchaseId} is not null and ${table.milkSessionId} is not null)`),
+  index('attachments_collection_idx').on(table.milkCollectionId),
+  index('attachments_revenue_idx').on(table.revenueId),
+  index('attachments_exit_idx').on(table.animalExitId),
+  check('attachments_single_parent', sql`num_nonnulls(${table.purchaseId}, ${table.milkSessionId}, ${table.milkCollectionId}, ${table.revenueId}, ${table.animalExitId}) <= 1`),
 ]);
 
 export type Animal = typeof animals.$inferSelect;
@@ -285,5 +400,8 @@ export type HerdGroup = typeof herdGroups.$inferSelect;
 export type WeightSession = typeof weightSessions.$inferSelect;
 export type MilkMeasurement = typeof milkMeasurements.$inferSelect;
 export type DailyMilkTotal = typeof dailyMilkTotals.$inferSelect;
+export type MilkCollection = typeof milkCollections.$inferSelect;
+export type MastitisCase = typeof mastitisCases.$inferSelect;
+export type Revenue = typeof revenues.$inferSelect;
 export type Purchase = typeof purchases.$inferSelect;
 export type Attachment = typeof attachments.$inferSelect;
