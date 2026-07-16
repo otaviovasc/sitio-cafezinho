@@ -6,8 +6,7 @@
   },
   "deploy": {
     "preDeployCommand": [
-      "node dist/db/migrate.js",
-      "node dist/db/seed.js"
+      "node dist/db/migrate.js"
     ],
     "startCommand": "node dist/server/index.js",
     "healthcheckPath": "/api/ready",
