@@ -113,11 +113,29 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await expect(page.getByText('486 kg', { exact: true }).first()).toBeVisible();
 
   await page.goto('/producao/importar');
-  await page.getByLabel('Data da sessão').fill('2026-07-11');
+  const importDate = testInfo.project.name === 'desktop-1440' ? '2026-07-11' : '2026-07-12';
+  await page.getByLabel('Data da sessão').fill(importDate);
   await page.getByRole('button', { name: 'Carregar exemplo' }).click();
   await page.getByRole('button', { name: 'Validar dados' }).click();
-  await expect(page.getByText(/O controle ainda está incompleto/)).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Salvar controle revisado' })).toBeDisabled();
+  await expect(page.getByText('Confira antes de salvar')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Salvar controle revisado' })).toBeEnabled();
+  const uncertainImport = {
+    sessionDate: importDate,
+    sourceMode: 'SEPARATE_MORNING_AFTERNOON',
+    measurements: [
+      { rawAnimalLabel: 'Kiltora', rawValueText: null, morningLiters: null, afternoonLiters: null, totalLiters: null, confidence: 'LOW', excluded: true, notes: 'Linha riscada no caderno; sem valor legível' },
+      { rawAnimalLabel: 'Helen', rawValueText: null, morningLiters: null, afternoonLiters: null, totalLiters: null, confidence: 'LOW', excluded: true, notes: 'Linha riscada no caderno; rótulo e valor pouco legíveis' },
+      { rawAnimalLabel: null, rawValueText: null, morningLiters: null, afternoonLiters: null, totalLiters: null, confidence: 'LOW', excluded: true, notes: 'Linha riscada e ilegível no controle da tarde' },
+    ],
+  };
+  await page.getByLabel('JSON retornado pelo ChatGPT').fill(JSON.stringify(uncertainImport));
+  await page.getByRole('button', { name: 'Validar dados' }).click();
+  await expect(page.getByText('[rótulo ilegível]', { exact: true })).toBeVisible();
+  await expect(page.locator('.badge').filter({ hasText: /^Excluído$/ })).toHaveCount(3);
+  await page.screenshot({ path: testInfo.outputPath('importacao-linhas-incertas.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Salvar controle revisado' }).click();
+  await expect(page.getByRole('heading', { name: 'Importação do ChatGPT' })).toBeVisible();
+  await expect(page.getByText('Sem valor legível', { exact: true }).first()).toBeVisible();
 
   await page.goto('/producao');
   await page.evaluate(async () => {

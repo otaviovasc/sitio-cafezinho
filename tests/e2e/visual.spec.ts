@@ -87,6 +87,12 @@ test('captura estados principais sem rolagem horizontal', async ({ page }, testI
   await expect(page.getByText('O conteúdo não é um JSON válido.')).toBeVisible();
   await capturePaintedViewport(page, testInfo.outputPath('importacao-validacao.png'));
 
+  await page.getByRole('button', { name: 'Carregar exemplo' }).click();
+  await page.getByRole('button', { name: 'Validar dados' }).click();
+  await expect(page.getByText('3. Revisar o controle')).toBeVisible();
+  await page.getByText('3. Revisar o controle').scrollIntoViewIfNeeded();
+  await capturePaintedViewport(page, testInfo.outputPath('importacao-revisao.png'));
+
   await page.goto('/receitas/nova');
   await page.getByRole('button', { name: 'Registrar entrada' }).click();
   await expect(page.getByRole('alert').filter({ hasText: 'Revise os campos destacados' })).toBeFocused();

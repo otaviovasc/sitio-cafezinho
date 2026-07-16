@@ -5,7 +5,7 @@ import { filterByPeriod } from '../../src/domain/analytics';
 import { calculateDailyMilkTotal, resolveDailyMilkByDate, summarizeDailyMilk } from '../../src/domain/daily-milk';
 import { formatDate, formatLiters, formatMoney, normalizeLabel, parseDecimal } from '../../src/domain/format';
 import { participatesInMilking, requiresAfternoonMeasurement } from '../../src/domain/herd';
-import { parseChatGptImport, stripMarkdownJson } from '../../src/domain/import';
+import { formatChatGptImportIssues, parseChatGptImport, stripMarkdownJson } from '../../src/domain/import';
 import { calculateTotal, confirmedTotal, estimateSplit } from '../../src/domain/milk';
 import { summarizeMilkDay } from '../../src/domain/milk-collection';
 import { isMonthKey, monthStorageDate, summarizeMonthlyMilkPrice } from '../../src/domain/milk-price';
@@ -252,6 +252,33 @@ describe('importação do ChatGPT', () => {
   it('rejeita valores negativos e divergência', () => {
     expect(() => parseChatGptImport(JSON.stringify({ ...valid, measurements: [{ ...valid.measurements[0], totalLiters: -1 }] }))).toThrow();
     expect(() => parseChatGptImport(JSON.stringify({ ...valid, measurements: [{ ...valid.measurements[0], morningLiters: 12, afternoonLiters: 9, totalLiters: 20 }] }))).toThrow();
+  });
+
+  it('preserva para revisão linhas riscadas sem valor e linha sem rótulo legível', () => {
+    const parsed = parseChatGptImport(JSON.stringify({
+      sessionDate: '2026-07-16',
+      sourceMode: 'SEPARATE_MORNING_AFTERNOON',
+      measurements: [
+        { rawAnimalLabel: 'Kiltora', morningLiters: null, afternoonLiters: null, totalLiters: null, confidence: 'LOW', excluded: true, notes: 'Linha riscada no caderno; sem valor legível' },
+        { rawAnimalLabel: 'Helen', morningLiters: null, afternoonLiters: null, totalLiters: null, confidence: 'LOW', excluded: true, notes: 'Linha riscada no caderno; rótulo e valor pouco legíveis' },
+        { rawAnimalLabel: null, morningLiters: null, afternoonLiters: null, totalLiters: null, confidence: 'LOW', excluded: true, notes: 'Linha riscada e ilegível no controle da tarde' },
+      ],
+    }));
+
+    expect(parsed.measurements).toEqual([
+      expect.objectContaining({ rawAnimalLabel: 'Kiltora', totalLiters: null, excluded: true }),
+      expect.objectContaining({ rawAnimalLabel: 'Helen', totalLiters: null, excluded: true }),
+      expect.objectContaining({ rawAnimalLabel: '[rótulo ilegível]', totalLiters: null, excluded: true }),
+    ]);
+  });
+
+  it('identifica a linha e o campo quando o JSON precisa de correção', () => {
+    try {
+      parseChatGptImport(JSON.stringify({ ...valid, measurements: [{ ...valid.measurements[0], rawAnimalLabel: null }] }));
+      throw new Error('A validação deveria falhar.');
+    } catch (error) {
+      expect(formatChatGptImportIssues(error as import('zod').ZodError)).toBe('Linha 1 · rótulo do animal: Informe o rótulo do animal ou marque a linha como excluída.');
+    }
   });
 });
 

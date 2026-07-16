@@ -24,7 +24,7 @@ type SessionSummary = { id: string; sessionDate: string; title: string | null; i
 type ProductionPoint = { id: string; date: string; totalLiters: string; source: 'DAILY_TOTAL' | 'INDIVIDUAL_CONTROL' };
 type Measurement = {
   id: string; animalId: string | null; animalName: string | null; tagNumber: string | null; rawAnimalLabel: string; rawValueText: string | null;
-  morningLiters: string | null; afternoonLiters: string | null; totalLiters: string; confidence: string; status: string; notes: string | null;
+  morningLiters: string | null; afternoonLiters: string | null; totalLiters: string | null; confidence: string; status: string; notes: string | null;
   issues: string[]; estimate: null | { morning: number; afternoon: number; description: string };
 };
 type SessionDetail = { id: string; sessionDate: string; title: string | null; notes: string | null; inputMode: string; source: string; measurements: Measurement[]; missingAnimals: Array<{ id: string; name: string | null; tagNumber: string | null }>; attachments: Attachment[] };
@@ -69,7 +69,9 @@ Regras:
 - Calcule totalLiters como manhã + tarde.
 - Se uma vaca estiver no lote ordenhado somente pela manhã, deixe afternoonLiters null e explique em notes.
 - Se um valor estiver ilegível, use null e confidence LOW.
-- Se uma linha estiver riscada, use excluded true.
+- Se uma linha estiver riscada, use excluded true. Os três campos de litros podem ser null quando nenhum valor estiver legível.
+- Se o rótulo estiver totalmente ilegível, use exatamente "[rótulo ilegível]" em rawAnimalLabel; nunca use null nesse campo.
+- Em rawValueText, copie os valores exatamente como aparecem (por exemplo "10 + 7" ou "13?"). Use null somente se nenhum valor estiver legível.
 - Se houver interrogação ou dúvida, use confidence LOW.
 - Não descarte linhas duvidosas.
 - Não inclua explicações fora do JSON.
@@ -84,6 +86,7 @@ Formato obrigatório:
   "measurements": [
     {
       "rawAnimalLabel": "Caruja",
+      "rawValueText": "12 + 9",
       "morningLiters": 12.0,
       "afternoonLiters": 9.0,
       "totalLiters": 21.0,
@@ -105,23 +108,25 @@ Valores aceitos para confidence:
 Quando estiver riscado:
 
 {
-  "rawAnimalLabel": "Fofa",
+  "rawAnimalLabel": "[rótulo ilegível]",
+  "rawValueText": null,
   "morningLiters": null,
   "afternoonLiters": null,
-  "totalLiters": 10.5,
-  "confidence": "MEDIUM",
+  "totalLiters": null,
+  "confidence": "LOW",
   "excluded": true,
-  "notes": "Linha riscada no caderno"
+  "notes": "Linha riscada; rótulo e valor ilegíveis"
 }`;
 
-const exampleJson = (date: string) => JSON.stringify({ sessionDate: date, sourceMode: 'SEPARATE_MORNING_AFTERNOON', measurements: [{ rawAnimalLabel: 'Caruja', morningLiters: 12, afternoonLiters: 9, totalLiters: 21, confidence: 'HIGH', excluded: false, notes: null }] }, null, 2);
+const exampleJson = (date: string) => JSON.stringify({ sessionDate: date, sourceMode: 'SEPARATE_MORNING_AFTERNOON', measurements: [{ rawAnimalLabel: 'Caruja', rawValueText: '12 + 9', morningLiters: 12, afternoonLiters: 9, totalLiters: 21, confidence: 'HIGH', excluded: false, notes: null }] }, null, 2);
 
 type Preview = {
   sessionDate: string;
   sourceMode: string;
   sessionIssues: string[];
+  sessionWarnings?: string[];
   missingAnimals: Array<{ id: string; name: string | null; tagNumber: string | null }>;
-  measurements: Array<{ rawAnimalLabel: string; rawValueText?: string | null; morningLiters: number | null; afternoonLiters: number | null; totalLiters: number; confidence: string; status: string; notes?: string | null; animalId: string | null; matchedAnimal: Animal | null; milkingRoutine: MilkingRoutine | null; issues: string[] }>;
+  measurements: Array<{ rawAnimalLabel: string; rawValueText?: string | null; morningLiters: number | null; afternoonLiters: number | null; totalLiters: number | null; confidence: string; status: string; notes?: string | null; animalId: string | null; matchedAnimal: Animal | null; milkingRoutine: MilkingRoutine | null; issues: string[] }>;
 };
 
 export function ImportMilkPage() {
@@ -152,6 +157,13 @@ export function ImportMilkPage() {
     if (!preview) return;
     setPreview({ ...preview, measurements: preview.measurements.map((row, rowIndex) => rowIndex === index ? { ...row, ...values } : row) });
   }
+  function updatePeriod(index: number, period: 'morningLiters' | 'afternoonLiters', value: number | null) {
+    if (!preview) return;
+    const row = preview.measurements[index];
+    const morning = period === 'morningLiters' ? value : row.morningLiters;
+    const afternoon = period === 'afternoonLiters' ? value : row.afternoonLiters;
+    update(index, { [period]: value, totalLiters: morning === null && afternoon === null ? null : (morning ?? 0) + (afternoon ?? 0) });
+  }
   async function confirm() {
     if (!preview) return;
     setBusy(true); setError('');
@@ -177,22 +189,24 @@ export function ImportMilkPage() {
     const matchesFilter = reviewFilter === 'ALL' || (reviewFilter === 'ISSUES' && (row.issues.length > 0 || row.status === 'NEEDS_REVIEW')) || row.status === reviewFilter;
     return matchesSearch && matchesFilter;
   }) ?? [];
+  const invalidMeasurementCount = preview?.measurements.filter((row) => row.status !== 'EXCLUDED' && row.totalLiters === null).length ?? 0;
 
   return <div className="page"><PageHeader title="Importar dados do ChatGPT" subtitle="Transcreva as fotos e revise antes de salvar" />
     <div className="grid gap-5">
-      <div className="notice notice-info">Dica: mande a foto da produção da manhã e da tarde para o ChatGPT — geralmente são duas fotos — e cole o prompt abaixo para ele formatar os dados para você. Depois, copie a estrutura de dados formatada pelo ChatGPT e cole aqui.</div>
+      <div className="notice notice-info"><strong>Como funciona</strong><br />Envie ao ChatGPT as fotos da manhã e da tarde, copie o prompt abaixo e depois cole aqui somente o JSON retornado. Linhas riscadas, incompletas ou ilegíveis serão preservadas para revisão.</div>
       {error && <ErrorState message={error} />}
       <SectionCard title="1. Preparar o prompt" action={<Button variant="secondary" onClick={() => void copyPrompt()}>Copiar prompt</Button>}><Field label="Data da sessão"><Input type="date" value={date} onChange={(event) => { setDate(event.target.value); setPreview(null); }} /></Field><details className="mt-4"><summary className="min-h-11 cursor-pointer py-3 font-semibold">Ver prompt completo</summary><pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-xl bg-[#f0efe8] p-3 text-xs leading-5">{prompt}</pre></details></SectionCard>
-      <SectionCard title="2. Colar e validar"><Field label="JSON retornado pelo ChatGPT"><Textarea className="min-h-64 font-mono text-sm" value={content} onChange={(event) => { setContent(event.target.value); setPreview(null); }} /></Field><div className="mt-3 flex flex-wrap gap-2"><Button variant="secondary" onClick={() => setContent(exampleJson(date))}>Carregar exemplo</Button><Button disabled={busy || !content.trim()} onClick={() => void validate()}>{busy ? 'Validando…' : 'Validar dados'}</Button></div></SectionCard>
-      {preview && <SectionCard title="3. Revisar o controle" action={<Button variant="secondary" onClick={() => setShowQuickAnimal((value) => !value)}><Plus size={17} aria-hidden />Cadastrar vaca</Button>}>{showQuickAnimal && <div className="mb-4"><QuickAnimalForm initialDate={preview.sessionDate} onCancel={() => setShowQuickAnimal(false)} onCreated={async () => { await reloadAnimals(); setShowQuickAnimal(false); }} /></div>}<div className="mb-4 grid grid-cols-3 gap-3"><StatCard label="Confirmadas" value={preview.measurements.filter((row) => row.status === 'CONFIRMED').length} /><StatCard label="A revisar" value={preview.measurements.filter((row) => row.status === 'NEEDS_REVIEW').length} /><StatCard label="Vacas ausentes" value={preview.missingAnimals.length} /></div>
-        {preview.sessionIssues.length > 0 && <div className="notice notice-error mb-4"><strong>O controle ainda está incompleto</strong><ul className="mt-1 list-disc pl-5">{preview.sessionIssues.map((issue) => <li key={issue}>{issue}</li>)}</ul>{preview.missingAnimals.length > 0 && <p className="mt-2 text-xs">Ausentes: {preview.missingAnimals.map((animal) => animal.name || `Brinco ${animal.tagNumber}`).join(', ')}. Corrija o JSON e valide novamente.</p>}</div>}
+      <SectionCard title="2. Colar e validar"><Field label="JSON retornado pelo ChatGPT" hint="Aceita linhas excluídas sem litros e preserva rótulos ilegíveis para revisão."><Textarea className="min-h-64 font-mono text-sm" value={content} onChange={(event) => { setContent(event.target.value); setPreview(null); setError(''); }} /></Field><div className="mt-3 flex flex-wrap gap-2"><Button variant="secondary" onClick={() => { setContent(exampleJson(date)); setError(''); }}>Carregar exemplo</Button><Button disabled={busy || !content.trim()} onClick={() => void validate()}>{busy ? 'Validando…' : 'Validar dados'}</Button></div></SectionCard>
+      {preview && <SectionCard title="3. Revisar o controle" action={<Button variant="secondary" onClick={() => setShowQuickAnimal((value) => !value)}><Plus size={17} aria-hidden />Cadastrar vaca</Button>}>{showQuickAnimal && <div className="mb-4"><QuickAnimalForm initialDate={preview.sessionDate} onCancel={() => setShowQuickAnimal(false)} onCreated={async () => { await reloadAnimals(); setShowQuickAnimal(false); }} /></div>}<div className="mb-4 grid grid-cols-3 gap-3"><StatCard label="Confirmadas" value={preview.measurements.filter((row) => row.status === 'CONFIRMED').length} /><StatCard label="A revisar" value={preview.measurements.filter((row) => row.status === 'NEEDS_REVIEW').length} /><StatCard label="Sem medição" value={preview.missingAnimals.length} /></div>
+        {preview.sessionIssues.length > 0 && <div className="notice notice-error mb-4"><strong>Corrija antes de salvar</strong><ul className="mt-1 list-disc pl-5">{preview.sessionIssues.map((issue) => <li key={issue}>{issue}</li>)}</ul></div>}
+        {(preview.sessionWarnings?.length ?? 0) > 0 && <div className="notice notice-warning mb-4"><strong>Confira antes de salvar</strong><ul className="mt-1 list-disc pl-5">{preview.sessionWarnings?.map((issue) => <li key={issue}>{issue}</li>)}</ul>{preview.missingAnimals.length > 0 && <details className="mt-2"><summary className="min-h-11 cursor-pointer py-2 text-xs font-semibold">Ver vacas sem medição vinculada</summary><p className="text-xs">{preview.missingAnimals.map((animal) => animal.name || `Brinco ${animal.tagNumber}`).join(', ')}.</p></details>}<p className="mt-2 text-xs">Isso não impede salvar: o controle individual pode ser pontual e não registra ausência nem produção zero.</p></div>}
         <FilterBar><Field label="Buscar animal"><Input type="search" value={reviewSearch} onChange={(event) => setReviewSearch(event.target.value)} placeholder="Nome, brinco ou original" /></Field><Field label="Mostrar"><Select value={reviewFilter} onChange={(event) => setReviewFilter(event.target.value)}><option value="ISSUES">Inconsistências primeiro</option><option value="ALL">Todas</option><option value="NEEDS_REVIEW">Aguardando revisão</option><option value="CONFIRMED">Confirmadas</option><option value="EXCLUDED">Excluídas</option></Select></Field></FilterBar>
         <ScrollArea label="Linhas da revisão do controle" className="mt-4 max-h-[46rem]">{visibleRows.map(({ row, index }) => <div className={`review-row ${row.status === 'NEEDS_REVIEW' ? 'review-row-warning' : ''}`} key={`${row.rawAnimalLabel}-${index}`}>
-          <div className="mb-3 flex items-start justify-between gap-3"><div><strong>{row.rawAnimalLabel}</strong><p className="text-xs text-[var(--muted)]">Original preservado{row.rawValueText ? ` · “${row.rawValueText}”` : ''}</p></div><Badge tone={row.status === 'CONFIRMED' ? 'success' : row.status === 'EXCLUDED' ? 'neutral' : 'warning'}>{row.status === 'CONFIRMED' ? 'Confirmado' : row.status === 'EXCLUDED' ? 'Excluído' : 'Revisar'}</Badge></div>
+          <div className="mb-3 flex items-start justify-between gap-3"><div><span className="text-xs font-semibold text-[var(--muted)]">Linha {index + 1}</span><strong className="block">{row.rawAnimalLabel}</strong><p className="text-xs text-[var(--muted)]">Original preservado{row.rawValueText ? ` · “${row.rawValueText}”` : ''}</p></div><Badge tone={row.status === 'CONFIRMED' ? 'success' : row.status === 'EXCLUDED' ? 'neutral' : 'warning'}>{row.status === 'CONFIRMED' ? 'Confirmado' : row.status === 'EXCLUDED' ? 'Excluído' : 'Revisar'}</Badge></div>
           {row.issues.length > 0 && <div className="notice notice-warning mb-3"><ul className="list-disc pl-5">{row.issues.map((issue) => <li key={issue}>{issue}</li>)}</ul></div>}
-          <div className="grid gap-3 md:grid-cols-5"><Field label="Animal vinculado"><Select value={row.animalId || ''} onChange={(event) => update(index, { animalId: event.target.value || null })}><option value="">Sem vínculo</option>{animals?.map((animal) => <option key={animal.id} value={animal.id}>{animal.name || `Brinco ${animal.tagNumber}`}</option>)}</Select></Field><Field label="Manhã (L)"><ParsedDecimalInput suffix="L" value={row.morningLiters} onValueChange={(value) => update(index, { morningLiters: value })} /></Field><Field label="Tarde (L)"><ParsedDecimalInput suffix="L" value={row.afternoonLiters} onValueChange={(value) => update(index, { afternoonLiters: value })} /></Field><Field label="Total (L)"><ParsedDecimalInput suffix="L" value={row.totalLiters} onValueChange={(value) => { if (value !== null) update(index, { totalLiters: value }); }} /></Field><Field label="Situação"><Select value={row.status} onChange={(event) => update(index, { status: event.target.value })}><option value="CONFIRMED">Confirmado</option><option value="NEEDS_REVIEW">Aguardando revisão</option><option value="EXCLUDED">Excluído</option></Select></Field></div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5"><Field label="Animal vinculado"><Select value={row.animalId || ''} onChange={(event) => update(index, { animalId: event.target.value || null })}><option value="">Sem vínculo</option>{animals?.map((animal) => <option key={animal.id} value={animal.id}>{animal.name || `Brinco ${animal.tagNumber}`}</option>)}</Select></Field><Field label="Manhã (L)"><ParsedDecimalInput suffix="L" value={row.morningLiters} onValueChange={(value) => updatePeriod(index, 'morningLiters', value)} /></Field><Field label="Tarde (L)"><ParsedDecimalInput suffix="L" value={row.afternoonLiters} onValueChange={(value) => updatePeriod(index, 'afternoonLiters', value)} /></Field><Field label="Total (L)" hint="Recalculado pela manhã e tarde" error={row.status !== 'EXCLUDED' && row.totalLiters === null ? 'Informe manhã ou tarde, ou mantenha a linha excluída.' : undefined}><ParsedDecimalInput suffix="L" value={row.totalLiters} onValueChange={() => undefined} readOnly aria-readonly /></Field><Field label="Situação"><Select value={row.status} onChange={(event) => update(index, { status: event.target.value })}><option value="CONFIRMED">Confirmado</option><option value="NEEDS_REVIEW">Aguardando revisão</option><option value="EXCLUDED">Excluído</option></Select></Field></div>
           {!row.animalId && <p className="mt-2 text-xs text-[var(--warning)]">Se for uma vaca nova, <Link className="font-semibold underline" to="/rebanho/novo">cadastre no rebanho</Link> e valide novamente.</p>}{row.notes && <p className="mt-2 text-xs text-[var(--muted)]">{row.notes}</p>}
-        </div>)}</ScrollArea><div className="mt-4 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-[var(--muted)]">Linhas “a revisar” ficam fora dos totais até serem confirmadas.</p><Button className="w-full sm:w-auto" disabled={busy || preview.sessionIssues.length > 0} onClick={() => void confirm()}>{busy ? 'Importando…' : 'Salvar controle revisado'}</Button></div></SectionCard>}
+        </div>)}</ScrollArea><div className="mt-4 flex flex-wrap items-center justify-between gap-3"><p className={`text-xs ${invalidMeasurementCount ? 'font-semibold text-[var(--danger)]' : 'text-[var(--muted)]'}`}>{invalidMeasurementCount ? `${invalidMeasurementCount} linha(s) precisa(m) de um valor ou deve(m) permanecer excluída(s).` : 'Linhas “a revisar” ficam fora dos totais até serem confirmadas.'}</p><Button className="w-full sm:w-auto" disabled={busy || preview.sessionIssues.length > 0 || invalidMeasurementCount > 0} onClick={() => void confirm()}>{busy ? 'Importando…' : 'Salvar controle revisado'}</Button></div></SectionCard>}
     </div>
   </div>;
 }
@@ -266,7 +280,7 @@ export function MilkSessionDetailPage() {
   if (loading) return <div className="page"><LoadingState /></div>;
   if (error || !data) return <div className="page"><ErrorState message={error || 'Controle não encontrado.'} retry={reload} /></div>;
   const confirmed = data.measurements.filter((row) => row.status === 'CONFIRMED');
-  const total = confirmed.reduce((sum, row) => sum + Number(row.totalLiters), 0);
+  const total = confirmed.reduce((sum, row) => sum + Number(row.totalLiters ?? 0), 0);
   const review = data.measurements.filter((row) => row.status === 'NEEDS_REVIEW');
   const ordered = [...review, ...confirmed, ...data.measurements.filter((row) => row.status === 'EXCLUDED')];
   const filteredMeasurements = ordered.filter((row) => (measurementStatus === 'ALL' || row.status === measurementStatus)
@@ -280,12 +294,12 @@ export function MilkSessionDetailPage() {
       {data.notes && <div className="notice notice-info">{data.notes}</div>}{data.missingAnimals.length > 0 && <div className="notice notice-error"><strong>Controle incompleto:</strong> faltam {data.missingAnimals.length} vaca(s) que estavam em lactação nesta data: {data.missingAnimals.map((animal) => animal.name || `Brinco ${animal.tagNumber}`).join(', ')}.</div>}
       <SectionCard title="Medições" action={<label className="flex min-h-11 items-center gap-2 text-xs font-semibold"><input type="checkbox" checked={showEstimate} onChange={(event) => setShowEstimate(event.target.checked)} /> Mostrar estimativas</label>}>
         <FilterBar><Field label="Buscar animal"><Input type="search" value={measurementSearch} onChange={(event) => setMeasurementSearch(event.target.value)} placeholder="Nome, brinco ou rótulo original" /></Field><Field label="Situação"><Select value={measurementStatus} onChange={(event) => setMeasurementStatus(event.target.value)}><option value="ALL">Todas</option><option value="CONFIRMED">Confirmadas</option><option value="NEEDS_REVIEW">Aguardando revisão</option><option value="EXCLUDED">Excluídas</option></Select></Field><Field label="Inconsistência"><Select value={measurementIssue} onChange={(event) => setMeasurementIssue(event.target.value)}><option value="ALL">Todas as linhas</option><option value="ISSUES">Com inconsistência</option><option value="UNMATCHED">Sem vínculo</option><option value="LOW_CONFIDENCE">Baixa confiança</option><option value="MISSING_PERIOD">Período ausente</option></Select></Field></FilterBar>
-        {!filteredMeasurements.length ? <p className="mt-4 text-sm text-[var(--muted)]">Nenhuma medição encontrada com estes filtros.</p> : <ScrollArea label="Medições do controle" className="mt-4">{filteredMeasurements.map((row) => <div className="border-b border-[var(--border)] py-4 last:border-b-0" key={row.id}><div className="flex items-start justify-between gap-3"><div><strong>{row.animalName || (row.tagNumber ? `Brinco ${row.tagNumber}` : row.rawAnimalLabel)}</strong><p className="text-xs text-[var(--muted)]">Original: {row.rawAnimalLabel}{row.rawValueText ? ` · “${row.rawValueText}”` : ''}</p></div><div className="text-right"><strong className="text-lg">{formatLiters(row.totalLiters)}</strong><div><Badge tone={row.status === 'CONFIRMED' ? 'success' : row.status === 'NEEDS_REVIEW' ? 'warning' : 'neutral'}>{row.status === 'CONFIRMED' ? 'Confirmado' : row.status === 'NEEDS_REVIEW' ? 'Aguardando revisão' : 'Excluído'}</Badge></div></div></div>
+        {!filteredMeasurements.length ? <p className="mt-4 text-sm text-[var(--muted)]">Nenhuma medição encontrada com estes filtros.</p> : <ScrollArea label="Medições do controle" className="mt-4">{filteredMeasurements.map((row) => <div className="border-b border-[var(--border)] py-4 last:border-b-0" key={row.id}><div className="flex items-start justify-between gap-3"><div><strong>{row.animalName || (row.tagNumber ? `Brinco ${row.tagNumber}` : row.rawAnimalLabel)}</strong><p className="text-xs text-[var(--muted)]">Original: {row.rawAnimalLabel}{row.rawValueText ? ` · “${row.rawValueText}”` : ''}</p></div><div className="text-right"><strong className="text-lg">{row.totalLiters === null ? 'Sem valor legível' : formatLiters(row.totalLiters)}</strong><div><Badge tone={row.status === 'CONFIRMED' ? 'success' : row.status === 'NEEDS_REVIEW' ? 'warning' : 'neutral'}>{row.status === 'CONFIRMED' ? 'Confirmado' : row.status === 'NEEDS_REVIEW' ? 'Aguardando revisão' : 'Excluído'}</Badge></div></div></div>
           {row.morningLiters !== null && row.afternoonLiters !== null && <p className="mt-2 text-sm">Manhã {formatLiters(row.morningLiters)} · Tarde {formatLiters(row.afternoonLiters)}</p>}
           {row.morningLiters !== null && row.afternoonLiters === null && <p className="mt-2 text-sm">Manhã {formatLiters(row.morningLiters)} · Tarde sem medição</p>}
           {showEstimate && row.estimate && <div className="notice notice-warning mt-2"><strong>Estimativa — não foi medido separadamente</strong><br />Manhã {formatLiters(row.estimate.morning)} · Tarde {formatLiters(row.estimate.afternoon)}<br /><span className="text-xs">Método: {row.estimate.description}</span></div>}
           {row.issues.length > 0 && <div className="notice notice-warning mt-2"><ul className="list-disc pl-5">{row.issues.map((issue) => <li key={issue}>{issue}</li>)}</ul></div>}{row.notes && <p className="mt-2 text-sm text-[var(--muted)]">{row.notes}</p>}
-          {editingMeasurementId === row.id ? <MilkMeasurementEditor measurement={row} animals={animals ?? []} busy={busy} onSave={(value) => void saveMeasurement(row.id, value)} onCancel={() => setEditingMeasurementId(null)} /> : <div className="mt-3 flex flex-wrap gap-2"><Button variant="secondary" onClick={() => setEditingMeasurementId(row.id)}>Corrigir</Button>{row.status !== 'CONFIRMED' && <Button aria-label={`Confirmar linha ${row.rawAnimalLabel} ${row.rawValueText ?? row.totalLiters}`} onClick={() => void setStatus(row, 'CONFIRMED')}>Confirmar</Button>}{row.status !== 'NEEDS_REVIEW' && <Button variant="secondary" onClick={() => void setStatus(row, 'NEEDS_REVIEW')}>Revisar</Button>}{row.status !== 'EXCLUDED' && <Button variant="danger" onClick={() => void excludeMeasurement(row)}>Excluir dos totais</Button>}</div>}
+          {editingMeasurementId === row.id ? <MilkMeasurementEditor measurement={row} animals={animals ?? []} busy={busy} onSave={(value) => void saveMeasurement(row.id, value)} onCancel={() => setEditingMeasurementId(null)} /> : <div className="mt-3 flex flex-wrap gap-2"><Button variant="secondary" onClick={() => setEditingMeasurementId(row.id)}>Corrigir</Button>{row.status !== 'CONFIRMED' && row.totalLiters !== null && <Button aria-label={`Confirmar linha ${row.rawAnimalLabel} ${row.rawValueText ?? row.totalLiters}`} onClick={() => void setStatus(row, 'CONFIRMED')}>Confirmar</Button>}{row.status !== 'NEEDS_REVIEW' && row.totalLiters !== null && <Button variant="secondary" onClick={() => void setStatus(row, 'NEEDS_REVIEW')}>Revisar</Button>}{row.status !== 'EXCLUDED' && <Button variant="danger" onClick={() => void excludeMeasurement(row)}>Excluir dos totais</Button>}</div>}
         </div>)}</ScrollArea>}
       </SectionCard>
       <SectionCard title="Documentos do controle"><AttachmentPanel attachments={data.attachments} milkSessionId={id} onChange={reload} /></SectionCard>

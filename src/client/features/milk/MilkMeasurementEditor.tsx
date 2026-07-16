@@ -7,7 +7,7 @@ export type MeasurementEditValue = {
   animalId: string | null;
   morningLiters: number | null;
   afternoonLiters: number | null;
-  totalLiters: number;
+  totalLiters: number | null;
   confidence: string;
   status: string;
   notes: string | null;
@@ -17,7 +17,7 @@ type EditableMeasurement = {
   animalId: string | null;
   morningLiters: string | null;
   afternoonLiters: string | null;
-  totalLiters: string;
+  totalLiters: string | null;
   confidence: string;
   status: string;
   notes: string | null;
@@ -46,10 +46,10 @@ export function MilkMeasurementEditor({ measurement, animals, busy, onSave, onCa
     const morningValue = mode === 'SEPARATE' ? parseDecimal(morning) : null;
     const afternoonValue = mode === 'SEPARATE' ? parseDecimal(afternoon) : null;
     const totalValue = mode === 'SEPARATE'
-      ? (morningValue === null || afternoonValue === null ? null : morningValue + afternoonValue)
+      ? (morningValue === null && afternoonValue === null ? null : (morningValue ?? 0) + (afternoonValue ?? 0))
       : parseDecimal(total);
-    if (totalValue === null || totalValue < 0) {
-      setValidationError(mode === 'SEPARATE' ? 'Informe manhã e tarde para recalcular o total.' : 'Informe um total válido.');
+    if (status !== 'EXCLUDED' && (totalValue === null || totalValue < 0)) {
+      setValidationError(mode === 'SEPARATE' ? 'Informe ao menos uma medição para recalcular o total.' : 'Informe um total válido.');
       return;
     }
     setValidationError('');
@@ -64,7 +64,7 @@ export function MilkMeasurementEditor({ measurement, animals, busy, onSave, onCa
     });
   }
 
-  const calculatedTotal = mode === 'SEPARATE' && parseDecimal(morning) !== null && parseDecimal(afternoon) !== null
+  const calculatedTotal = mode === 'SEPARATE' && (parseDecimal(morning) !== null || parseDecimal(afternoon) !== null)
     ? (parseDecimal(morning) ?? 0) + (parseDecimal(afternoon) ?? 0)
     : null;
 

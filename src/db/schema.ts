@@ -181,7 +181,7 @@ export const milkMeasurements = pgTable('milk_measurements', {
   rawValueText: text('raw_value_text'),
   morningLiters: numeric('morning_liters', { precision: 10, scale: 2 }),
   afternoonLiters: numeric('afternoon_liters', { precision: 10, scale: 2 }),
-  totalLiters: numeric('total_liters', { precision: 10, scale: 2 }).notNull(),
+  totalLiters: numeric('total_liters', { precision: 10, scale: 2 }),
   confidence: measurementConfidence('confidence').notNull(),
   status: measurementStatus('status').notNull(),
   notes: text('notes'),
@@ -190,7 +190,7 @@ export const milkMeasurements = pgTable('milk_measurements', {
   index('milk_measurements_session_idx').on(table.milkSessionId),
   index('milk_measurements_animal_idx').on(table.animalId),
   check('milk_measurements_non_negative', sql`
-    ${table.totalLiters} >= 0 and
+    (${table.totalLiters} is null or ${table.totalLiters} >= 0) and
     (${table.morningLiters} is null or ${table.morningLiters} >= 0) and
     (${table.afternoonLiters} is null or ${table.afternoonLiters} >= 0)
   `),

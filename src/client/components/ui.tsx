@@ -89,7 +89,7 @@ export function EmptyState({ title, description, action }: { title: string; desc
   return <div className="section-card py-10 text-center"><h2 className="font-bold">{title}</h2><p className="mx-auto mt-1 max-w-md text-sm text-[var(--muted)]">{description}</p>{action && <div className="mt-4">{action}</div>}</div>;
 }
 export function ErrorState({ message, retry }: { message: string; retry?: () => void }) {
-  return <div className="notice notice-error" role="alert"><p>{message}</p>{retry && <Button variant="secondary" className="mt-3" onClick={retry}>Tentar novamente</Button>}</div>;
+  return <div className="notice notice-error" role="alert"><p className="whitespace-pre-line">{message}</p>{retry && <Button variant="secondary" className="mt-3" onClick={retry}>Tentar novamente</Button>}</div>;
 }
 
 export function Badge({ tone = 'neutral', children }: { tone?: 'success' | 'warning' | 'danger' | 'neutral'; children: ReactNode }) {

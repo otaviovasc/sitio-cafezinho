@@ -11,7 +11,7 @@ export type MeasurementDraft = {
   rawValueText?: string | null;
   morningLiters?: number | null;
   afternoonLiters?: number | null;
-  totalLiters: number;
+  totalLiters: number | null;
   confidence?: 'HIGH' | 'MEDIUM' | 'LOW';
   status?: 'CONFIRMED' | 'NEEDS_REVIEW' | 'EXCLUDED';
   notes?: string | null;
@@ -57,11 +57,11 @@ export async function createMilkSession(draft: MilkSessionDraft) {
     const producingIds = new Set(producingAnimals.map((animal) => animal.id));
     const byAnimal = new Map(draft.measurements.map((row) => [row.animalId, row]));
     const missing = producingAnimals.filter((animal) => !byAnimal.has(animal.id));
-    if (missing.length) {
+    if (draft.source === 'MANUAL' && missing.length) {
       const names = missing.slice(0, 3).map((animal) => animal.name || `Brinco ${animal.tagNumber}`).join(', ');
       return fail(`Preencha todas as vacas em lactação. Faltam ${missing.length}: ${names}${missing.length > 3 ? '…' : ''}`, 400, 'INCOMPLETE_HERD_CONTROL');
     }
-    const linkedIds = draft.measurements.map((row) => row.animalId).filter((id): id is string => Boolean(id));
+    const linkedIds = draft.measurements.filter((row) => (row.status ?? 'CONFIRMED') === 'CONFIRMED').map((row) => row.animalId).filter((id): id is string => Boolean(id));
     if (new Set(linkedIds).size !== linkedIds.length) {
       return fail('Cada animal deve aparecer uma única vez no controle.', 400, 'DUPLICATE_ANIMAL_MEASUREMENT');
     }
@@ -71,7 +71,7 @@ export async function createMilkSession(draft: MilkSessionDraft) {
     if (draft.source === 'MANUAL' && draft.measurements.some((row) => (row.status ?? 'CONFIRMED') !== 'CONFIRMED')) {
       return fail('Revise todos os valores antes de salvar o controle manual completo.', 400, 'UNCONFIRMED_MANUAL_MEASUREMENT');
     }
-    for (const animal of producingAnimals) {
+    for (const animal of draft.source === 'MANUAL' ? producingAnimals : []) {
       const row = byAnimal.get(animal.id);
       if (!row || ((row.status ?? 'CONFIRMED') === 'CONFIRMED' && row.morningLiters == null)) return fail(`Informe a produção da manhã de ${animal.name || animal.tagNumber}.`, 400, 'MORNING_REQUIRED');
       if ((row.status ?? 'CONFIRMED') === 'CONFIRMED' && requiresAfternoonMeasurement(animal.milkingRoutine) && row.afternoonLiters == null) {
@@ -97,7 +97,7 @@ export async function createMilkSession(draft: MilkSessionDraft) {
       rawValueText: row.rawValueText ?? null,
       morningLiters: row.morningLiters == null ? null : decimalString(row.morningLiters),
       afternoonLiters: row.afternoonLiters == null ? null : decimalString(row.afternoonLiters),
-      totalLiters: decimalString(row.totalLiters),
+      totalLiters: row.totalLiters === null ? null : decimalString(row.totalLiters),
       confidence: row.confidence ?? 'HIGH',
       status: row.status ?? 'CONFIRMED',
       notes: row.notes ?? null,

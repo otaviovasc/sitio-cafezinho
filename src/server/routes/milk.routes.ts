@@ -5,7 +5,7 @@ import { getDb } from '../../db/client.js';
 import { animalAliases, animals, attachments, dailyMilkTotals, milkMeasurements, milkSessions } from '../../db/schema.js';
 import { decimalString, normalizeLabel } from '../../domain/format.js';
 import { resolveDailyMilkByDate } from '../../domain/daily-milk.js';
-import { parseChatGptImport } from '../../domain/import.js';
+import { formatChatGptImportIssues, parseChatGptImport } from '../../domain/import.js';
 import { estimateSplit } from '../../domain/milk.js';
 import { fail } from '../http/api-error.js';
 import { decimalInput, optionalText, readJson, validate } from '../http/validation.js';
@@ -17,16 +17,20 @@ const measurementBaseSchema = z.object({
   rawValueText: z.string().max(120).nullable().optional(),
   morningLiters: decimalInput.nullable().optional(),
   afternoonLiters: decimalInput.nullable().optional(),
-  totalLiters: decimalInput,
+  totalLiters: decimalInput.nullable(),
   confidence: z.enum(['HIGH', 'MEDIUM', 'LOW']).default('HIGH'),
   status: z.enum(['CONFIRMED', 'NEEDS_REVIEW', 'EXCLUDED']).default('CONFIRMED'),
   notes: optionalText,
 });
 
 const measurementSchema = measurementBaseSchema.superRefine((value, context) => {
+  if (value.status !== 'EXCLUDED' && value.totalLiters === null) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['totalLiters'], message: 'Informe o total ou marque a linha como excluída.' });
+    return;
+  }
   if (value.morningLiters != null || value.afternoonLiters != null) {
     const sum = (value.morningLiters ?? 0) + (value.afternoonLiters ?? 0);
-    if (Math.abs(sum - value.totalLiters) > 0.011) context.addIssue({ code: z.ZodIssueCode.custom, message: 'Manhã + tarde deve ser igual ao total.' });
+    if (value.totalLiters !== null && Math.abs(sum - value.totalLiters) > 0.011) context.addIssue({ code: z.ZodIssueCode.custom, message: 'Manhã + tarde deve ser igual ao total.' });
   }
 });
 
@@ -34,7 +38,7 @@ const measurementUpdateSchema = z.object({
   animalId: z.string().uuid().nullable().optional(),
   morningLiters: decimalInput.nullable().optional(),
   afternoonLiters: decimalInput.nullable().optional(),
-  totalLiters: decimalInput.optional(),
+  totalLiters: decimalInput.nullable().optional(),
   confidence: z.enum(['HIGH', 'MEDIUM', 'LOW']).optional(),
   status: z.enum(['CONFIRMED', 'NEEDS_REVIEW', 'EXCLUDED']).optional(),
   notes: optionalText,
@@ -125,7 +129,7 @@ export const milkRoutes = new Hono()
       return {
         ...row,
         issues,
-        estimate: row.morningLiters === null && row.afternoonLiters === null ? estimateSplit(Number(row.totalLiters), row.animalId, history, session.sessionDate) : null,
+        estimate: row.totalLiters !== null && row.morningLiters === null && row.afternoonLiters === null ? estimateSplit(Number(row.totalLiters), row.animalId, history, session.sessionDate) : null,
       };
     });
     const linkedIds = new Set(rows.flatMap((row) => row.animalId ? [row.animalId] : []));
@@ -155,8 +159,10 @@ export const milkRoutes = new Hono()
     if (!current) return fail('Medição não encontrada.', 404, 'NOT_FOUND');
     const morning = body.morningLiters === undefined ? (current.morningLiters === null ? null : Number(current.morningLiters)) : body.morningLiters;
     const afternoon = body.afternoonLiters === undefined ? (current.afternoonLiters === null ? null : Number(current.afternoonLiters)) : body.afternoonLiters;
-    const total = body.totalLiters === undefined ? Number(current.totalLiters) : body.totalLiters;
-    if ((morning !== null || afternoon !== null) && Math.abs((morning ?? 0) + (afternoon ?? 0) - total) > 0.011) {
+    const total = body.totalLiters === undefined ? (current.totalLiters === null ? null : Number(current.totalLiters)) : body.totalLiters;
+    const status = body.status ?? current.status;
+    if (status !== 'EXCLUDED' && total === null) return fail('Informe o total ou mantenha a linha excluída.', 400, 'TOTAL_REQUIRED');
+    if (total !== null && (morning !== null || afternoon !== null) && Math.abs((morning ?? 0) + (afternoon ?? 0) - total) > 0.011) {
       return fail('Manhã + tarde deve ser igual ao total.', 400, 'INVALID_TOTAL');
     }
     const values: Record<string, unknown> = { ...body, updatedAt: new Date() };
@@ -172,7 +178,7 @@ export const milkRoutes = new Hono()
     try {
       parsed = parseChatGptImport(body.content);
     } catch (error) {
-      if (error instanceof z.ZodError) return fail(error.issues.map((issue) => issue.message).join('; '));
+      if (error instanceof z.ZodError) return fail(formatChatGptImportIssues(error));
       return fail(error instanceof Error ? error.message : 'Não foi possível validar os dados.');
     }
     const [allAnimals, allAliases, expectedHerd, previousRows] = await Promise.all([
@@ -198,7 +204,7 @@ export const milkRoutes = new Hono()
     }, new Map<string, number>());
     const measurements = matched.map(({ row, match }) => {
       const expected = match ? expectedHerd.find((animal) => animal.id === match.id) : undefined;
-      const totalLiters = row.totalLiters ?? (row.morningLiters ?? 0) + (row.afternoonLiters ?? 0);
+      const totalLiters = row.totalLiters ?? (row.morningLiters !== null || row.afternoonLiters !== null ? (row.morningLiters ?? 0) + (row.afternoonLiters ?? 0) : null);
       const issues: string[] = [];
       if (!match) issues.push('Animal não encontrado por nome, brinco ou alias exato.');
       if (match && !expected) issues.push('Animal não fazia parte do rebanho em lactação nesta data.');
@@ -207,7 +213,7 @@ export const milkRoutes = new Hono()
       if (!row.excluded && row.morningLiters === null) issues.push('Produção da manhã ausente.');
       if (!row.excluded && expected?.milkingRoutine === 'MORNING_AND_AFTERNOON' && row.afternoonLiters === null) issues.push('Produção da tarde ausente para este lote.');
       if (!row.excluded && expected?.milkingRoutine === 'MORNING_ONLY' && row.afternoonLiters !== null) issues.push('Este lote não possui ordenha à tarde.');
-      if (match) {
+      if (match && totalLiters !== null) {
         const history = previousRows.filter((previous) => previous.animalId === match.id).slice(0, 5).map((previous) => Number(previous.totalLiters));
         if (history.length >= 2) {
           const average = history.reduce((sum, value) => sum + value, 0) / history.length;
@@ -225,13 +231,11 @@ export const milkRoutes = new Hono()
         issues,
       };
     });
-    const linkedIds = new Set(matched.flatMap((item) => item.match ? [item.match.id] : []));
+    const linkedIds = new Set(matched.flatMap((item) => item.match && !item.row.excluded ? [item.match.id] : []));
     const missingAnimals = expectedHerd.filter((animal) => !linkedIds.has(animal.id)).map((animal) => ({ id: animal.id, name: animal.name, tagNumber: animal.tagNumber }));
-    const sessionIssues = [
-      ...(parsed.sourceMode !== 'SEPARATE_MORNING_AFTERNOON' ? ['O controle novo deve separar manhã e tarde.'] : []),
-      ...(missingAnimals.length ? [`Faltam ${missingAnimals.length} vaca(s) em lactação nesta data.`] : []),
-    ];
-    return c.json({ sessionDate: parsed.sessionDate, sourceMode: parsed.sourceMode, measurements, missingAnimals, sessionIssues });
+    const sessionIssues = parsed.sourceMode !== 'SEPARATE_MORNING_AFTERNOON' ? ['O controle novo deve separar manhã e tarde.'] : [];
+    const sessionWarnings = missingAnimals.length ? [`Há ${missingAnimals.length} vaca(s) em lactação sem medição vinculada neste controle.`] : [];
+    return c.json({ sessionDate: parsed.sessionDate, sourceMode: parsed.sourceMode, measurements, missingAnimals, sessionIssues, sessionWarnings });
   })
   .post('/import/chatgpt', async (c) => {
     const body = validate(sessionSchema, await readJson(c));
