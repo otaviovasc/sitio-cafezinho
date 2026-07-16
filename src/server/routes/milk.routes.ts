@@ -1,8 +1,9 @@
-import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb } from '../../db/client.js';
-import { animalAliases, animals, attachments, dailyMilkTotals, milkMeasurements, milkSessions } from '../../db/schema.js';
+import { animalAliases, animalGroupAssignments, animals, animalStatusEvents, attachments, dailyMilkTotals, herdGroups, milkMeasurements, milkSessions } from '../../db/schema.js';
+import { canRegisterAnimalFromMeasurement, identityFromRawAnimalLabel } from '../../domain/animal-registration.js';
 import { decimalString, normalizeLabel } from '../../domain/format.js';
 import { resolveDailyMilkByDate } from '../../domain/daily-milk.js';
 import { formatChatGptImportIssues, parseChatGptImport } from '../../domain/import.js';
@@ -50,6 +51,14 @@ const sessionSchema = z.object({
   inputMode: z.enum(['SEPARATE_MORNING_AFTERNOON', 'COMBINED_TOTAL', 'MIXED']),
   notes: optionalText,
   measurements: z.array(measurementSchema).min(1, 'Preencha ao menos um animal.'),
+});
+
+const bulkRegisterAnimalsSchema = z.object({
+  groupId: z.string().uuid(),
+  measurementIds: z.array(z.string().uuid()).min(1).max(300),
+}).refine((value) => new Set(value.measurementIds).size === value.measurementIds.length, {
+  path: ['measurementIds'],
+  message: 'Não repita a mesma linha.',
 });
 
 export const milkRoutes = new Hono()
@@ -117,7 +126,7 @@ export const milkRoutes = new Hono()
     const measurements = rows.map((row) => {
       const expected = row.animalId ? expectedHerd.find((animal) => animal.id === row.animalId) : undefined;
       const issues: string[] = [];
-      if (!row.animalId) issues.push('Sem vínculo com um animal.');
+      if (!row.animalId && row.status !== 'EXCLUDED') issues.push('Sem vínculo com um animal.');
       if (row.animalId && (linkedCounts.get(row.animalId) ?? 0) > 1) issues.push('Animal repetido no controle.');
       if (row.confidence === 'LOW') issues.push('Baixa confiança na transcrição.');
       if (row.status === 'NEEDS_REVIEW') issues.push('Aguardando decisão e fora dos totais.');
@@ -140,10 +149,68 @@ export const milkRoutes = new Hono()
     return c.json({ ...session, measurements, missingAnimals, attachments: documents });
   })
   .patch('/milk-sessions/:id', async (c) => {
-    const body = validate(z.object({ title: z.string().trim().max(160).nullable().optional(), notes: optionalText }), await readJson(c));
-    const [updated] = await getDb().update(milkSessions).set({ ...body, updatedAt: new Date() }).where(eq(milkSessions.id, c.req.param('id'))).returning();
+    const id = c.req.param('id');
+    const body = validate(z.object({ sessionDate: z.string().date().optional(), title: z.string().trim().max(160).nullable().optional(), notes: optionalText }), await readJson(c));
+    if (body.sessionDate) {
+      const [sameDate] = await getDb().select({ id: milkSessions.id }).from(milkSessions).where(and(eq(milkSessions.sessionDate, body.sessionDate), ne(milkSessions.id, id))).limit(1);
+      if (sameDate) return fail('Já existe um controle individual nesta data.', 409, 'SESSION_DATE_EXISTS');
+    }
+    const updated = await getDb().transaction(async (tx) => {
+      const [saved] = await tx.update(milkSessions).set({ ...body, updatedAt: new Date() }).where(eq(milkSessions.id, id)).returning();
+      if (saved && body.sessionDate) {
+        await tx.update(animalStatusEvents).set({ changedOn: body.sessionDate }).where(eq(animalStatusEvents.notes, `Situação definida a partir do controle individual ${id}.`));
+        await tx.update(animalGroupAssignments).set({ startedOn: body.sessionDate }).where(eq(animalGroupAssignments.notes, `Lote definido a partir do controle individual ${id}.`));
+      }
+      return saved;
+    });
     if (!updated) return fail('Controle não encontrado.', 404, 'NOT_FOUND');
     return c.json(updated);
+  })
+  .post('/milk-sessions/:id/register-unmatched-animals', async (c) => {
+    const sessionId = c.req.param('id');
+    const body = validate(bulkRegisterAnimalsSchema, await readJson(c));
+    const db = getDb();
+    const [[session], [group], selectedRows, allAnimals, allAliases] = await Promise.all([
+      db.select({ id: milkSessions.id, sessionDate: milkSessions.sessionDate }).from(milkSessions).where(eq(milkSessions.id, sessionId)).limit(1),
+      db.select({ id: herdGroups.id }).from(herdGroups).where(and(eq(herdGroups.id, body.groupId), eq(herdGroups.active, true), ne(herdGroups.milkingRoutine, 'NOT_MILKED'))).limit(1),
+      db.select({ id: milkMeasurements.id, animalId: milkMeasurements.animalId, rawAnimalLabel: milkMeasurements.rawAnimalLabel, status: milkMeasurements.status, confidence: milkMeasurements.confidence })
+        .from(milkMeasurements).where(and(eq(milkMeasurements.milkSessionId, sessionId), inArray(milkMeasurements.id, body.measurementIds))),
+      db.select().from(animals),
+      db.select().from(animalAliases),
+    ]);
+    if (!session) return fail('Controle não encontrado.', 404, 'NOT_FOUND');
+    if (!group) return fail('Escolha um lote ativo com rotina de ordenha.', 400, 'INVALID_GROUP');
+    if (selectedRows.length !== body.measurementIds.length) return fail('Uma ou mais linhas não pertencem a este controle.', 400, 'INVALID_MEASUREMENT');
+    const invalid = selectedRows.find((row) => !canRegisterAnimalFromMeasurement(row));
+    if (invalid) return fail(`A linha “${invalid.rawAnimalLabel}” não pode gerar um cadastro.`, 400, 'INVALID_MEASUREMENT');
+    const normalizedLabels = selectedRows.map((row) => normalizeLabel(row.rawAnimalLabel));
+    if (new Set(normalizedLabels).size !== normalizedLabels.length) return fail('Há rótulos repetidos na seleção. Revise essas linhas antes de cadastrar.', 409, 'DUPLICATE_LABEL');
+
+    const registrations = await db.transaction(async (tx) => {
+      const result: Array<{ measurementId: string; animal: { id: string; name: string | null; tagNumber: string | null }; created: boolean }> = [];
+      for (const row of selectedRows) {
+        const normalized = normalizeLabel(row.rawAnimalLabel);
+        const byTag = allAnimals.find((animal) => animal.tagNumber === row.rawAnimalLabel.trim());
+        const byName = allAnimals.find((animal) => animal.name && normalizeLabel(animal.name) === normalized);
+        const alias = allAliases.find((item) => item.normalizedAlias === normalized);
+        let animal = byTag ?? byName ?? (alias ? allAnimals.find((item) => item.id === alias.animalId) : undefined);
+        let created = false;
+        if (!animal) {
+          const identity = identityFromRawAnimalLabel(row.rawAnimalLabel);
+          [animal] = await tx.insert(animals).values({ ...identity, status: 'LACTATING', notes: `Cadastrado a partir do controle individual ${session.id}.` }).returning();
+          await tx.insert(animalStatusEvents).values({ animalId: animal.id, previousStatus: null, status: 'LACTATING', changedOn: session.sessionDate, notes: `Situação definida a partir do controle individual ${session.id}.` });
+          await tx.insert(animalGroupAssignments).values({ animalId: animal.id, groupId: group.id, startedOn: session.sessionDate, notes: `Lote definido a partir do controle individual ${session.id}.` });
+          allAnimals.push(animal);
+          created = true;
+        }
+        const [linked] = await tx.update(milkMeasurements).set({ animalId: animal.id, updatedAt: new Date() })
+          .where(and(eq(milkMeasurements.id, row.id), isNull(milkMeasurements.animalId))).returning({ id: milkMeasurements.id });
+        if (!linked) return fail(`A linha “${row.rawAnimalLabel}” já foi vinculada. Recarregue o controle.`, 409, 'MEASUREMENT_ALREADY_LINKED');
+        result.push({ measurementId: row.id, animal: { id: animal.id, name: animal.name, tagNumber: animal.tagNumber }, created });
+      }
+      return result;
+    });
+    return c.json({ created: registrations.filter((item) => item.created).length, linked: registrations.length, registrations }, 201);
   })
   .delete('/milk-sessions/:id', async (c) => {
     const id = c.req.param('id');
@@ -206,7 +273,7 @@ export const milkRoutes = new Hono()
       const expected = match ? expectedHerd.find((animal) => animal.id === match.id) : undefined;
       const totalLiters = row.totalLiters ?? (row.morningLiters !== null || row.afternoonLiters !== null ? (row.morningLiters ?? 0) + (row.afternoonLiters ?? 0) : null);
       const issues: string[] = [];
-      if (!match) issues.push('Animal não encontrado por nome, brinco ou alias exato.');
+      if (!match && !row.excluded) issues.push('Animal não encontrado por nome, brinco ou alias exato.');
       if (match && !expected) issues.push('Animal não fazia parte do rebanho em lactação nesta data.');
       if (match && (matchCounts.get(match.id) ?? 0) > 1) issues.push('Animal repetido no controle.');
       if (row.confidence === 'LOW') issues.push('Baixa confiança na transcrição.');

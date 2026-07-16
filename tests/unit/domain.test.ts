@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { sha256 } from '../../src/domain/files';
 import { allowedNextStatuses, canTransitionStatus, isProductiveCycleTransition, statusEndsMilkingGroup, statusRequiresMilkingGroup } from '../../src/domain/animal-lifecycle';
+import { canRegisterAnimalFromMeasurement, identityFromRawAnimalLabel, shouldSelectRegistrationByDefault } from '../../src/domain/animal-registration';
 import { filterByPeriod } from '../../src/domain/analytics';
 import { calculateDailyMilkTotal, resolveDailyMilkByDate, summarizeDailyMilk } from '../../src/domain/daily-milk';
 import { formatDate, formatLiters, formatMoney, normalizeLabel, parseDecimal } from '../../src/domain/format';
@@ -142,6 +143,24 @@ describe('produção de leite', () => {
     const result = estimateSplit(20, 'sem-historico', future, '2026-05-06');
     expect(result.method).toBe('DEFAULT_50_50');
     expect(result.morning).toBe(10);
+  });
+});
+
+describe('cadastro a partir do controle individual', () => {
+  const row = { animalId: null, rawAnimalLabel: 'Pituca', status: 'CONFIRMED', confidence: 'HIGH' };
+
+  it('permite cadastrar rótulo legível sem vínculo e não cria linha excluída ou ilegível', () => {
+    expect(canRegisterAnimalFromMeasurement(row)).toBe(true);
+    expect(canRegisterAnimalFromMeasurement({ ...row, status: 'EXCLUDED' })).toBe(false);
+    expect(canRegisterAnimalFromMeasurement({ ...row, rawAnimalLabel: '[rótulo ilegível]' })).toBe(false);
+    expect(canRegisterAnimalFromMeasurement({ ...row, animalId: 'animal-existente' })).toBe(false);
+  });
+
+  it('deixa baixa confiança desmarcada e preserva o rótulo exato como nome ou brinco', () => {
+    expect(shouldSelectRegistrationByDefault(row)).toBe(true);
+    expect(shouldSelectRegistrationByDefault({ ...row, confidence: 'LOW' })).toBe(false);
+    expect(identityFromRawAnimalLabel('  Pituca  ')).toEqual({ name: 'Pituca', tagNumber: null });
+    expect(identityFromRawAnimalLabel(' 141 ')).toEqual({ name: null, tagNumber: '141' });
   });
 });
 

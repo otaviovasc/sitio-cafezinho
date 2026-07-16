@@ -7,6 +7,11 @@ async function capturePaintedViewport(page: Page, path: string) {
   await page.screenshot({ path, fullPage: true, animations: 'disabled' });
 }
 
+async function captureCurrentViewport(page: Page, path: string) {
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await page.screenshot({ path, fullPage: false, animations: 'disabled' });
+}
+
 async function captureTallPage(page: Page, path: string) {
   const viewport = page.viewportSize();
   if (!viewport) return;
@@ -92,6 +97,27 @@ test('captura estados principais sem rolagem horizontal', async ({ page }, testI
   await expect(page.getByText('3. Revisar o controle')).toBeVisible();
   await page.getByText('3. Revisar o controle').scrollIntoViewIfNeeded();
   await capturePaintedViewport(page, testInfo.outputPath('importacao-revisao.png'));
+
+  const bulkRegistrationDate = testInfo.project.name === 'mobile-360' ? '2026-07-13' : '2026-07-14';
+  const bulkSessionId = await page.evaluate(async (date) => {
+    const sessions = await fetch('/api/milk-sessions').then((response) => response.json()) as Array<{ id: string; sessionDate: string }>;
+    const existing = sessions.find((session) => session.sessionDate === date);
+    if (existing) await fetch(`/api/milk-sessions/${existing.id}`, { method: 'DELETE' });
+    const response = await fetch('/api/import/chatgpt', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionDate: date, inputMode: 'SEPARATE_MORNING_AFTERNOON', title: 'Revisão visual do cadastro em massa', measurements: [{ rawAnimalLabel: `Vaca visual ${date}`, rawValueText: '10 + 8', morningLiters: 10, afternoonLiters: 8, totalLiters: 18, confidence: 'HIGH', status: 'NEEDS_REVIEW', animalId: null, notes: 'Dado demonstrativo do teste visual.' }] }),
+    });
+    return ((await response.json()) as { id: string }).id;
+  }, bulkRegistrationDate);
+  await page.goto(`/producao/${bulkSessionId}`);
+  await page.getByRole('button', { name: 'Editar', exact: true }).first().click();
+  await expect(page.getByLabel('Data do controle')).toHaveValue(bulkRegistrationDate);
+  await captureCurrentViewport(page, testInfo.outputPath('edicao-data-controle.png'));
+  await page.getByRole('button', { name: 'Cancelar', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Cadastrar sem vínculo (1)' }).click();
+  await expect(page.getByRole('heading', { name: 'Cadastrar animais sem vínculo' })).toBeVisible();
+  await captureCurrentViewport(page, testInfo.outputPath('cadastro-em-massa-controle.png'));
 
   await page.goto('/receitas/nova');
   await page.getByRole('button', { name: 'Registrar entrada' }).click();

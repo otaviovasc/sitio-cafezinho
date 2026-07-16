@@ -114,6 +114,11 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
 
   await page.goto('/producao/importar');
   const importDate = testInfo.project.name === 'desktop-1440' ? '2026-07-11' : '2026-07-12';
+  const correctedImportDate = testInfo.project.name === 'desktop-1440' ? '2026-07-10' : '2026-07-11';
+  await page.evaluate(async (dates) => {
+    const sessions = await fetch('/api/milk-sessions').then((response) => response.json()) as Array<{ id: string; sessionDate: string }>;
+    for (const existing of sessions.filter((session) => dates.includes(session.sessionDate))) await fetch(`/api/milk-sessions/${existing.id}`, { method: 'DELETE' });
+  }, [importDate, correctedImportDate]);
   await page.getByLabel('Data da sessão').fill(importDate);
   await page.getByRole('button', { name: 'Carregar exemplo' }).click();
   await page.getByRole('button', { name: 'Validar dados' }).click();
@@ -123,6 +128,7 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
     sessionDate: importDate,
     sourceMode: 'SEPARATE_MORNING_AFTERNOON',
     measurements: [
+      { rawAnimalLabel: `Vaca importada ${suffix}`, rawValueText: '10 + 8,5', morningLiters: 10, afternoonLiters: 8.5, totalLiters: 18.5, confidence: 'HIGH', excluded: false, notes: null },
       { rawAnimalLabel: 'Kiltora', rawValueText: null, morningLiters: null, afternoonLiters: null, totalLiters: null, confidence: 'LOW', excluded: true, notes: 'Linha riscada no caderno; sem valor legível' },
       { rawAnimalLabel: 'Helen', rawValueText: null, morningLiters: null, afternoonLiters: null, totalLiters: null, confidence: 'LOW', excluded: true, notes: 'Linha riscada no caderno; rótulo e valor pouco legíveis' },
       { rawAnimalLabel: null, rawValueText: null, morningLiters: null, afternoonLiters: null, totalLiters: null, confidence: 'LOW', excluded: true, notes: 'Linha riscada e ilegível no controle da tarde' },
@@ -136,6 +142,29 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await page.getByRole('button', { name: 'Salvar controle revisado' }).click();
   await expect(page.getByRole('heading', { name: 'Importação do ChatGPT' })).toBeVisible();
   await expect(page.getByText('Sem valor legível', { exact: true }).first()).toBeVisible();
+  await page.getByRole('button', { name: 'Editar', exact: true }).first().click();
+  await page.getByLabel('Data do controle').fill(correctedImportDate);
+  await page.getByRole('button', { name: 'Salvar', exact: true }).click();
+  await expect(page.getByText(`${correctedImportDate.split('-').reverse().join('/')} · Importado do ChatGPT`, { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Cadastrar sem vínculo (1)' }).click();
+  await expect(page.getByRole('heading', { name: 'Cadastrar animais sem vínculo' })).toBeVisible();
+  await page.getByLabel('Lote inicial dos animais selecionados').selectOption({ label: 'Lote 1' });
+  await expect(page.getByText(`Vaca importada ${suffix}`, { exact: true }).first()).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('cadastro-em-massa-controle.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Cadastrar e vincular 1 animal' }).click();
+  await expect(page.getByRole('button', { name: /Cadastrar sem vínculo/ })).toHaveCount(0);
+  await expect(page.getByText('Sem vínculo com um animal.')).toHaveCount(0);
+  const registeredFromControl = await page.evaluate(async (name) => {
+    const [animals, session] = await Promise.all([
+      fetch('/api/animals').then((response) => response.json()) as Promise<Array<{ id: string; name: string | null; status: string; currentGroup: { name: string } | null }>>,
+      fetch(location.pathname.replace('/producao/', '/api/milk-sessions/')).then((response) => response.json()) as Promise<{ sessionDate: string; measurements: Array<{ rawAnimalLabel: string; animalId: string | null }> }>,
+    ]);
+    const animal = animals.find((item) => item.name === name);
+    const measurement = session.measurements.find((item) => item.rawAnimalLabel === name);
+    const detail = animal ? await fetch(`/api/animals/${animal.id}`).then((response) => response.json()) as { groupHistory: Array<{ startedOn: string }>; statusHistory: Array<{ changedOn: string }> } : null;
+    return { date: session.sessionDate, status: animal?.status, group: animal?.currentGroup?.name, groupStarted: detail?.groupHistory[0]?.startedOn, statusChanged: detail?.statusHistory[0]?.changedOn, linked: measurement?.animalId === animal?.id };
+  }, `Vaca importada ${suffix}`);
+  expect(registeredFromControl).toEqual({ date: correctedImportDate, status: 'LACTATING', group: 'Lote 1', groupStarted: correctedImportDate, statusChanged: correctedImportDate, linked: true });
 
   await page.goto('/producao');
   await page.evaluate(async () => {

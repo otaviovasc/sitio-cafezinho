@@ -11,6 +11,7 @@ import { ConfirmButton } from '../components/feedback';
 import { ParsedDecimalInput } from '../components/form-controls';
 import { Badge, Button, EmptyState, ErrorState, Field, FilterBar, Input, LoadingState, PageHeader, ScrollArea, SectionCard, Select, StatCard, Textarea } from '../components/ui';
 import { MilkMeasurementEditor, type MeasurementEditValue } from '../features/milk/MilkMeasurementEditor';
+import { BulkRegisterAnimalsPanel } from '../features/milk/BulkRegisterAnimalsPanel';
 import { DailyMilkPanel } from '../features/milk/DailyMilkPanel';
 import { QuickAnimalForm } from '../features/animals/QuickAnimalForm';
 import { useResource } from '../hooks/useResource';
@@ -205,7 +206,7 @@ export function ImportMilkPage() {
           <div className="mb-3 flex items-start justify-between gap-3"><div><span className="text-xs font-semibold text-[var(--muted)]">Linha {index + 1}</span><strong className="block">{row.rawAnimalLabel}</strong><p className="text-xs text-[var(--muted)]">Original preservado{row.rawValueText ? ` · “${row.rawValueText}”` : ''}</p></div><Badge tone={row.status === 'CONFIRMED' ? 'success' : row.status === 'EXCLUDED' ? 'neutral' : 'warning'}>{row.status === 'CONFIRMED' ? 'Confirmado' : row.status === 'EXCLUDED' ? 'Excluído' : 'Revisar'}</Badge></div>
           {row.issues.length > 0 && <div className="notice notice-warning mb-3"><ul className="list-disc pl-5">{row.issues.map((issue) => <li key={issue}>{issue}</li>)}</ul></div>}
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5"><Field label="Animal vinculado"><Select value={row.animalId || ''} onChange={(event) => update(index, { animalId: event.target.value || null })}><option value="">Sem vínculo</option>{animals?.map((animal) => <option key={animal.id} value={animal.id}>{animal.name || `Brinco ${animal.tagNumber}`}</option>)}</Select></Field><Field label="Manhã (L)"><ParsedDecimalInput suffix="L" value={row.morningLiters} onValueChange={(value) => updatePeriod(index, 'morningLiters', value)} /></Field><Field label="Tarde (L)"><ParsedDecimalInput suffix="L" value={row.afternoonLiters} onValueChange={(value) => updatePeriod(index, 'afternoonLiters', value)} /></Field><Field label="Total (L)" hint="Recalculado pela manhã e tarde" error={row.status !== 'EXCLUDED' && row.totalLiters === null ? 'Informe manhã ou tarde, ou mantenha a linha excluída.' : undefined}><ParsedDecimalInput suffix="L" value={row.totalLiters} onValueChange={() => undefined} readOnly aria-readonly /></Field><Field label="Situação"><Select value={row.status} onChange={(event) => update(index, { status: event.target.value })}><option value="CONFIRMED">Confirmado</option><option value="NEEDS_REVIEW">Aguardando revisão</option><option value="EXCLUDED">Excluído</option></Select></Field></div>
-          {!row.animalId && <p className="mt-2 text-xs text-[var(--warning)]">Se for uma vaca nova, <Link className="font-semibold underline" to="/rebanho/novo">cadastre no rebanho</Link> e valide novamente.</p>}{row.notes && <p className="mt-2 text-xs text-[var(--muted)]">{row.notes}</p>}
+          {!row.animalId && row.status !== 'EXCLUDED' && <p className="mt-2 text-xs text-[var(--warning)]">Se for uma vaca nova, você poderá cadastrar e vincular várias de uma vez depois de salvar o controle.</p>}{row.notes && <p className="mt-2 text-xs text-[var(--muted)]">{row.notes}</p>}
         </div>)}</ScrollArea><div className="mt-4 flex flex-wrap items-center justify-between gap-3"><p className={`text-xs ${invalidMeasurementCount ? 'font-semibold text-[var(--danger)]' : 'text-[var(--muted)]'}`}>{invalidMeasurementCount ? `${invalidMeasurementCount} linha(s) precisa(m) de um valor ou deve(m) permanecer excluída(s).` : 'Linhas “a revisar” ficam fora dos totais até serem confirmadas.'}</p><Button className="w-full sm:w-auto" disabled={busy || preview.sessionIssues.length > 0 || invalidMeasurementCount > 0} onClick={() => void confirm()}>{busy ? 'Importando…' : 'Salvar controle revisado'}</Button></div></SectionCard>}
     </div>
   </div>;
@@ -217,7 +218,7 @@ export function MilkSessionDetailPage() {
   const confirmAction = useConfirm();
   const toast = useToast();
   const { data, setData, loading, error, reload } = useResource<SessionDetail>(`/api/milk-sessions/${id}`);
-  const { data: animals = [] } = useResource<Animal[]>('/api/animals');
+  const { data: animals = [], reload: reloadAnimals } = useResource<Animal[]>('/api/animals');
   const [actionError, setActionError] = useState('');
   const [showEstimate, setShowEstimate] = useState(true);
   const [measurementSearch, setMeasurementSearch] = useState('');
@@ -225,6 +226,8 @@ export function MilkSessionDetailPage() {
   const [measurementIssue, setMeasurementIssue] = useState('ALL');
   const [editingMeasurementId, setEditingMeasurementId] = useState<string | null>(null);
   const [editingSession, setEditingSession] = useState(false);
+  const [showBulkRegistration, setShowBulkRegistration] = useState(false);
+  const [sessionDate, setSessionDate] = useState('');
   const [sessionTitle, setSessionTitle] = useState('');
   const [sessionNotes, setSessionNotes] = useState('');
   const [busy, setBusy] = useState(false);
@@ -255,11 +258,11 @@ export function MilkSessionDetailPage() {
   }
   function startSessionEdit() {
     if (!data) return;
-    setSessionTitle(data.title ?? ''); setSessionNotes(data.notes ?? ''); setEditingSession(true);
+    setSessionDate(data.sessionDate); setSessionTitle(data.title ?? ''); setSessionNotes(data.notes ?? ''); setEditingSession(true);
   }
   async function saveSession() {
     setBusy(true); setActionError('');
-    try { await api(`/api/milk-sessions/${id}`, json('PATCH', { title: sessionTitle.trim() || null, notes: sessionNotes.trim() || null })); setEditingSession(false); reload(); toast('Controle atualizado'); }
+    try { await api(`/api/milk-sessions/${id}`, json('PATCH', { sessionDate, title: sessionTitle.trim() || null, notes: sessionNotes.trim() || null })); setEditingSession(false); reload(); toast('Controle atualizado'); }
     catch (cause) { setActionError(cause instanceof Error ? cause.message : 'Não foi possível editar o controle.'); }
     finally { setBusy(false); }
   }
@@ -282,6 +285,7 @@ export function MilkSessionDetailPage() {
   const confirmed = data.measurements.filter((row) => row.status === 'CONFIRMED');
   const total = confirmed.reduce((sum, row) => sum + Number(row.totalLiters ?? 0), 0);
   const review = data.measurements.filter((row) => row.status === 'NEEDS_REVIEW');
+  const unmatched = data.measurements.filter((row) => !row.animalId && row.status !== 'EXCLUDED' && row.rawAnimalLabel !== '[rótulo ilegível]');
   const ordered = [...review, ...confirmed, ...data.measurements.filter((row) => row.status === 'EXCLUDED')];
   const filteredMeasurements = ordered.filter((row) => (measurementStatus === 'ALL' || row.status === measurementStatus)
     && (measurementIssue === 'ALL' || (measurementIssue === 'ISSUES' && row.issues.length > 0) || (measurementIssue === 'UNMATCHED' && !row.animalId) || (measurementIssue === 'LOW_CONFIDENCE' && row.confidence === 'LOW') || (measurementIssue === 'MISSING_PERIOD' && (row.morningLiters === null || row.afternoonLiters === null)))
@@ -289,10 +293,11 @@ export function MilkSessionDetailPage() {
   return <div className="page"><PageHeader icon={Milk} title={data.title || `Controle de ${formatDate(data.sessionDate)}`} subtitle={`${formatDate(data.sessionDate)} · ${data.source === 'NOTEBOOK_SEED' ? 'Transcrição inicial do caderno' : data.source === 'CHATGPT_IMPORT' ? 'Importado do ChatGPT' : 'Registro manual'}`} action={<div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={startSessionEdit}>Editar</Button><ConfirmButton variant="danger" disabled={busy} question="Excluir este controle e suas medições? Esta ação não pode ser desfeita." onClick={() => void deleteSession()}>Excluir</ConfirmButton></div>} />
     <div className="grid gap-5">
       {actionError && <ErrorState message={actionError} />}
-      {editingSession && <SectionCard title="Editar controle"><div className="grid gap-3 sm:grid-cols-2"><Field label="Título"><Input value={sessionTitle} onChange={(event) => setSessionTitle(event.target.value)} /></Field><Field label="Observação"><Textarea className="min-h-12" value={sessionNotes} onChange={(event) => setSessionNotes(event.target.value)} /></Field></div><div className="mt-3 flex gap-2"><Button disabled={busy} onClick={() => void saveSession()}>{busy ? 'Salvando…' : 'Salvar'}</Button><Button variant="secondary" onClick={() => setEditingSession(false)}>Cancelar</Button></div></SectionCard>}
+      {editingSession && <SectionCard title="Editar controle"><div className="grid gap-3 sm:grid-cols-2"><Field label="Data do controle"><Input type="date" value={sessionDate} onChange={(event) => setSessionDate(event.target.value)} required /></Field><Field label="Título"><Input value={sessionTitle} onChange={(event) => setSessionTitle(event.target.value)} /></Field><Field label="Observação"><Textarea className="min-h-12" value={sessionNotes} onChange={(event) => setSessionNotes(event.target.value)} /></Field></div><p className="mt-2 text-xs text-[var(--muted)]">Corrigir a data mantém todas as medições e rótulos deste controle.</p><div className="mt-3 flex gap-2"><Button disabled={busy || !sessionDate} onClick={() => void saveSession()}>{busy ? 'Salvando…' : 'Salvar'}</Button><Button variant="secondary" onClick={() => setEditingSession(false)}>Cancelar</Button></div></SectionCard>}
       <div className="grid grid-cols-3 gap-3"><div className="stat-card"><span className="stat-label">Total confirmado</span><strong className="stat-value block">{formatLiters(total)}</strong></div><div className="stat-card"><span className="stat-label">Confirmados</span><strong className="stat-value block">{confirmed.length}</strong></div><div className="stat-card"><span className="stat-label">A revisar</span><strong className="stat-value block">{review.length}</strong></div></div>
-      {data.notes && <div className="notice notice-info">{data.notes}</div>}{data.missingAnimals.length > 0 && <div className="notice notice-error"><strong>Controle incompleto:</strong> faltam {data.missingAnimals.length} vaca(s) que estavam em lactação nesta data: {data.missingAnimals.map((animal) => animal.name || `Brinco ${animal.tagNumber}`).join(', ')}.</div>}
-      <SectionCard title="Medições" action={<label className="flex min-h-11 items-center gap-2 text-xs font-semibold"><input type="checkbox" checked={showEstimate} onChange={(event) => setShowEstimate(event.target.checked)} /> Mostrar estimativas</label>}>
+      {data.notes && <div className="notice notice-info">{data.notes}</div>}{data.missingAnimals.length > 0 && <div className="notice notice-warning"><strong>{data.missingAnimals.length} vaca(s) em lactação sem medição vinculada</strong><p className="mt-1 text-xs">Isso é um aviso de conferência; não registra ausência nem produção zero.</p><details className="mt-2"><summary className="min-h-11 cursor-pointer py-2 text-xs font-semibold">Ver vacas sem medição</summary><p className="text-xs">{data.missingAnimals.map((animal) => animal.name || `Brinco ${animal.tagNumber}`).join(', ')}.</p></details></div>}
+      <SectionCard title="Medições" action={<div className="flex flex-wrap items-center justify-end gap-2">{unmatched.length > 0 && <Button variant="secondary" onClick={() => setShowBulkRegistration((value) => !value)}><Plus size={17} aria-hidden />Cadastrar sem vínculo ({unmatched.length})</Button>}<label className="flex min-h-11 items-center gap-2 text-xs font-semibold"><input type="checkbox" checked={showEstimate} onChange={(event) => setShowEstimate(event.target.checked)} /> Mostrar estimativas</label></div>}>
+        {showBulkRegistration && unmatched.length > 0 && <BulkRegisterAnimalsPanel sessionId={id} sessionDate={data.sessionDate} rows={unmatched} onCancel={() => setShowBulkRegistration(false)} onDone={async () => { setShowBulkRegistration(false); await Promise.all([reload(), reloadAnimals()]); }} />}
         <FilterBar><Field label="Buscar animal"><Input type="search" value={measurementSearch} onChange={(event) => setMeasurementSearch(event.target.value)} placeholder="Nome, brinco ou rótulo original" /></Field><Field label="Situação"><Select value={measurementStatus} onChange={(event) => setMeasurementStatus(event.target.value)}><option value="ALL">Todas</option><option value="CONFIRMED">Confirmadas</option><option value="NEEDS_REVIEW">Aguardando revisão</option><option value="EXCLUDED">Excluídas</option></Select></Field><Field label="Inconsistência"><Select value={measurementIssue} onChange={(event) => setMeasurementIssue(event.target.value)}><option value="ALL">Todas as linhas</option><option value="ISSUES">Com inconsistência</option><option value="UNMATCHED">Sem vínculo</option><option value="LOW_CONFIDENCE">Baixa confiança</option><option value="MISSING_PERIOD">Período ausente</option></Select></Field></FilterBar>
         {!filteredMeasurements.length ? <p className="mt-4 text-sm text-[var(--muted)]">Nenhuma medição encontrada com estes filtros.</p> : <ScrollArea label="Medições do controle" className="mt-4">{filteredMeasurements.map((row) => <div className="border-b border-[var(--border)] py-4 last:border-b-0" key={row.id}><div className="flex items-start justify-between gap-3"><div><strong>{row.animalName || (row.tagNumber ? `Brinco ${row.tagNumber}` : row.rawAnimalLabel)}</strong><p className="text-xs text-[var(--muted)]">Original: {row.rawAnimalLabel}{row.rawValueText ? ` · “${row.rawValueText}”` : ''}</p></div><div className="text-right"><strong className="text-lg">{row.totalLiters === null ? 'Sem valor legível' : formatLiters(row.totalLiters)}</strong><div><Badge tone={row.status === 'CONFIRMED' ? 'success' : row.status === 'NEEDS_REVIEW' ? 'warning' : 'neutral'}>{row.status === 'CONFIRMED' ? 'Confirmado' : row.status === 'NEEDS_REVIEW' ? 'Aguardando revisão' : 'Excluído'}</Badge></div></div></div>
           {row.morningLiters !== null && row.afternoonLiters !== null && <p className="mt-2 text-sm">Manhã {formatLiters(row.morningLiters)} · Tarde {formatLiters(row.afternoonLiters)}</p>}

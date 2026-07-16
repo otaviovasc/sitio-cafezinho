@@ -11,6 +11,8 @@
 - O total diário não é distribuído entre animais e não substitui o controle individual completo.
 - Dias sem medição diária permanecem ausentes; médias consideram somente os dias efetivamente medidos.
 - Controle leiteiro individual é uma medição pontual, não uma série diária presumida por vaca.
+- Linhas legíveis sem vínculo podem gerar cadastros em massa por confirmação humana. O rótulo exato vira nome ou brinco, o lote é escolhido explicitamente, baixa confiança começa desmarcada e linha excluída/ilegível nunca cria animal.
+- A data de um controle individual pode ser corrigida sem alterar suas medições originais. Quando o próprio controle originou cadastros em massa, a data inicial desses históricos acompanha a correção.
 - Um controle individual novo inclui todas as vacas que estavam `LACTATING` e em lote de ordenha naquela data. A interface principal usa importação e revisão do ChatGPT; não há formulário manual concorrente.
 - Situação representa o ciclo produtivo/vida; lote representa somente a rotina operacional de ordenha. Reprodução é um terceiro histórico paralelo. São conceitos diferentes.
 - As situações úteis são `HEIFER` (novilha antes da primeira lactação), `LACTATING`, `DRY`, `SOLD` e `DEAD`. Não existe situação genérica “ativa”.
