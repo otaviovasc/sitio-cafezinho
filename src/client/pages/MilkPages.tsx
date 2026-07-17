@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ChartNoAxesCombined, Milk, Plus } from 'lucide-react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { filterByPeriod, type PeriodDays } from '../../domain/analytics';
 import type { MilkingRoutine } from '../../domain/herd';
 import { AttachmentPanel, type Attachment } from '../components/AttachmentPanel';
@@ -35,20 +35,30 @@ export function MilkSessionsPage() {
   const { data: timeline = [], loading: timelineLoading, error: timelineError, reload: reloadTimeline } = useResource<ProductionPoint[]>('/api/milk-production-timeline');
   const [period, setPeriod] = useState<PeriodDays>(90);
   const [sessionSearch, setSessionSearch] = useState('');
-  const chartData = filterByPeriod(timeline ?? [], period, today());
+  // Uma linha por data com séries separadas: produção diária e controle individual
+  // são fatos distintos e podem coexistir no mesmo dia. Sem isso, datas repetidas
+  // faziam a linha única "voltar" no eixo X (o gráfico bugado).
+  const productionByDate = new Map<string, { date: string; daily: number | null; individual: number | null }>();
+  for (const point of timeline ?? []) {
+    const row = productionByDate.get(point.date) ?? { date: point.date, daily: null, individual: null };
+    if (point.source === 'DAILY_TOTAL') row.daily = Number(point.totalLiters);
+    else row.individual = Number(point.totalLiters);
+    productionByDate.set(point.date, row);
+  }
+  const chartData = filterByPeriod([...productionByDate.values()].sort((a, b) => a.date.localeCompare(b.date)), period, today());
   const filteredSessions = (data ?? []).filter((session) => `${session.title ?? ''} ${formatDate(session.sessionDate)}`.toLocaleLowerCase('pt-BR').includes(sessionSearch.toLocaleLowerCase('pt-BR')));
   return <div className="page">
     <PageHeader icon={Milk} title="Produção" subtitle="Produção total e controle individual são medições diferentes e podem existir na mesma data" action={<Link className="button button-primary" to="/producao/importar"><Plus size={18} aria-hidden />Importar controle</Link>} />
-    <div className="grid grid-cols-1 gap-5"><SectionCard icon={ChartNoAxesCombined} title="Registros de produção"><PeriodSelector value={period} onChange={setPeriod} /><p className="mb-3 mt-3 text-xs text-[var(--muted)]">Produção total é o volume agregado da ordenha. Controle individual é uma medição pontual por animal. Coleta é o volume retirado pelo laticínio. Os três fatos permanecem separados, inclusive quando têm a mesma data.</p>{timelineLoading ? <LoadingState /> : timelineError ? <ErrorState message={timelineError} retry={reloadTimeline} /> : <TimeSeriesChart data={chartData} series={[{ key: 'totalLiters', label: 'Volume registrado', color: '#315c3b', area: true }]} label="Registros de produção no período selecionado" />}</SectionCard><DailyMilkPanel onChange={reloadTimeline} /><MilkCollectionsPanel /><section className="min-w-0"><div className="mb-3 flex flex-wrap items-center justify-between gap-2"><h2 className="text-xl font-bold">Controle individual</h2><Link className="button button-secondary" to="/producao/importar">Importar do ChatGPT</Link></div>
+    <div className="grid grid-cols-1 gap-5"><SectionCard icon={ChartNoAxesCombined} title="Registros de produção"><PeriodSelector value={period} onChange={setPeriod} /><p className="mb-3 mt-3 text-xs text-[var(--muted)]">Produção total é o volume agregado da ordenha. Controle individual é uma medição pontual por animal. Coleta é o volume retirado pelo laticínio. Os três fatos permanecem separados, inclusive quando têm a mesma data.</p>{timelineLoading ? <LoadingState /> : timelineError ? <ErrorState message={timelineError} retry={reloadTimeline} /> : <TimeSeriesChart data={chartData} series={[{ key: 'daily', label: 'Produção diária', color: '#315c3b', area: true }, { key: 'individual', label: 'Controle individual', color: '#8a5a0a', dashed: true }]} label="Registros de produção no período selecionado" />}</SectionCard><DailyMilkPanel onChange={reloadTimeline} /><MilkCollectionsPanel /><section className="min-w-0"><div className="mb-3 flex flex-wrap items-center justify-between gap-2"><h2 className="text-xl font-bold">Controle individual</h2><Link className="button button-secondary" to="/producao/importar">Importar transcrição</Link></div>
     <FilterBar><Field label="Buscar controle"><Input type="search" value={sessionSearch} onChange={(event) => setSessionSearch(event.target.value)} placeholder="Título ou data" /></Field></FilterBar>
-    <div className="mt-3">{loading ? <LoadingState /> : error ? <ErrorState message={error} retry={reload} /> : !filteredSessions.length ? <EmptyState title="Nenhum controle individual" description="Importe uma medição completa do ChatGPT ou ajuste a busca." /> : <SectionCard><ScrollArea label="Controles individuais">{filteredSessions.map((session) => <Link className="mobile-item" to={`/producao/${session.id}`} key={session.id}>
+    <div className="mt-3">{loading ? <LoadingState /> : error ? <ErrorState message={error} retry={reload} /> : !filteredSessions.length ? <EmptyState title="Nenhum controle individual" description="Importe uma medição completa ou ajuste a busca." /> : <SectionCard><ScrollArea label="Controles individuais">{filteredSessions.map((session) => <Link className="mobile-item" to={`/producao/${session.id}`} key={session.id}>
       <span className="min-w-0"><strong className="block truncate">{session.title || `Controle de ${formatDate(session.sessionDate)}`}</strong><span className="text-sm text-[var(--muted)]">{formatDate(session.sessionDate)} · {session.confirmedCount} confirmados</span>{session.reviewCount > 0 && <span className="mt-1 block text-xs font-semibold text-[var(--warning)]">{session.reviewCount} aguardando revisão</span>}</span>
       <strong className="shrink-0">{formatLiters(session.confirmedTotal)}</strong>
     </Link>)}</ScrollArea></SectionCard>}</div></section></div>
   </div>;
 }
 
-const CHATGPT_PROMPT = `Você está transcrevendo um controle de produção de leite de vacas.
+const TRANSCRIPTION_PROMPT = `Você está transcrevendo um controle de produção de leite de vacas.
 
 Vou enviar uma ou mais fotos de páginas de caderno.
 
@@ -142,18 +152,24 @@ export function ImportMilkPage() {
   const [showQuickAnimal, setShowQuickAnimal] = useState(false);
   const { data: animals, reload: reloadAnimals } = useResource<Animal[]>('/api/animals');
   const navigate = useNavigate();
-  const prompt = CHATGPT_PROMPT.replaceAll('{{SESSION_DATE}}', date);
+  const location = useLocation();
+  const prompt = TRANSCRIPTION_PROMPT.replaceAll('{{SESSION_DATE}}', date);
 
   async function copyPrompt() {
     try { await navigator.clipboard.writeText(prompt); toast('Prompt copiado'); }
     catch { setError('Não foi possível copiar automaticamente. Selecione o texto abaixo.'); }
   }
-  async function validate() {
+  async function validate(raw: string = content) {
     setBusy(true); setError('');
-    try { setPreview(await api<Preview>('/api/import/chatgpt/validate', json('POST', { content }))); toast('Dados válidos. Revise cada linha antes de importar.'); }
+    try { setPreview(await api<Preview>('/api/import/milk-session/validate', json('POST', { content: raw }))); toast('Dados válidos. Revise cada linha antes de importar.'); }
     catch (cause) { setPreview(null); setError(cause instanceof Error ? cause.message : 'Não foi possível validar.'); }
     finally { setBusy(false); }
   }
+  useEffect(() => {
+    const prefill = (location.state as { prefillJson?: string } | null)?.prefillJson;
+    if (prefill) { setContent(prefill); void validate(prefill); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   function update(index: number, values: Partial<Preview['measurements'][number]>) {
     if (!preview) return;
     setPreview({ ...preview, measurements: preview.measurements.map((row, rowIndex) => rowIndex === index ? { ...row, ...values } : row) });
@@ -169,10 +185,10 @@ export function ImportMilkPage() {
     if (!preview) return;
     setBusy(true); setError('');
     try {
-      const created = await api<{ id: string }>('/api/import/chatgpt', json('POST', {
+      const created = await api<{ id: string }>('/api/import/milk-session', json('POST', {
         sessionDate: preview.sessionDate,
         inputMode: preview.sourceMode === 'UNKNOWN' ? 'MIXED' : preview.sourceMode,
-        title: 'Importação do ChatGPT',
+        title: 'Controle importado',
         measurements: preview.measurements.map((row) => {
           const measurement = { ...row };
           delete (measurement as Partial<typeof row>).matchedAnimal;
@@ -192,12 +208,12 @@ export function ImportMilkPage() {
   }) ?? [];
   const invalidMeasurementCount = preview?.measurements.filter((row) => row.status !== 'EXCLUDED' && row.totalLiters === null).length ?? 0;
 
-  return <div className="page"><PageHeader title="Importar dados do ChatGPT" subtitle="Transcreva as fotos e revise antes de salvar" />
+  return <div className="page"><PageHeader title="Importar transcrição" subtitle="Transcreva as fotos e revise antes de salvar" />
     <div className="grid gap-5">
-      <div className="notice notice-info"><strong>Como funciona</strong><br />Envie ao ChatGPT as fotos da manhã e da tarde, copie o prompt abaixo e depois cole aqui somente o JSON retornado. Linhas riscadas, incompletas ou ilegíveis serão preservadas para revisão.</div>
+      <div className="notice notice-info"><strong>Como funciona</strong><br />Copie o prompt abaixo, use-o em um assistente de transcrição junto com as fotos da manhã e da tarde e cole aqui somente o JSON retornado. Linhas riscadas, incompletas ou ilegíveis serão preservadas para revisão.</div>
       {error && <ErrorState message={error} />}
       <SectionCard title="1. Preparar o prompt" action={<Button variant="secondary" onClick={() => void copyPrompt()}>Copiar prompt</Button>}><Field label="Data da sessão"><Input type="date" value={date} onChange={(event) => { setDate(event.target.value); setPreview(null); }} /></Field><details className="mt-4"><summary className="min-h-11 cursor-pointer py-3 font-semibold">Ver prompt completo</summary><pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-xl bg-[#f0efe8] p-3 text-xs leading-5">{prompt}</pre></details></SectionCard>
-      <SectionCard title="2. Colar e validar"><Field label="JSON retornado pelo ChatGPT" hint="Aceita linhas excluídas sem litros e preserva rótulos ilegíveis para revisão."><Textarea className="min-h-64 font-mono text-sm" value={content} onChange={(event) => { setContent(event.target.value); setPreview(null); setError(''); }} /></Field><div className="mt-3 flex flex-wrap gap-2"><Button variant="secondary" onClick={() => { setContent(exampleJson(date)); setError(''); }}>Carregar exemplo</Button><Button disabled={busy || !content.trim()} onClick={() => void validate()}>{busy ? 'Validando…' : 'Validar dados'}</Button></div></SectionCard>
+      <SectionCard title="2. Colar e validar"><Field label="JSON da transcrição" hint="Aceita linhas excluídas sem litros e preserva rótulos ilegíveis para revisão."><Textarea className="min-h-64 font-mono text-sm" value={content} onChange={(event) => { setContent(event.target.value); setPreview(null); setError(''); }} /></Field><div className="mt-3 flex flex-wrap gap-2"><Button variant="secondary" onClick={() => { setContent(exampleJson(date)); setError(''); }}>Carregar exemplo</Button><Button disabled={busy || !content.trim()} onClick={() => void validate()}>{busy ? 'Validando…' : 'Validar dados'}</Button></div></SectionCard>
       {preview && <SectionCard title="3. Revisar o controle" action={<Button variant="secondary" onClick={() => setShowQuickAnimal((value) => !value)}><Plus size={17} aria-hidden />Cadastrar vaca</Button>}>{showQuickAnimal && <div className="mb-4"><QuickAnimalForm initialDate={preview.sessionDate} onCancel={() => setShowQuickAnimal(false)} onCreated={async () => { await reloadAnimals(); setShowQuickAnimal(false); }} /></div>}<div className="mb-4 grid grid-cols-3 gap-3"><StatCard label="Confirmadas" value={preview.measurements.filter((row) => row.status === 'CONFIRMED').length} /><StatCard label="A revisar" value={preview.measurements.filter((row) => row.status === 'NEEDS_REVIEW').length} /><StatCard label="Sem medição" value={preview.missingAnimals.length} /></div>
         {preview.sessionIssues.length > 0 && <div className="notice notice-error mb-4"><strong>Corrija antes de salvar</strong><ul className="mt-1 list-disc pl-5">{preview.sessionIssues.map((issue) => <li key={issue}>{issue}</li>)}</ul></div>}
         {(preview.sessionWarnings?.length ?? 0) > 0 && <div className="notice notice-warning mb-4"><strong>Confira antes de salvar</strong><ul className="mt-1 list-disc pl-5">{preview.sessionWarnings?.map((issue) => <li key={issue}>{issue}</li>)}</ul>{preview.missingAnimals.length > 0 && <details className="mt-2"><summary className="min-h-11 cursor-pointer py-2 text-xs font-semibold">Ver vacas sem medição vinculada</summary><p className="text-xs">{preview.missingAnimals.map((animal) => animal.name || `Brinco ${animal.tagNumber}`).join(', ')}.</p></details>}<p className="mt-2 text-xs">Isso não impede salvar: o controle individual pode ser pontual e não registra ausência nem produção zero.</p></div>}
@@ -290,7 +306,7 @@ export function MilkSessionDetailPage() {
   const filteredMeasurements = ordered.filter((row) => (measurementStatus === 'ALL' || row.status === measurementStatus)
     && (measurementIssue === 'ALL' || (measurementIssue === 'ISSUES' && row.issues.length > 0) || (measurementIssue === 'UNMATCHED' && !row.animalId) || (measurementIssue === 'LOW_CONFIDENCE' && row.confidence === 'LOW') || (measurementIssue === 'MISSING_PERIOD' && (row.morningLiters === null || row.afternoonLiters === null)))
     && `${row.animalName ?? ''} ${row.tagNumber ?? ''} ${row.rawAnimalLabel}`.toLocaleLowerCase('pt-BR').includes(measurementSearch.toLocaleLowerCase('pt-BR')));
-  return <div className="page"><PageHeader icon={Milk} title={data.title || `Controle de ${formatDate(data.sessionDate)}`} subtitle={`${formatDate(data.sessionDate)} · ${data.source === 'NOTEBOOK_SEED' ? 'Transcrição inicial do caderno' : data.source === 'CHATGPT_IMPORT' ? 'Importado do ChatGPT' : 'Registro manual'}`} action={<div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={startSessionEdit}>Editar</Button><ConfirmButton variant="danger" disabled={busy} question="Excluir este controle e suas medições? Esta ação não pode ser desfeita." onClick={() => void deleteSession()}>Excluir</ConfirmButton></div>} />
+  return <div className="page"><PageHeader icon={Milk} title={data.title || `Controle de ${formatDate(data.sessionDate)}`} subtitle={`${formatDate(data.sessionDate)} · ${data.source === 'NOTEBOOK_SEED' ? 'Transcrição inicial do caderno' : data.source === 'IMPORT' ? 'Importado' : 'Registro manual'}`} action={<div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={startSessionEdit}>Editar</Button><ConfirmButton variant="danger" disabled={busy} question="Excluir este controle e suas medições? Esta ação não pode ser desfeita." onClick={() => void deleteSession()}>Excluir</ConfirmButton></div>} />
     <div className="grid gap-5">
       {actionError && <ErrorState message={actionError} />}
       {editingSession && <SectionCard title="Editar controle"><div className="grid gap-3 sm:grid-cols-2"><Field label="Data do controle"><Input type="date" value={sessionDate} onChange={(event) => setSessionDate(event.target.value)} required /></Field><Field label="Título"><Input value={sessionTitle} onChange={(event) => setSessionTitle(event.target.value)} /></Field><Field label="Observação"><Textarea className="min-h-12" value={sessionNotes} onChange={(event) => setSessionNotes(event.target.value)} /></Field></div><p className="mt-2 text-xs text-[var(--muted)]">Corrigir a data mantém todas as medições e rótulos deste controle.</p><div className="mt-3 flex gap-2"><Button disabled={busy || !sessionDate} onClick={() => void saveSession()}>{busy ? 'Salvando…' : 'Salvar'}</Button><Button variant="secondary" onClick={() => setEditingSession(false)}>Cancelar</Button></div></SectionCard>}

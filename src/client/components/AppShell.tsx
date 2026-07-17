@@ -2,6 +2,7 @@ import { useEffect, type ComponentType, type ReactNode } from 'react';
 import { Files, Home, LogOut, Milk, Scale, WalletCards, type LucideProps } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { CowHead } from './icons';
+import { MicFab } from './capture';
 import { api, json } from '../lib/api';
 
 const nav: Array<{ to: string; label: string; icon: ComponentType<LucideProps> }> = [
@@ -55,6 +56,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </div>
     </header>
     <main>{children}</main>
+    <MicFab />
     <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-6 border-t border-[var(--border)] bg-[var(--surface)] px-1 pb-[max(0.35rem,env(safe-area-inset-bottom))] pt-1 lg:hidden">
       {nav.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} end={to === '/'} className={({ isActive }) => `flex min-h-14 min-w-0 flex-col items-center justify-center gap-0.5 overflow-hidden rounded-lg px-0.5 text-center text-[9px] font-bold ${isActive ? 'bg-[var(--primary-soft)] text-[var(--primary)]' : 'text-[var(--muted)]'}`}><Icon className="shrink-0" size={20} aria-hidden /><span className="block max-w-full truncate">{label}</span></NavLink>)}
     </nav>

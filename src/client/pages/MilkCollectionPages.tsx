@@ -1,4 +1,4 @@
-import { FormEvent, useState } from 'react';
+import { useState } from 'react';
 import { Plus, Truck } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { formatDate, formatLiters, parseDecimal } from '../../domain/format';
@@ -6,8 +6,9 @@ import { AttachmentPanel, type Attachment } from '../components/AttachmentPanel'
 import { useConfirm, useToast } from '../components/feedback-context';
 import { ConfirmButton } from '../components/feedback';
 import { LitersInput } from '../components/form-controls';
-import { Badge, Button, EmptyState, ErrorState, Field, FormErrorSummary, Input, LoadingState, PageHeader, ScrollArea, SectionCard, Select, Textarea } from '../components/ui';
+import { Badge, Button, EmptyState, ErrorState, Field, FormErrorSummary, Input, LoadingState, PageHeader, ScrollArea, SectionCard, Select, SubmitBar, Textarea } from '../components/ui';
 import { useResource } from '../hooks/useResource';
+import { useSubmit } from '../hooks/useSubmit';
 import { api, ApiError, json } from '../lib/api';
 import { today } from '../lib/labels';
 
@@ -56,8 +57,7 @@ function MilkCollectionForm({ initial, onSaved }: { initial?: MilkCollectionDeta
   const [collectedTime, setCollectedTime] = useState(timeFromIso(initial?.collectedAt));
   const [source, setSource] = useState(initial?.source ?? 'TANK_READING');
   const [notes, setNotes] = useState(initial?.notes ?? '');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+  const { busy, error, run } = useSubmit();
   const [fieldErrors, setFieldErrors] = useState<{ date?: string; liters?: string }>({});
 
   async function persist(confirmPossibleDuplicate: boolean) {
@@ -82,28 +82,21 @@ function MilkCollectionForm({ initial, onSaved }: { initial?: MilkCollectionDeta
           confirmLabel: 'Registrar mesmo assim',
           tone: 'primary',
         });
-        if (accepted) {
-          await persist(true);
-          return;
-        }
+        if (accepted) await persist(true);
+        return;
       }
-      setError(cause instanceof Error ? cause.message : 'Não foi possível salvar a coleta.');
+      throw cause;
     }
   }
 
-  async function save(event: FormEvent) {
-    event.preventDefault(); setBusy(true); setError('');
-    try { await persist(false); } finally { setBusy(false); }
-  }
-
-  return <form className="grid gap-4" noValidate onSubmit={(event) => void save(event)}>
+  return <form className="grid gap-4" noValidate onSubmit={(event) => { event.preventDefault(); void run(() => persist(false)); }}>
     {error && <ErrorState message={error} />}
     <FormErrorSummary errors={Object.values(fieldErrors)} />
     <SectionCard title="Registro rápido">
       <div className="grid gap-3 sm:grid-cols-2"><Field label="Data" error={fieldErrors.date}><Input type="date" value={collectionDate} onChange={(event) => { setCollectionDate(event.target.value); setFieldErrors((current) => ({ ...current, date: undefined })); }} required /></Field><Field label="Litros retirados" error={fieldErrors.liters}><LitersInput value={liters} onValueChange={(value) => { setLiters(value); setFieldErrors((current) => ({ ...current, liters: undefined })); }} placeholder="Ex.: 360" required autoFocus /></Field></div>
     </SectionCard>
     <details className="section-card" open={Boolean(initial?.collectedAt || initial?.notes)}><summary className="min-h-11 cursor-pointer py-2 text-lg font-bold">Mais detalhes</summary><div className="mt-3 grid gap-3 sm:grid-cols-2"><Field label="Horário (opcional)"><Input type="time" value={collectedTime} onChange={(event) => setCollectedTime(event.target.value)} /></Field><Field label="Origem da medição"><Select value={source} onChange={(event) => setSource(event.target.value)}>{Object.entries(sourceLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></Field><Field label="Observação"><Textarea value={notes} onChange={(event) => setNotes(event.target.value)} /></Field></div></details>
-    <Button className="w-full sm:w-auto sm:self-start" type="submit" disabled={busy}>{busy ? 'Salvando…' : initial ? 'Salvar alteração' : 'Registrar coleta'}</Button>
+    <SubmitBar label={initial ? 'Salvar alteração' : 'Registrar coleta'} busy={busy} />
   </form>;
 }
 

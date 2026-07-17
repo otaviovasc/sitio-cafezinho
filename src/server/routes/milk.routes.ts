@@ -6,7 +6,8 @@ import { animalAliases, animalGroupAssignments, animals, animalStatusEvents, att
 import { canRegisterAnimalFromMeasurement, identityFromRawAnimalLabel } from '../../domain/animal-registration.js';
 import { decimalString, normalizeLabel } from '../../domain/format.js';
 import { resolveDailyMilkByDate } from '../../domain/daily-milk.js';
-import { formatChatGptImportIssues, parseChatGptImport } from '../../domain/import.js';
+import { formatMilkImportIssues, parseMilkImport } from '../../domain/import.js';
+import { matchAnimalByLabel } from '../../domain/nl/matching.js';
 import { estimateSplit } from '../../domain/milk.js';
 import { fail } from '../http/api-error.js';
 import { decimalInput, optionalText, readJson, validate } from '../http/validation.js';
@@ -239,13 +240,13 @@ export const milkRoutes = new Hono()
     const [updated] = await getDb().update(milkMeasurements).set(values).where(eq(milkMeasurements.id, c.req.param('id'))).returning();
     return c.json(updated);
   })
-  .post('/import/chatgpt/validate', async (c) => {
+  .post('/import/milk-session/validate', async (c) => {
     const body = validate(z.object({ content: z.string().min(1) }), await readJson(c));
     let parsed;
     try {
-      parsed = parseChatGptImport(body.content);
+      parsed = parseMilkImport(body.content);
     } catch (error) {
-      if (error instanceof z.ZodError) return fail(formatChatGptImportIssues(error));
+      if (error instanceof z.ZodError) return fail(formatMilkImportIssues(error));
       return fail(error instanceof Error ? error.message : 'Não foi possível validar os dados.');
     }
     const [allAnimals, allAliases, expectedHerd, previousRows] = await Promise.all([
@@ -257,14 +258,7 @@ export const milkRoutes = new Hono()
         .where(and(eq(milkMeasurements.status, 'CONFIRMED'), sql`${milkSessions.sessionDate} < ${parsed.sessionDate}`))
         .orderBy(desc(milkSessions.sessionDate)),
     ]);
-    const matched = parsed.measurements.map((row) => {
-      const normalized = normalizeLabel(row.rawAnimalLabel);
-      const byTag = allAnimals.find((animal) => animal.tagNumber === row.rawAnimalLabel.trim());
-      const byName = allAnimals.find((animal) => animal.name && normalizeLabel(animal.name) === normalized);
-      const alias = allAliases.find((item) => item.normalizedAlias === normalized);
-      const match = byTag ?? byName ?? (alias ? allAnimals.find((animal) => animal.id === alias.animalId) : undefined);
-      return { row, match };
-    });
+    const matched = parsed.measurements.map((row) => ({ row, match: matchAnimalByLabel(row.rawAnimalLabel, allAnimals, allAliases) }));
     const matchCounts = matched.reduce((counts, item) => {
       if (item.match && !item.row.excluded) counts.set(item.match.id, (counts.get(item.match.id) ?? 0) + 1);
       return counts;
@@ -304,8 +298,8 @@ export const milkRoutes = new Hono()
     const sessionWarnings = missingAnimals.length ? [`Há ${missingAnimals.length} vaca(s) em lactação sem medição vinculada neste controle.`] : [];
     return c.json({ sessionDate: parsed.sessionDate, sourceMode: parsed.sourceMode, measurements, missingAnimals, sessionIssues, sessionWarnings });
   })
-  .post('/import/chatgpt', async (c) => {
+  .post('/import/milk-session', async (c) => {
     const body = validate(sessionSchema, await readJson(c));
-    const created = await createMilkSession({ ...body, source: 'CHATGPT_IMPORT', title: body.title || 'Importação do ChatGPT' });
+    const created = await createMilkSession({ ...body, source: 'IMPORT', title: body.title || 'Controle importado' });
     return c.json(created, 201);
   });

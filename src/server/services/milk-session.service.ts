@@ -21,7 +21,7 @@ export type MilkSessionDraft = {
   sessionDate: string;
   title?: string | null;
   inputMode: 'SEPARATE_MORNING_AFTERNOON' | 'COMBINED_TOTAL' | 'MIXED';
-  source: 'MANUAL' | 'CHATGPT_IMPORT' | 'NOTEBOOK_SEED';
+  source: 'MANUAL' | 'IMPORT' | 'NOTEBOOK_SEED';
   notes?: string | null;
   measurements: MeasurementDraft[];
 };
@@ -51,7 +51,7 @@ export async function createMilkSession(draft: MilkSessionDraft) {
   const [sameDate] = await getDb().select({ id: milkSessions.id }).from(milkSessions).where(eq(milkSessions.sessionDate, draft.sessionDate)).limit(1);
   if (sameDate) return fail('Já existe um controle individual nesta data.', 409, 'SESSION_DATE_EXISTS');
 
-  if (draft.source === 'MANUAL' || draft.source === 'CHATGPT_IMPORT') {
+  if (draft.source === 'MANUAL' || draft.source === 'IMPORT') {
     if (draft.inputMode !== 'SEPARATE_MORNING_AFTERNOON') return fail('O controle manual deve registrar manhã e tarde.', 400, 'SEPARATE_VALUES_REQUIRED');
     const producingAnimals = await loadMilkingHerdOnDate(draft.sessionDate);
     const producingIds = new Set(producingAnimals.map((animal) => animal.id));

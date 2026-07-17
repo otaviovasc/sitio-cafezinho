@@ -84,6 +84,19 @@ export function Button({ variant = 'primary', className = '', ...props }: Button
   return <button {...props} className={`button ${variantClass} ${className}`} />;
 }
 
+export function SubmitBar({ label, busyLabel = 'Salvando…', busy = false, disabled = false, secondary }: {
+  label: string;
+  busyLabel?: string;
+  busy?: boolean;
+  disabled?: boolean;
+  secondary?: ReactNode;
+}) {
+  return <div className="form-submit-bar flex flex-wrap gap-2">
+    <Button type="submit" disabled={busy || disabled}>{busy ? busyLabel : label}</Button>
+    {secondary}
+  </div>;
+}
+
 export function LoadingState() { return <div className="section-card py-10 text-center text-[var(--muted)]" role="status">Carregando…</div>; }
 export function EmptyState({ title, description, action }: { title: string; description: string; action?: ReactNode }) {
   return <div className="section-card py-10 text-center"><h2 className="font-bold">{title}</h2><p className="mx-auto mt-1 max-w-md text-sm text-[var(--muted)]">{description}</p>{action && <div className="mt-4">{action}</div>}</div>;
@@ -94,6 +107,14 @@ export function ErrorState({ message, retry }: { message: string; retry?: () => 
 
 export function Badge({ tone = 'neutral', children }: { tone?: 'success' | 'warning' | 'danger' | 'neutral'; children: ReactNode }) {
   return <span className={`badge badge-${tone}`}>{children}</span>;
+}
+
+export function StatusBadge({ descriptor }: { descriptor: { label: string; tone: 'success' | 'warning' | 'danger' | 'neutral' } }) {
+  return <Badge tone={descriptor.tone}>{descriptor.label}</Badge>;
+}
+
+export function SkeletonList({ rows = 3 }: { rows?: number }) {
+  return <div className="grid gap-2" role="status" aria-label="Carregando">{Array.from({ length: rows }, (_, index) => <div key={index} className="skeleton h-16" />)}</div>;
 }
 
 export function FilterBar({ children }: { children: ReactNode }) {

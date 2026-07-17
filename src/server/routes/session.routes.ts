@@ -9,6 +9,7 @@ import {
   recordLoginFailure,
   setSession,
 } from '../auth.js';
+import { env } from '../env.js';
 import { readJson, validate } from '../http/validation.js';
 
 export const sessionRoutes = new Hono()
@@ -24,7 +25,7 @@ export const sessionRoutes = new Hono()
     setSession(c);
     return c.json({ authenticated: true });
   })
-  .get('/', (c) => c.json({ authenticated: isAuthenticated(c) }))
+  .get('/', (c) => c.json({ authenticated: isAuthenticated(c), voiceEnabled: Boolean(env().OPENROUTER_API_KEY) }))
   .post('/logout', (c) => {
     clearSession(c);
     return c.json({ authenticated: false });

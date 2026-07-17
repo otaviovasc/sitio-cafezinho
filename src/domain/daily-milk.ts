@@ -15,8 +15,8 @@ export type ResolvedDailyMilk = {
   recordIds: string[];
 };
 
-export function calculateDailyMilkTotal(morningLiters: number, afternoonLiters: number | null) {
-  return Number(decimalString(morningLiters + (afternoonLiters ?? 0)));
+export function calculateDailyMilkTotal(morningLiters: number | null, afternoonLiters: number | null) {
+  return Number(decimalString((morningLiters ?? 0) + (afternoonLiters ?? 0)));
 }
 
 export function resolveDailyMilkByDate(rows: DailyMilkScopeRow[]) {

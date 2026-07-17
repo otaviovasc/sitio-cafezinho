@@ -95,7 +95,7 @@ Regras que devem permanecer verdadeiras:
 - [ ] Excluir o registro após confirmação.
 - [ ] Conferir que registros antigos sem divisão, se existirem, são identificados como históricos e não recebem uma divisão inventada.
 
-## 7. Controle individual com ChatGPT
+## 7. Controle individual por transcrição
 
 - [ ] Abrir Importar controle individual e copiar o prompt.
 - [ ] Carregar o exemplo, validar e conferir a prévia antes de salvar.

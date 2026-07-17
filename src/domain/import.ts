@@ -24,13 +24,13 @@ export const importMeasurementSchema = z.object({
   }
 }).transform((row) => ({ ...row, rawAnimalLabel: row.rawAnimalLabel ?? '[rótulo ilegível]' }));
 
-export const chatGptImportSchema = z.object({
+export const milkImportSchema = z.object({
   sessionDate: z.string().date(),
   sourceMode: z.enum(['SEPARATE_MORNING_AFTERNOON', 'COMBINED_TOTAL', 'MIXED', 'UNKNOWN']),
   measurements: z.array(importMeasurementSchema).min(1),
 });
 
-export type ChatGptImport = z.infer<typeof chatGptImportSchema>;
+export type MilkImport = z.infer<typeof milkImportSchema>;
 
 export function stripMarkdownJson(input: string) {
   const trimmed = input.trim();
@@ -38,14 +38,14 @@ export function stripMarkdownJson(input: string) {
   return fenced ? fenced[1] : trimmed;
 }
 
-export function parseChatGptImport(input: string) {
+export function parseMilkImport(input: string) {
   let raw: unknown;
   try {
     raw = JSON.parse(stripMarkdownJson(input));
   } catch {
     throw new Error('O conteúdo não é um JSON válido.');
   }
-  return chatGptImportSchema.parse(raw);
+  return milkImportSchema.parse(raw);
 }
 
 const importFieldLabels: Record<string, string> = {
@@ -58,7 +58,7 @@ const importFieldLabels: Record<string, string> = {
   notes: 'observação',
 };
 
-export function formatChatGptImportIssues(error: z.ZodError) {
+export function formatMilkImportIssues(error: z.ZodError) {
   return error.issues.map((issue) => {
     const measurementIndex = issue.path[0] === 'measurements' && typeof issue.path[1] === 'number' ? issue.path[1] : null;
     const field = measurementIndex === null ? issue.path.at(-1) : issue.path[2];

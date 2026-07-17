@@ -3,7 +3,8 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb } from '../../db/client.js';
 import { animalAliases, animals, animalWeights, weightSessions } from '../../db/schema.js';
-import { decimalString, normalizeLabel } from '../../domain/format.js';
+import { decimalString } from '../../domain/format.js';
+import { matchAnimalByLabel } from '../../domain/nl/matching.js';
 import { parseWeightImport } from '../../domain/weight.js';
 import { fail } from '../http/api-error.js';
 import { decimalInput, optionalText, readJson, validate } from '../http/validation.js';
@@ -68,11 +69,7 @@ export const weightRoutes = new Hono()
     const { allAnimals, allAliases, latestWeights } = await loadMatchingContext();
     const seen = new Set<string>();
     const measurements = parsed.measurements.map((row) => {
-      const normalized = normalizeLabel(row.rawAnimalLabel);
-      const byTag = allAnimals.find((animal) => animal.tagNumber === row.rawAnimalLabel.trim());
-      const byName = allAnimals.find((animal) => animal.name && normalizeLabel(animal.name) === normalized);
-      const alias = allAliases.find((item) => item.normalizedAlias === normalized);
-      const match = byTag ?? byName ?? (alias ? allAnimals.find((animal) => animal.id === alias.animalId) : undefined);
+      const match = matchAnimalByLabel(row.rawAnimalLabel, allAnimals, allAliases);
       const previous = match ? latestWeights.find((weight) => weight.animalId === match.id && weight.weightKg !== null) : undefined;
       const variation = previous && row.weightKg !== null ? ((row.weightKg - Number(previous.weightKg)) / Number(previous.weightKg)) * 100 : null;
       const issues: string[] = [];
@@ -102,7 +99,7 @@ export const weightRoutes = new Hono()
     const [existing] = await getDb().select({ id: weightSessions.id }).from(weightSessions).where(eq(weightSessions.measuredOn, body.measuredOn)).limit(1);
     if (existing) return fail('Já existe uma sessão de pesagem nesta data.', 409, 'DUPLICATE_DATE');
     const session = await getDb().transaction(async (tx) => {
-      const [created] = await tx.insert(weightSessions).values({ measuredOn: body.measuredOn, title: body.title || 'Pesagem do rebanho', source: 'CHATGPT_IMPORT', notes: body.notes }).returning();
+      const [created] = await tx.insert(weightSessions).values({ measuredOn: body.measuredOn, title: body.title || 'Pesagem do rebanho', source: 'IMPORT', notes: body.notes }).returning();
       await tx.insert(animalWeights).values(body.measurements.map((row) => ({
         animalId: row.animalId,
         weightSessionId: created.id,

@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
 import { LoadingState } from './components/ui';
 import { api } from './lib/api';
+import { VoiceContext } from './lib/voice-context';
+import { RevisarPage } from './pages/RevisarPage';
 import { AnimalDetailPage, AnimalsPage, NewAnimalPage } from './pages/AnimalsPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { DocumentsPage } from './pages/DocumentsPage';
@@ -18,10 +20,12 @@ import { MilkPricePage } from './pages/MilkPricePage';
 
 export function App() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
   const location = useLocation();
-  useEffect(() => {
-    api<{ authenticated: boolean }>('/api/session').then((result) => setAuthenticated(result.authenticated)).catch(() => setAuthenticated(false));
-  }, []);
+  const refreshSession = useCallback(() => api<{ authenticated: boolean; voiceEnabled?: boolean }>('/api/session')
+    .then((result) => { setAuthenticated(result.authenticated); setVoiceEnabled(Boolean(result.voiceEnabled)); })
+    .catch(() => setAuthenticated(false)), []);
+  useEffect(() => { void refreshSession(); }, [refreshSession]);
   useEffect(() => {
     const expire = () => setAuthenticated(false);
     window.addEventListener('session-expired', expire);
@@ -31,12 +35,13 @@ export function App() {
   if (authenticated === null) return <div className="page"><LoadingState /></div>;
   if (!authenticated) {
     if (location.pathname !== '/entrar') return <Navigate to="/entrar" replace />;
-    return <LoginPage onLogin={() => setAuthenticated(true)} />;
+    return <LoginPage onLogin={() => { void refreshSession(); }} />;
   }
   if (location.pathname === '/entrar') return <Navigate to="/" replace />;
 
-  return <AppShell><Routes>
+  return <VoiceContext.Provider value={{ voiceEnabled }}><AppShell><Routes>
     <Route path="/" element={<DashboardPage />} />
+    <Route path="/revisar" element={<RevisarPage />} />
     <Route path="/rebanho" element={<AnimalsPage />} />
     <Route path="/rebanho/novo" element={<NewAnimalPage />} />
     <Route path="/rebanho/:id" element={<AnimalDetailPage />} />
@@ -64,5 +69,5 @@ export function App() {
     <Route path="/pesos/importar" element={<ImportWeightsPage />} />
     <Route path="/pesos/:id" element={<WeightSessionDetailPage />} />
     <Route path="*" element={<Navigate to="/" replace />} />
-  </Routes></AppShell>;
+  </Routes></AppShell></VoiceContext.Provider>;
 }

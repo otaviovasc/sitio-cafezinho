@@ -2,6 +2,7 @@ import { Activity, AlertTriangle, BadgeDollarSign, Banknote, CalendarClock, Chec
 import { Link } from 'react-router-dom';
 import { formatDate, formatLiters, formatMoney } from '../../domain/format';
 import { CowHead } from '../components/icons';
+import { CaptureCard } from '../components/capture';
 import { Badge, ErrorState, LoadingState, PageHeader, SectionCard, StatCard } from '../components/ui';
 import { useResource } from '../hooks/useResource';
 
@@ -63,6 +64,7 @@ export function DashboardPage() {
   const followUpCount = data.attention.mastitisActionsToday + data.attention.overdueMastitisActions + data.attention.withdrawals + data.attention.purchasesDueTomorrow + data.attention.overduePurchases + data.attention.milkReview + data.attention.weightReview + data.attention.standaloneDocuments + data.attention.lactatingWithoutGroup;
   return <div className="page"><PageHeader icon={Home} title="Hoje" subtitle={`${formatDate(data.date)} · o que precisa ser registrado ou resolvido`} />
     <div className="grid gap-5">
+      <CaptureCard />
       <SectionCard icon={CalendarClock} title="Fechamento do dia">
         <p className="mb-4 text-sm text-[var(--muted)]">Registre os dois fatos medidos durante o dia. Um não substitui o outro.</p>
         <div className="grid gap-3 sm:grid-cols-2">

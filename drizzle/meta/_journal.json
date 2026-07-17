@@ -2,15 +2,96 @@
   "version": "7",
   "dialect": "postgresql",
   "entries": [
-    { "idx": 0, "version": "7", "when": 1784073600000, "tag": "0000_initial", "breakpoints": true },
-    { "idx": 1, "version": "7", "when": 1784156400000, "tag": "0001_animal_weights", "breakpoints": true },
-    { "idx": 2, "version": "7", "when": 1784163600000, "tag": "0002_daily_milk_totals", "breakpoints": true },
-    { "idx": 3, "version": "7", "when": 1784170800000, "tag": "0003_herd_groups", "breakpoints": true },
-    { "idx": 4, "version": "7", "when": 1784174400000, "tag": "0004_lifecycle_weight_sessions", "breakpoints": true },
-    { "idx": 5, "version": "7", "when": 1784178000000, "tag": "0005_reproductive_cycle", "breakpoints": true },
-    { "idx": 6, "version": "7", "when": 1784181600000, "tag": "0006_daily_operations", "breakpoints": true },
-    { "idx": 7, "version": "7", "when": 1784185200000, "tag": "0007_daily_milk_by_group", "breakpoints": true },
-    { "idx": 8, "version": "7", "when": 1784268000000, "tag": "0008_monthly_milk_prices", "breakpoints": true },
-    { "idx": 9, "version": "7", "when": 1784300400000, "tag": "0009_nullable_excluded_milk", "breakpoints": true }
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1784073600000,
+      "tag": "0000_initial",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1784156400000,
+      "tag": "0001_animal_weights",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784163600000,
+      "tag": "0002_daily_milk_totals",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1784170800000,
+      "tag": "0003_herd_groups",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784174400000,
+      "tag": "0004_lifecycle_weight_sessions",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1784178000000,
+      "tag": "0005_reproductive_cycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784181600000,
+      "tag": "0006_daily_operations",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1784185200000,
+      "tag": "0007_daily_milk_by_group",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1784268000000,
+      "tag": "0008_monthly_milk_prices",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1784300400000,
+      "tag": "0009_nullable_excluded_milk",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1784308253752,
+      "tag": "0010_nl_captures",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1784308300000,
+      "tag": "0011_rename_import_source",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1784308400000,
+      "tag": "0012_incremental_daily_milk",
+      "breakpoints": true
+    }
   ]
 }

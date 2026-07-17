@@ -8,11 +8,11 @@ Aplicação interna, compartilhada e mobile-first para a rotina diária de uma p
 - ciclo produtivo com novilha, lactação, seca e saídas, separado dos lotes operacionais de ordenha;
 - histórico reprodutivo factual com cio, cobertura, resultado e parto;
 - lotes configuráveis com rotina manhã+tarde ou somente manhã e histórico de movimentações;
-- sessões parciais de pesagem, importação pelo ChatGPT, revisão de inconsistências e gráficos individuais;
+- sessões parciais de pesagem, importação por transcrição, revisão de inconsistências e gráficos individuais;
 - produção total diária do rebanho todo ou medida separadamente por lote, controle individual pontual e coleta do laticínio como fatos independentes;
 - coleta rápida, com várias retiradas por dia, alerta de possível duplicidade, documentos e comparação factual com a produção;
 - casos de mastite, ações informadas pela família, carência e histórico no animal, sem diagnóstico nem prescrição automática;
-- importação de JSON transcrito pelo ChatGPT com prévia obrigatória, conferência do rebanho esperado, busca e filtros de inconsistência;
+- importação de JSON transcrito por um assistente com prévia obrigatória, conferência do rebanho esperado, busca e filtros de inconsistência;
 - compras rápidas, itens opcionais, fornecedores, vencimentos e pagamento simples;
 - receitas esperadas ou recebidas, venda de leite, saída econômica do animal e resultado de caixa registrado;
 - preço mensal editável do leite, histórico e estimativa sobre o volume efetivamente coletado, sem criar receita automática;

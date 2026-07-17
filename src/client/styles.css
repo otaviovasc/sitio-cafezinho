@@ -100,6 +100,23 @@ a { color: inherit; text-decoration: none; }
   .guide-number { background: var(--primary-soft); color: var(--primary-strong); @apply absolute right-3 top-3 flex h-7 w-7 items-center justify-center rounded-full text-xs font-black; }
   .review-row { border-color: var(--border); @apply border-b py-4 last:border-b-0; }
   .review-row-warning { background: #fffaf0; @apply -mx-2 rounded-xl px-2; }
+  .review-card { background: var(--surface); border-color: var(--border); border-radius: var(--radius); border-left-width: 4px; @apply min-w-0 border p-3.5 md:p-4; }
+  .review-card--action { border-left-color: var(--warning); }
+  .review-card--ok { border-left-color: var(--success); }
+  .review-card--dismissed { border-left-color: var(--border); opacity: 0.7; }
+  .review-card-value { @apply shrink-0 text-lg font-bold tracking-tight; }
+  .review-filter { border-color: var(--border); background: var(--surface); min-height: 44px; @apply inline-flex items-center gap-1.5 rounded-full border px-3 text-xs font-bold transition; }
+  .review-filter-active { border-color: var(--primary); background: var(--primary-soft); color: var(--primary-strong); }
+  .capture-card { background: var(--primary); color: white; border-radius: var(--radius); box-shadow: var(--shadow); @apply min-w-0 p-4 md:p-5; }
+  .capture-card small { color: #d5e4d8; }
+  .capture-action { background: rgb(255 255 255 / 12%); color: white; min-height: 52px; @apply flex w-full items-center justify-center gap-2 rounded-xl px-4 text-sm font-bold transition disabled:opacity-60; }
+  .capture-action:hover:not(:disabled) { background: rgb(255 255 255 / 20%); }
+  .capture-action:focus-visible { @apply outline-none ring-2 ring-white ring-offset-2 ring-offset-[var(--primary)]; }
+  .mic-fab { background: var(--primary); color: white; box-shadow: var(--shadow); bottom: calc(5.75rem + env(safe-area-inset-bottom)); @apply fixed right-4 z-30 flex h-14 w-14 items-center justify-center rounded-full transition disabled:opacity-60 lg:bottom-6; }
+  .mic-fab:hover:not(:disabled) { background: var(--primary-strong); }
+  .mic-fab:focus-visible { @apply outline-none ring-2 ring-[var(--primary)] ring-offset-2 ring-offset-[var(--background)]; }
+  .mic-recording { background: var(--danger); }
+  .skeleton { background: #e7eae6; @apply animate-pulse rounded-xl; }
   .data-table { @apply w-full table-fixed border-collapse text-left text-sm; }
   .data-table th { color: var(--muted); @apply border-b border-[var(--border)] px-3 py-2 text-xs font-bold uppercase tracking-wide; }
   .quick-action { background: var(--surface); border-color: var(--border); border-radius: var(--radius); @apply flex min-h-20 items-center gap-3 border p-3 text-left transition; }

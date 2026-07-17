@@ -21,6 +21,13 @@ const envSchema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().optional().default(''),
   GOOGLE_REFRESH_TOKEN: z.string().optional().default(''),
   GOOGLE_DRIVE_FOLDER_ID: z.string().optional().default(''),
+  // Camada de linguagem natural (áudio/documento/texto → ação). Opcional:
+  // sem chave, os endpoints de captura respondem 503 e a UI de voz fica oculta.
+  OPENROUTER_API_KEY: z.string().optional().default(''),
+  OPENROUTER_BASE_URL: z.string().url().default('https://openrouter.ai/api/v1'),
+  // Transcrição pt-BR: Chirp 3 (STT dedicado do Google). Interpretação/JSON: Gemini 3.1 Flash Lite.
+  OPENROUTER_STT_MODEL: z.string().default('google/chirp-3'),
+  OPENROUTER_INTENT_MODEL: z.string().default('google/gemini-3.1-flash-lite'),
 }).superRefine((value, context) => {
   if (value.STORAGE_MODE === 'google_drive') {
     for (const key of ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REFRESH_TOKEN', 'GOOGLE_DRIVE_FOLDER_ID'] as const) {

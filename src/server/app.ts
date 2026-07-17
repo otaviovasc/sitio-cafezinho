@@ -5,6 +5,7 @@ import { requireSession } from './auth.js';
 import { ApiError } from './http/api-error.js';
 import { animalRoutes } from './routes/animals.routes.js';
 import { attachmentRoutes } from './routes/attachments.routes.js';
+import { captureRoutes } from './routes/captures.routes.js';
 import { dashboardRoutes } from './routes/dashboard.routes.js';
 import { dailyMilkRoutes } from './routes/daily-milk.routes.js';
 import { herdGroupRoutes } from './routes/herd-groups.routes.js';
@@ -50,6 +51,7 @@ export function createApp() {
   app.route('/api', attachmentRoutes);
   app.route('/api', dashboardRoutes);
   app.route('/api', weightRoutes);
+  app.route('/api', captureRoutes);
 
   app.onError((error, c) => {
     const known = error instanceof ApiError;

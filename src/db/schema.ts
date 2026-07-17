@@ -5,6 +5,8 @@ import {
   check,
   date,
   index,
+  integer,
+  jsonb,
   numeric,
   pgEnum,
   pgTable,
@@ -28,7 +30,7 @@ export const milkingRoutine = pgEnum('milking_routine', ['MORNING_AND_AFTERNOON'
 export const milkInputMode = pgEnum('milk_input_mode', [
   'SEPARATE_MORNING_AFTERNOON', 'COMBINED_TOTAL', 'MIXED',
 ]);
-export const milkSource = pgEnum('milk_source', ['MANUAL', 'CHATGPT_IMPORT', 'NOTEBOOK_SEED']);
+export const milkSource = pgEnum('milk_source', ['MANUAL', 'IMPORT', 'NOTEBOOK_SEED']);
 export const measurementConfidence = pgEnum('measurement_confidence', ['HIGH', 'MEDIUM', 'LOW']);
 export const measurementStatus = pgEnum('measurement_status', ['CONFIRMED', 'NEEDS_REVIEW', 'EXCLUDED']);
 export const purchaseCategory = pgEnum('purchase_category', [
@@ -42,7 +44,7 @@ export const storageStatus = pgEnum('storage_status', ['UPLOADING', 'AVAILABLE',
 export const documentType = pgEnum('document_type', [
   'INVOICE', 'BOLETO', 'PAYMENT_RECEIPT', 'MILK_NOTEBOOK', 'OTHER',
 ]);
-export const weightSource = pgEnum('weight_source', ['MANUAL', 'CHATGPT_IMPORT', 'DEMO_SEED']);
+export const weightSource = pgEnum('weight_source', ['MANUAL', 'IMPORT', 'DEMO_SEED']);
 export const milkCollectionSource = pgEnum('milk_collection_source', ['DRIVER_READING', 'TANK_READING', 'RECEIPT', 'OTHER']);
 export const mastitisQuarter = pgEnum('mastitis_quarter', ['FRONT_LEFT', 'FRONT_RIGHT', 'REAR_LEFT', 'REAR_RIGHT', 'MULTIPLE', 'UNKNOWN']);
 export const mastitisDetectionMethod = pgEnum('mastitis_detection_method', ['VISUAL', 'BLACK_PLATE', 'CMT', 'VETERINARY', 'OTHER', 'UNKNOWN']);
@@ -51,6 +53,17 @@ export const mastitisOutcome = pgEnum('mastitis_outcome', ['RESOLVED', 'IMPROVED
 export const revenueCategory = pgEnum('revenue_category', ['MILK_SALE', 'CALF_SALE', 'CULL_SALE', 'ANIMAL_SALE', 'OTHER']);
 export const revenueStatus = pgEnum('revenue_status', ['EXPECTED', 'RECEIVED', 'CANCELLED']);
 export const animalExitType = pgEnum('animal_exit_type', ['CALF_SALE', 'BREEDING_SALE', 'PRODUCTIVE_CULL', 'HEALTH_CULL', 'MEAT_SALE', 'OTHER']);
+
+// Camada de linguagem natural: uma captura (áudio/documento/texto) vira uma ou
+// mais ações propostas que passam pela revisão antes de virar fato.
+export const captureInputKind = pgEnum('capture_input_kind', ['AUDIO', 'DOCUMENT', 'TEXT']);
+export const captureStatus = pgEnum('capture_status', ['PROCESSING', 'NEEDS_REVIEW', 'REVIEWED', 'FAILED', 'DISMISSED']);
+export const proposedActionType = pgEnum('proposed_action_type', [
+  'DAILY_MILK_TOTAL', 'INDIVIDUAL_MILK_SESSION', 'MILK_COLLECTION', 'MASTITIS_CASE',
+  'PURCHASE', 'REVENUE', 'WEIGHT_SESSION', 'UNKNOWN',
+]);
+export const proposedActionCommitStatus = pgEnum('proposed_action_commit_status', ['READY', 'NEEDS_REVIEW', 'NEEDS_PERIOD', 'UNREPRESENTABLE']);
+export const proposedActionStatus = pgEnum('proposed_action_status', ['NEEDS_REVIEW', 'CONFIRMED', 'DISMISSED', 'FAILED']);
 
 export const herdGroups = pgTable('herd_groups', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -218,6 +231,8 @@ export const dailyMilkTotals = pgTable('daily_milk_totals', {
     (${table.morningLiters} is null and ${table.afternoonLiters} is null)
     or
     (${table.morningLiters} is not null and ${table.afternoonLiters} is null and ${table.totalLiters} = ${table.morningLiters})
+    or
+    (${table.morningLiters} is null and ${table.afternoonLiters} is not null and ${table.totalLiters} = ${table.afternoonLiters})
     or
     (${table.morningLiters} is not null and ${table.afternoonLiters} is not null and ${table.totalLiters} = ${table.morningLiters} + ${table.afternoonLiters})
   `),
@@ -407,6 +422,48 @@ export const attachments = pgTable('attachments', {
   check('attachments_single_parent', sql`num_nonnulls(${table.purchaseId}, ${table.milkSessionId}, ${table.milkCollectionId}, ${table.revenueId}, ${table.animalExitId}) <= 1`),
 ]);
 
+// Uma captura por evento de entrada. Guardamos todos os artefatos de texto
+// (transcrição, JSON bruto do modelo, resumo de OCR e metadados) para auditar e
+// reprocessar; o áudio em si é processado em memória e descartado.
+export const captures = pgTable('captures', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  inputKind: captureInputKind('input_kind').notNull(),
+  status: captureStatus('status').notNull().default('PROCESSING'),
+  transcript: text('transcript'),
+  sttRaw: jsonb('stt_raw'),
+  ocrSummary: text('ocr_summary'),
+  interpretRaw: jsonb('interpret_raw'),
+  documentAttachmentId: uuid('document_attachment_id').references(() => attachments.id, { onDelete: 'set null' }),
+  sttModel: text('stt_model'),
+  interpretModel: text('interpret_model'),
+  tokensUsed: integer('tokens_used'),
+  costCents: numeric('cost_cents', { precision: 12, scale: 4 }),
+  latencyMs: integer('latency_ms'),
+  error: text('error'),
+  ...auditColumns,
+}, (table) => [
+  index('captures_created_idx').on(table.createdAt),
+  index('captures_status_idx').on(table.status),
+]);
+
+// Uma ação proposta por fato reconhecido na captura (um áudio pode gerar várias).
+export const proposedActions = pgTable('proposed_actions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  captureId: uuid('capture_id').notNull().references(() => captures.id, { onDelete: 'cascade' }),
+  actionType: proposedActionType('action_type').notNull(),
+  rawIntent: jsonb('raw_intent'),
+  resolvedPayload: jsonb('resolved_payload'),
+  issues: jsonb('issues'),
+  commitStatus: proposedActionCommitStatus('commit_status').notNull().default('NEEDS_REVIEW'),
+  status: proposedActionStatus('status').notNull().default('NEEDS_REVIEW'),
+  committedRecordType: text('committed_record_type'),
+  committedRecordId: uuid('committed_record_id'),
+  ...auditColumns,
+}, (table) => [
+  index('proposed_actions_capture_idx').on(table.captureId),
+  index('proposed_actions_status_idx').on(table.status),
+]);
+
 export type Animal = typeof animals.$inferSelect;
 export type HerdGroup = typeof herdGroups.$inferSelect;
 export type WeightSession = typeof weightSessions.$inferSelect;
@@ -417,3 +474,5 @@ export type MastitisCase = typeof mastitisCases.$inferSelect;
 export type Revenue = typeof revenues.$inferSelect;
 export type Purchase = typeof purchases.$inferSelect;
 export type Attachment = typeof attachments.$inferSelect;
+export type Capture = typeof captures.$inferSelect;
+export type ProposedAction = typeof proposedActions.$inferSelect;

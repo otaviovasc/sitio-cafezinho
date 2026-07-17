@@ -6,7 +6,7 @@ import { filterByPeriod } from '../../src/domain/analytics';
 import { calculateDailyMilkTotal, resolveDailyMilkByDate, summarizeDailyMilk } from '../../src/domain/daily-milk';
 import { formatDate, formatLiters, formatMoney, normalizeLabel, parseDecimal } from '../../src/domain/format';
 import { participatesInMilking, requiresAfternoonMeasurement } from '../../src/domain/herd';
-import { formatChatGptImportIssues, parseChatGptImport, stripMarkdownJson } from '../../src/domain/import';
+import { formatMilkImportIssues, parseMilkImport, stripMarkdownJson } from '../../src/domain/import';
 import { calculateTotal, confirmedTotal, estimateSplit } from '../../src/domain/milk';
 import { summarizeMilkDay } from '../../src/domain/milk-collection';
 import { isMonthKey, monthStorageDate, summarizeMonthlyMilkPrice } from '../../src/domain/milk-price';
@@ -259,22 +259,22 @@ describe('peso animal', () => {
   });
 });
 
-describe('importação do ChatGPT', () => {
+describe('importação de transcrição', () => {
   const valid = { sessionDate: '2026-05-06', sourceMode: 'COMBINED_TOTAL', measurements: [{ rawAnimalLabel: 'Caruja', morningLiters: null, afternoonLiters: null, totalLiters: 21, confidence: 'HIGH', excluded: false, notes: null }] };
 
   it('remove cerca Markdown acidental e valida null', () => {
     const fenced = `\`\`\`json\n${JSON.stringify(valid)}\n\`\`\``;
     expect(stripMarkdownJson(fenced)).toBe(JSON.stringify(valid));
-    expect(parseChatGptImport(fenced).measurements[0].totalLiters).toBe(21);
+    expect(parseMilkImport(fenced).measurements[0].totalLiters).toBe(21);
   });
 
   it('rejeita valores negativos e divergência', () => {
-    expect(() => parseChatGptImport(JSON.stringify({ ...valid, measurements: [{ ...valid.measurements[0], totalLiters: -1 }] }))).toThrow();
-    expect(() => parseChatGptImport(JSON.stringify({ ...valid, measurements: [{ ...valid.measurements[0], morningLiters: 12, afternoonLiters: 9, totalLiters: 20 }] }))).toThrow();
+    expect(() => parseMilkImport(JSON.stringify({ ...valid, measurements: [{ ...valid.measurements[0], totalLiters: -1 }] }))).toThrow();
+    expect(() => parseMilkImport(JSON.stringify({ ...valid, measurements: [{ ...valid.measurements[0], morningLiters: 12, afternoonLiters: 9, totalLiters: 20 }] }))).toThrow();
   });
 
   it('preserva para revisão linhas riscadas sem valor e linha sem rótulo legível', () => {
-    const parsed = parseChatGptImport(JSON.stringify({
+    const parsed = parseMilkImport(JSON.stringify({
       sessionDate: '2026-07-16',
       sourceMode: 'SEPARATE_MORNING_AFTERNOON',
       measurements: [
@@ -293,10 +293,10 @@ describe('importação do ChatGPT', () => {
 
   it('identifica a linha e o campo quando o JSON precisa de correção', () => {
     try {
-      parseChatGptImport(JSON.stringify({ ...valid, measurements: [{ ...valid.measurements[0], rawAnimalLabel: null }] }));
+      parseMilkImport(JSON.stringify({ ...valid, measurements: [{ ...valid.measurements[0], rawAnimalLabel: null }] }));
       throw new Error('A validação deveria falhar.');
     } catch (error) {
-      expect(formatChatGptImportIssues(error as import('zod').ZodError)).toBe('Linha 1 · rótulo do animal: Informe o rótulo do animal ou marque a linha como excluída.');
+      expect(formatMilkImportIssues(error as import('zod').ZodError)).toBe('Linha 1 · rótulo do animal: Informe o rótulo do animal ou marque a linha como excluída.');
     }
   });
 });

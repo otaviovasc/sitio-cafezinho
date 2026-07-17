@@ -105,7 +105,7 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
     if (existing) await fetch(`/api/weight-sessions/${existing.id}`, { method: 'DELETE' });
   }, weightDate);
   const weightJson = { measuredOn: weightDate, measurements: [{ rawAnimalLabel: cowName, rawValueText: '486', weightKg: 486, confidence: 'HIGH', excluded: false, notes: null }] };
-  await page.getByLabel('JSON retornado pelo ChatGPT').fill(JSON.stringify(weightJson));
+  await page.getByLabel('JSON da transcrição').fill(JSON.stringify(weightJson));
   await page.getByRole('button', { name: 'Validar pesagens' }).click();
   await expect(page.getByText('Dados carregados. Corrija as inconsistências destacadas.')).toBeVisible();
   await page.getByRole('button', { name: 'Salvar 1 linha(s)' }).click();
@@ -134,18 +134,18 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
       { rawAnimalLabel: null, rawValueText: null, morningLiters: null, afternoonLiters: null, totalLiters: null, confidence: 'LOW', excluded: true, notes: 'Linha riscada e ilegível no controle da tarde' },
     ],
   };
-  await page.getByLabel('JSON retornado pelo ChatGPT').fill(JSON.stringify(uncertainImport));
+  await page.getByLabel('JSON da transcrição').fill(JSON.stringify(uncertainImport));
   await page.getByRole('button', { name: 'Validar dados' }).click();
   await expect(page.getByText('[rótulo ilegível]', { exact: true })).toBeVisible();
   await expect(page.locator('.badge').filter({ hasText: /^Excluído$/ })).toHaveCount(3);
   await page.screenshot({ path: testInfo.outputPath('importacao-linhas-incertas.png'), fullPage: true });
   await page.getByRole('button', { name: 'Salvar controle revisado' }).click();
-  await expect(page.getByRole('heading', { name: 'Importação do ChatGPT' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Controle importado' })).toBeVisible();
   await expect(page.getByText('Sem valor legível', { exact: true }).first()).toBeVisible();
   await page.getByRole('button', { name: 'Editar', exact: true }).first().click();
   await page.getByLabel('Data do controle').fill(correctedImportDate);
   await page.getByRole('button', { name: 'Salvar', exact: true }).click();
-  await expect(page.getByText(`${correctedImportDate.split('-').reverse().join('/')} · Importado do ChatGPT`, { exact: true })).toBeVisible();
+  await expect(page.getByText(`${correctedImportDate.split('-').reverse().join('/')} · Importado`, { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Cadastrar sem vínculo (1)' }).click();
   await expect(page.getByRole('heading', { name: 'Cadastrar animais sem vínculo' })).toBeVisible();
   await page.getByLabel('Lote inicial dos animais selecionados').selectOption({ label: 'Lote 1' });

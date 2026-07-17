@@ -91,7 +91,7 @@ test('captura estados principais sem rolagem horizontal', async ({ page }, testI
   await capturePaintedViewport(page, testInfo.outputPath('peso-revisao.png'));
 
   await page.goto('/producao/importar');
-  await page.getByLabel('JSON retornado pelo ChatGPT').fill('{');
+  await page.getByLabel('JSON da transcrição').fill('{');
   await page.getByRole('button', { name: 'Validar dados' }).click();
   await expect(page.getByText('O conteúdo não é um JSON válido.')).toBeVisible();
   await capturePaintedViewport(page, testInfo.outputPath('importacao-validacao.png'));
@@ -107,7 +107,7 @@ test('captura estados principais sem rolagem horizontal', async ({ page }, testI
     const sessions = await fetch('/api/milk-sessions').then((response) => response.json()) as Array<{ id: string; sessionDate: string }>;
     const existing = sessions.find((session) => session.sessionDate === date);
     if (existing) await fetch(`/api/milk-sessions/${existing.id}`, { method: 'DELETE' });
-    const response = await fetch('/api/import/chatgpt', {
+    const response = await fetch('/api/import/milk-session', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ sessionDate: date, inputMode: 'SEPARATE_MORNING_AFTERNOON', title: 'Revisão visual do cadastro em massa', measurements: [{ rawAnimalLabel: `Vaca visual ${date}`, rawValueText: '10 + 8', morningLiters: 10, afternoonLiters: 8, totalLiters: 18, confidence: 'HIGH', status: 'NEEDS_REVIEW', animalId: null, notes: 'Dado demonstrativo do teste visual.' }] }),

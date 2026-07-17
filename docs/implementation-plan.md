@@ -14,7 +14,7 @@ Decisão de escopo: seguir a correção 80/20 — local em volume Docker e Railw
 - [x] Rebanho, aliases e pesagens com data/hora
 - [x] Total diário do rebanho, separado dos controles individuais
 - [x] Sessões e medições de leite
-- [x] Parser/importação ChatGPT
+- [x] Parser/importação de transcrição
 - [x] Compras, itens e vencimentos
 - [x] Documentos e armazenamento
 - [x] Painel e autenticação compartilhada
@@ -59,7 +59,7 @@ Decisão de escopo: seguir a correção 80/20 — local em volume Docker e Railw
 - [x] Remover ações rápidas da lista e abrir o detalhe pelo clique na linha inteira
 - [x] Reorganizar o detalhe do animal com resumo e históricos úteis
 - [x] Adicionar cadastro em massa do rebanho com prévia
-- [x] Criar aba Peso com sessões, importação ChatGPT e revisão parcial
+- [x] Criar aba Peso com sessões, importação de transcrição e revisão parcial
 - [x] Melhorar revisão de controle individual com filtros de inconsistência
 - [x] Remover o cadastro manual de produção da navegação principal
 - [x] Enriquecer Início com pendências, tendências e atalhos operacionais
