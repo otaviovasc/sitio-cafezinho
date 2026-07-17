@@ -166,6 +166,25 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   }, `Vaca importada ${suffix}`);
   expect(registeredFromControl).toEqual({ date: correctedImportDate, status: 'LACTATING', group: 'Lote 1', groupStarted: correctedImportDate, statusChanged: correctedImportDate, linked: true });
 
+  const registeredSessionId = await page.evaluate(() => location.pathname.split('/').at(-1)!);
+  const registeredAnimalId = await page.evaluate(async (name) => {
+    const animals = await fetch('/api/animals').then((response) => response.json()) as Array<{ id: string; name: string | null }>;
+    return animals.find((animal) => animal.name === name)?.id;
+  }, `Vaca importada ${suffix}`);
+  expect(registeredAnimalId).toBeTruthy();
+  await page.goto(`/rebanho/${registeredAnimalId}`);
+  await page.getByRole('button', { name: 'Excluir animal', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Excluir animal e seus controles?' })).toContainText('1 controle individual');
+  await page.getByRole('dialog').getByRole('button', { name: 'Excluir animal', exact: true }).click();
+  await expect(page).toHaveURL(/\/rebanho$/);
+  await expect(page.getByText('Animal excluído', { exact: true })).toBeVisible();
+  const deletionFacts = await page.evaluate(async ({ animalId, sessionId, label }) => {
+    const [animalResponse, sessionResponse] = await Promise.all([fetch(`/api/animals/${animalId}`), fetch(`/api/milk-sessions/${sessionId}`)]);
+    const session = await sessionResponse.json() as { measurements: Array<{ rawAnimalLabel: string }> };
+    return { animalStatus: animalResponse.status, sessionStatus: sessionResponse.status, measurementStillExists: session.measurements.some((row) => row.rawAnimalLabel === label) };
+  }, { animalId: registeredAnimalId, sessionId: registeredSessionId, label: `Vaca importada ${suffix}` });
+  expect(deletionFacts).toEqual({ animalStatus: 404, sessionStatus: 200, measurementStillExists: false });
+
   await page.goto('/producao');
   await page.evaluate(async () => {
     const rows = await fetch('/api/daily-milk-totals').then((response) => response.json()) as Array<{ id: string; productionDate: string }>;

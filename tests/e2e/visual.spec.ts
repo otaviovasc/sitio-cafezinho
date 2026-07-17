@@ -71,6 +71,10 @@ test('captura estados principais sem rolagem horizontal', async ({ page }, testI
     await expect(page.getByRole('heading', { name: 'Caruja' })).toBeVisible();
     await page.evaluate(() => window.scrollTo(0, 0));
     await captureTallPage(page, testInfo.outputPath('animal-detalhe.png'));
+    await page.getByRole('button', { name: 'Excluir animal', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: 'Excluir animal e seus controles?' })).toBeVisible();
+    await captureCurrentViewport(page, testInfo.outputPath('animal-exclusao-confirmacao.png'));
+    await page.keyboard.press('Escape');
   }
   if (ids.sessionId) {
     await page.goto(`/producao/${ids.sessionId}`);

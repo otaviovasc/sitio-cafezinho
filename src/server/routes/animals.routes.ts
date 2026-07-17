@@ -271,6 +271,35 @@ export const animalRoutes = new Hono()
     if (!updated) return fail('Animal não encontrado.', 404, 'NOT_FOUND');
     return c.json(updated);
   })
+  .delete('/animals/:id', async (c) => {
+    const id = c.req.param('id');
+    const db = getDb();
+    const [animal] = await db.select({ id: animals.id }).from(animals).where(eq(animals.id, id)).limit(1);
+    if (!animal) return fail('Animal não encontrado.', 404, 'NOT_FOUND');
+
+    const [reproductiveHistory, mastitisHistory, exitHistory, revenueHistory] = await Promise.all([
+      db.select({ id: animalReproductiveEvents.id }).from(animalReproductiveEvents).where(eq(animalReproductiveEvents.animalId, id)).limit(1),
+      db.select({ id: mastitisCases.id }).from(mastitisCases).where(eq(mastitisCases.animalId, id)).limit(1),
+      db.select({ id: animalExits.id }).from(animalExits).where(eq(animalExits.animalId, id)).limit(1),
+      db.select({ id: revenues.id }).from(revenues).where(eq(revenues.animalId, id)).limit(1),
+    ]);
+    const protectedHistory = [
+      reproductiveHistory.length ? 'histórico reprodutivo' : null,
+      mastitisHistory.length ? 'caso de mastite' : null,
+      exitHistory.length ? 'saída do rebanho' : null,
+      revenueHistory.length ? 'receita vinculada' : null,
+    ].filter((item): item is string => Boolean(item));
+    if (protectedHistory.length) {
+      return fail(`Este animal possui ${protectedHistory.join(', ')}. Corrija esses vínculos antes de excluir o cadastro.`, 409, 'ANIMAL_HAS_PROTECTED_HISTORY');
+    }
+
+    const deletedMeasurements = await db.transaction(async (tx) => {
+      const removed = await tx.delete(milkMeasurements).where(eq(milkMeasurements.animalId, id)).returning({ id: milkMeasurements.id });
+      await tx.delete(animals).where(eq(animals.id, id));
+      return removed.length;
+    });
+    return c.json({ deleted: true, deletedMeasurements });
+  })
   .post('/animals/:id/status-changes', async (c) => {
     const animalId = c.req.param('id');
     const body = validate(z.object({ status: statusSchema, changedOn: z.string().date(), notes: optionalText, groupId: z.string().uuid().nullable().optional(), exit: exitSchema }), await readJson(c));

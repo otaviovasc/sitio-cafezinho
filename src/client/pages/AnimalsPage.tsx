@@ -1,5 +1,5 @@
 import { FormEvent, useState } from 'react';
-import { Activity, ArrowRightLeft, Banknote, ChartLine, HeartPulse, Pencil, Plus, Scale, Tags, Upload } from 'lucide-react';
+import { Activity, ArrowRightLeft, Banknote, ChartLine, HeartPulse, Pencil, Plus, Scale, Tags, Trash2, Upload } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import type { AnimalStatus } from '../../domain/animal-lifecycle';
 import { allowedNextStatuses, statusRequiresMilkingGroup, statusTone } from '../../domain/animal-lifecycle';
@@ -136,6 +136,7 @@ export function NewAnimalPage() {
 
 export function AnimalDetailPage() {
   const { id = '' } = useParams();
+  const navigate = useNavigate();
   const toast = useToast();
   const { data, loading, error, reload } = useResource<AnimalDetail>(`/api/animals/${id}`);
   const [editing, setEditing] = useState(false);
@@ -147,10 +148,23 @@ export function AnimalDetailPage() {
   const [showReproductiveForm, setShowReproductiveForm] = useState(false);
   const [editingReproductiveEvent, setEditingReproductiveEvent] = useState<ReproductiveEvent | undefined>();
   const [productionPeriod, setProductionPeriod] = useState<PeriodDays>(180);
+  const [deleting, setDeleting] = useState(false);
   async function addAlias(event: FormEvent) { event.preventDefault(); setActionError(''); try { await api(`/api/animals/${id}/aliases`, json('POST', { alias })); setAlias(''); reload(); toast('Alias adicionado'); } catch (cause) { setActionError(cause instanceof Error ? cause.message : 'Não foi possível adicionar.'); } }
   async function removeAlias(aliasId: string) { try { await api(`/api/animal-aliases/${aliasId}`, { method: 'DELETE' }); reload(); toast('Alias removido'); } catch (cause) { setActionError(cause instanceof Error ? cause.message : 'Não foi possível remover.'); } }
   async function removeReproductiveEvent(eventId: string) { try { await api(`/api/animals/${id}/reproductive-events/${eventId}`, { method: 'DELETE' }); await reload(); toast('Registro de cio excluído'); } catch (cause) { setActionError(cause instanceof Error ? cause.message : 'Não foi possível excluir o registro.'); } }
   async function undoStatus(eventId: string) { try { await api(`/api/animals/${id}/status-changes/${eventId}`, { method: 'DELETE' }); setShowStatusForm(false); await reload(); toast('Última situação desfeita'); } catch (cause) { setActionError(cause instanceof Error ? cause.message : 'Não foi possível desfazer a mudança.'); } }
+  async function removeAnimal() {
+    setActionError(''); setDeleting(true);
+    try {
+      const result = await api<{ deletedMeasurements: number }>(`/api/animals/${id}`, { method: 'DELETE' });
+      const message = result.deletedMeasurements === 1
+        ? '1 controle individual também foi excluído.'
+        : result.deletedMeasurements > 1 ? `${result.deletedMeasurements} controles individuais também foram excluídos.` : 'Nenhum controle individual estava vinculado.';
+      toast({ title: 'Animal excluído', message });
+      navigate('/rebanho');
+    } catch (cause) { setActionError(cause instanceof Error ? cause.message : 'Não foi possível excluir o animal.'); }
+    finally { setDeleting(false); }
+  }
   if (loading) return <div className="page"><LoadingState /></div>;
   if (error || !data) return <div className="page"><ErrorState message={error || 'Animal não encontrado.'} retry={reload} /></div>;
   if (editing) return <div className="page"><PageHeader title="Editar identificação" subtitle="A situação e o lote possuem fluxos próprios para preservar o histórico" action={<Button variant="secondary" onClick={() => setEditing(false)}>Cancelar</Button>} /><AnimalForm initial={data} onSaved={async () => { await reload(); setEditing(false); }} /></div>;
@@ -170,7 +184,10 @@ export function AnimalDetailPage() {
     ...data.statusHistory.map((event) => ({ kind: 'STATUS' as const, date: event.changedOn, event })),
     ...data.reproductiveEvents.filter((event) => event.type === 'HEAT').map((event) => ({ kind: 'HEAT' as const, date: event.occurredOn, event })),
   ].sort((a, b) => b.date.localeCompare(a.date));
-  return <div className="page"><PageHeader icon={CowHead} title={animalName(data)} subtitle={data.name && data.tagNumber ? `Brinco ${data.tagNumber}` : 'Histórico completo do animal'} action={<Button onClick={() => setEditing(true)}><Pencil size={17} aria-hidden />Editar identificação</Button>} />
+  const measurementCount = data.history.length;
+  const measurementLabel = measurementCount === 1 ? '1 controle individual' : `${measurementCount} controles individuais`;
+  const deletionDescription = `${measurementCount ? `O cadastro de ${animalName(data)} e ${measurementLabel} serão excluídos definitivamente.` : `O cadastro de ${animalName(data)} será excluído definitivamente.`} Totais diários do rebanho, coletas e pesagens não serão apagados.`;
+  return <div className="page"><PageHeader icon={CowHead} title={animalName(data)} subtitle={data.name && data.tagNumber ? `Brinco ${data.tagNumber}` : 'Histórico completo do animal'} action={<div className="flex flex-wrap gap-2"><Button onClick={() => setEditing(true)}><Pencil size={17} aria-hidden />Editar identificação</Button><ConfirmButton variant="danger" disabled={deleting} title="Excluir animal e seus controles?" confirmLabel="Excluir animal" question={deletionDescription} onClick={() => void removeAnimal()}><Trash2 size={17} aria-hidden />{deleting ? 'Excluindo…' : 'Excluir animal'}</ConfirmButton></div>} />
     {actionError && <div className="mb-5"><ErrorState message={actionError} /></div>}
     <SectionCard title="Ações do animal" className="mb-5"><div className="flex flex-wrap gap-2"><Link className="button button-primary" to={`/mastite/nova?animalId=${id}`}><Activity size={17} aria-hidden />Registrar mastite</Link><Link className="button button-secondary" to="/pesos/importar"><Scale size={17} aria-hidden />Registrar peso</Link><Button variant="secondary" onClick={() => { setEditingReproductiveEvent(undefined); setShowReproductiveForm(true); }}><HeartPulse size={17} aria-hidden />Registrar cio/cobertura</Button>{allowedNextStatuses(data.status).length > 0 && <Button variant="secondary" onClick={() => { setStatusFormTarget(undefined); setShowStatusForm(true); }}>Alterar situação</Button>}{data.status === 'LACTATING' && <Button variant="secondary" onClick={() => setShowGroupForm(true)}><ArrowRightLeft size={17} aria-hidden />Mudar lote</Button>}{allowedNextStatuses(data.status).includes('SOLD') && <Button variant="secondary" onClick={() => { setStatusFormTarget('SOLD'); setShowStatusForm(true); }}><Banknote size={17} aria-hidden />Registrar saída</Button>}</div></SectionCard>
     <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-5"><StatCard label="Situação atual" value={<Badge tone={statusTone(data.status)}>{animalStatusLabels[data.status]}</Badge>} detail={latestStatus ? `Desde ${formatDate(latestStatus.changedOn)}` : undefined} /><StatCard label="Reprodução" value={reproductiveState} detail={data.reproductiveSummary.lastHeatOn ? `Último cio em ${formatDate(data.reproductiveSummary.lastHeatOn)}` : 'Registre somente fatos observados'} /><StatCard label="Lote de ordenha" value={data.currentGroup?.name ?? (data.status === 'LACTATING' ? 'Sem lote' : 'Não se aplica')} detail={data.currentGroup ? milkingRoutineLabels[data.currentGroup.milkingRoutine] : data.status === 'LACTATING' ? 'Precisa de atenção' : 'Fora da lactação'} /><StatCard label="Último controle" value={latestProduction ? formatLiters(latestProduction.totalLiters) : '—'} detail={latestProduction ? formatDate(latestProduction.sessionDate) : 'Sem medição individual'} /><StatCard label="Último peso" value={latestWeight?.weightKg ? formatWeight(latestWeight.weightKg) : '—'} detail={latestWeight ? new Date(latestWeight.measuredAt).toLocaleDateString('pt-BR') : 'Sem pesagem'} /></div>
