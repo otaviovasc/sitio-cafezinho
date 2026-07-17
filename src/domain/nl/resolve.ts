@@ -1,12 +1,68 @@
 import { dateKeyInSaoPaulo } from '../purchases.js';
 import { normalizeLabel } from '../format.js';
 import type { MilkingRoutine } from '../herd.js';
+import { matchAnimalByLabel, type MatchableAlias, type MatchableAnimal } from './matching.js';
 import type {
   DailyMilkTotalIntent,
   IndividualMilkSessionIntent,
+  MastitisIntent,
+  MilkCollectionIntent,
+  PurchaseIntent,
+  RevenueIntent,
   SpokenDate,
   VoiceIntent,
 } from './intents.js';
+
+export type MatchableSupplier = { id: string; name: string };
+export type ResolveContext = {
+  groups: ResolvableGroup[];
+  animals: MatchableAnimal[];
+  aliases: MatchableAlias[];
+  suppliers: MatchableSupplier[];
+};
+
+function pickByKeyword(label: string | null, table: ReadonlyArray<readonly [readonly string[], string]>, fallback: string): string {
+  if (!label) return fallback;
+  const normalized = normalizeLabel(label);
+  for (const [keywords, value] of table) if (keywords.some((keyword) => normalized.includes(keyword))) return value;
+  return fallback;
+}
+
+// Palavras faladas → enums (rótulos normalizados, sem acento).
+const COLLECTION_SOURCE = [
+  [['tanque', 'resfriador'], 'TANK_READING'],
+  [['caminhon', 'motorista', 'leiteiro'], 'DRIVER_READING'],
+  [['comprovante', 'nota', 'recibo'], 'RECEIPT'],
+] as const;
+const REVENUE_CATEGORY = [
+  [['leite'], 'MILK_SALE'],
+  [['bezerr'], 'CALF_SALE'],
+  [['descarte'], 'CULL_SALE'],
+  [['animal', 'vaca', 'novilh', 'boi'], 'ANIMAL_SALE'],
+] as const;
+const PURCHASE_CATEGORY = [
+  [['racao', 'alimento', 'silagem', 'milho', 'farelo'], 'FEED'],
+  [['sal ', 'mineral', 'nucleo', 'suplement'], 'MINERAL_SUPPLEMENT'],
+  [['remedio', 'medicament', 'antibiot', 'vacina', 'veterinar'], 'MEDICINE'],
+  [['ordenha', 'higiene', 'detergente', 'limpeza', 'teteira'], 'MILKING_AND_HYGIENE'],
+  [['manutenc', 'conserto', 'reparo', 'peca'], 'MAINTENANCE'],
+  [['combustivel', 'diesel', 'gasolina', 'oleo'], 'FUEL'],
+  [['energia', 'luz', 'eletric'], 'ENERGY'],
+  [['compra de animal', 'novilh'], 'ANIMAL_PURCHASE'],
+] as const;
+const MASTITIS_QUARTER = [
+  [['posterior direit', 'traseiro direit', 'tras direit'], 'REAR_RIGHT'],
+  [['posterior esquerd', 'traseiro esquerd', 'tras esquerd'], 'REAR_LEFT'],
+  [['anterior direit', 'dianteiro direit', 'frente direit'], 'FRONT_RIGHT'],
+  [['anterior esquerd', 'dianteiro esquerd', 'frente esquerd'], 'FRONT_LEFT'],
+  [['varios', 'multipl', 'mais de um', 'todos'], 'MULTIPLE'],
+] as const;
+const MASTITIS_DETECTION = [
+  [['visual', 'olho', 'aparencia', 'grumo'], 'VISUAL'],
+  [['caneca', 'fundo preto', 'tela'], 'BLACK_PLATE'],
+  [['cmt', 'california'], 'CMT'],
+  [['veterinar'], 'VETERINARY'],
+] as const;
 
 export type ProposedActionType =
   | 'DAILY_MILK_TOTAL'
@@ -175,13 +231,118 @@ export function resolveIndividualMilkSession(
   };
 }
 
+function isoNoon(date: string) {
+  return `${date}T12:00:00-03:00`;
+}
+
+export function resolveMilkCollection(intent: MilkCollectionIntent, now = new Date()): ResolvedAction {
+  const issues: string[] = [];
+  let commitStatus: CommitStatus = 'READY';
+  if (intent.liters === null || intent.liters <= 0) { commitStatus = 'NEEDS_REVIEW'; issues.push('Informe o volume da coleta.'); }
+  return {
+    actionType: 'MILK_COLLECTION',
+    rawIntent: intent,
+    resolvedPayload: {
+      collectionDate: resolveSpokenDate(intent.date, now),
+      liters: intent.liters,
+      source: pickByKeyword(intent.sourceLabel, COLLECTION_SOURCE, 'TANK_READING'),
+      notes: intent.notes,
+      rawValueText: intent.rawValueText,
+    },
+    issues,
+    commitStatus,
+  };
+}
+
+export function resolveRevenue(intent: RevenueIntent, now = new Date()): ResolvedAction {
+  const issues: string[] = [];
+  let commitStatus: CommitStatus = 'READY';
+  if (intent.amount === null || intent.amount <= 0) { commitStatus = 'NEEDS_REVIEW'; issues.push('Informe o valor da receita.'); }
+  const description = intent.description.trim() || (intent.categoryLabel?.trim() ?? '');
+  if (!description) { commitStatus = 'NEEDS_REVIEW'; issues.push('Informe a descrição da receita.'); }
+  return {
+    actionType: 'REVENUE',
+    rawIntent: intent,
+    resolvedPayload: {
+      revenueDate: resolveSpokenDate(intent.date, now),
+      category: pickByKeyword(intent.categoryLabel, REVENUE_CATEGORY, 'OTHER'),
+      description: description || 'Receita',
+      amount: intent.amount,
+      status: intent.received ? 'RECEIVED' : 'EXPECTED',
+      buyerName: intent.buyerName,
+      notes: intent.notes,
+    },
+    issues,
+    commitStatus,
+  };
+}
+
+export function resolvePurchase(intent: PurchaseIntent, suppliers: MatchableSupplier[], now = new Date()): ResolvedAction {
+  const issues: string[] = [];
+  let commitStatus: CommitStatus = 'READY';
+  if (intent.amount === null || intent.amount <= 0) { commitStatus = 'NEEDS_REVIEW'; issues.push('Informe o valor da compra.'); }
+  const description = intent.description.trim() || (intent.categoryLabel?.trim() ?? '');
+  if (!description) { commitStatus = 'NEEDS_REVIEW'; issues.push('Informe a descrição da compra.'); }
+  let supplierId: string | null = null;
+  if (intent.supplierLabel) {
+    const normalized = normalizeLabel(intent.supplierLabel);
+    const supplier = suppliers.find((item) => normalizeLabel(item.name) === normalized);
+    supplierId = supplier?.id ?? null;
+    if (!supplier) issues.push(`Fornecedor “${intent.supplierLabel}” não cadastrado; será salvo sem vínculo.`);
+  }
+  return {
+    actionType: 'PURCHASE',
+    rawIntent: intent,
+    resolvedPayload: {
+      purchaseDate: resolveSpokenDate(intent.date, now),
+      description: description || 'Compra',
+      category: pickByKeyword(intent.categoryLabel, PURCHASE_CATEGORY, 'OTHER'),
+      totalAmount: intent.amount,
+      dueDate: intent.dueDate ? resolveSpokenDate(intent.dueDate, now) : null,
+      supplierId,
+      supplierLabel: intent.supplierLabel,
+      status: intent.paid ? 'PAID' : 'OPEN',
+      notes: intent.notes,
+    },
+    issues,
+    commitStatus,
+  };
+}
+
+export function resolveMastitis(intent: MastitisIntent, animals: MatchableAnimal[], aliases: MatchableAlias[], now = new Date()): ResolvedAction {
+  const issues: string[] = [];
+  let commitStatus: CommitStatus = 'READY';
+  const match = matchAnimalByLabel(intent.animalLabel, animals, aliases);
+  if (!match) { commitStatus = 'NEEDS_REVIEW'; issues.push(`Animal “${intent.animalLabel}” não encontrado; selecione ou cadastre.`); }
+  if (!intent.observedSigns && !intent.notes) { commitStatus = 'NEEDS_REVIEW'; issues.push('Informe o sinal observado.'); }
+  return {
+    actionType: 'MASTITIS_CASE',
+    rawIntent: intent,
+    resolvedPayload: {
+      animalId: match?.id ?? null,
+      animalLabel: intent.animalLabel,
+      animalName: match?.name ?? match?.tagNumber ?? null,
+      detectedAt: isoNoon(resolveSpokenDate(intent.date, now)),
+      affectedQuarter: pickByKeyword(intent.quarterLabel, MASTITIS_QUARTER, 'UNKNOWN'),
+      detectionMethod: pickByKeyword(intent.detectionLabel, MASTITIS_DETECTION, 'UNKNOWN'),
+      observedSigns: intent.observedSigns,
+      status: 'OBSERVATION',
+      notes: intent.notes,
+    },
+    issues,
+    commitStatus,
+  };
+}
+
 /** Despacha uma intenção para o resolvedor determinístico correspondente. */
-export function resolveIntent(intent: VoiceIntent, groups: ResolvableGroup[], now = new Date()): ResolvedAction {
+export function resolveIntent(intent: VoiceIntent, ctx: ResolveContext, now = new Date()): ResolvedAction {
   switch (intent.type) {
-    case 'daily_milk_total':
-      return resolveDailyMilkTotal(intent, groups, now);
-    case 'individual_milk_session':
-      return resolveIndividualMilkSession(intent, now);
+    case 'daily_milk_total': return resolveDailyMilkTotal(intent, ctx.groups, now);
+    case 'individual_milk_session': return resolveIndividualMilkSession(intent, now);
+    case 'milk_collection': return resolveMilkCollection(intent, now);
+    case 'revenue': return resolveRevenue(intent, now);
+    case 'purchase': return resolvePurchase(intent, ctx.suppliers, now);
+    case 'mastitis_case': return resolveMastitis(intent, ctx.animals, ctx.aliases, now);
     case 'unknown':
       return {
         actionType: 'UNKNOWN',

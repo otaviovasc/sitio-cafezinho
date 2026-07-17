@@ -51,6 +51,60 @@ export const individualMilkSessionIntent = z.object({
 });
 export type IndividualMilkSessionIntent = z.infer<typeof individualMilkSessionIntent>;
 
+// Coleta do laticínio.
+export const milkCollectionIntent = z.object({
+  type: z.literal('milk_collection'),
+  date: spokenDateSchema,
+  liters: z.number().nonnegative().nullable(),
+  sourceLabel: z.string().nullable(),
+  rawValueText: z.string().nullable(),
+  confidence,
+  notes: z.string().nullable(),
+});
+export type MilkCollectionIntent = z.infer<typeof milkCollectionIntent>;
+
+// Receita (entrada de caixa).
+export const revenueIntent = z.object({
+  type: z.literal('revenue'),
+  date: spokenDateSchema,
+  categoryLabel: z.string().nullable(),
+  description: z.string(),
+  amount: z.number().nonnegative().nullable(),
+  received: z.boolean(),
+  buyerName: z.string().nullable(),
+  confidence,
+  notes: z.string().nullable(),
+});
+export type RevenueIntent = z.infer<typeof revenueIntent>;
+
+// Compra ou despesa (saída de caixa).
+export const purchaseIntent = z.object({
+  type: z.literal('purchase'),
+  date: spokenDateSchema,
+  categoryLabel: z.string().nullable(),
+  description: z.string(),
+  amount: z.number().nonnegative().nullable(),
+  supplierLabel: z.string().nullable(),
+  dueDate: spokenDateSchema.nullable(),
+  paid: z.boolean(),
+  confidence,
+  notes: z.string().nullable(),
+});
+export type PurchaseIntent = z.infer<typeof purchaseIntent>;
+
+// Caso de mastite (observação + decisão humana; nunca diagnóstico automático).
+export const mastitisIntent = z.object({
+  type: z.literal('mastitis_case'),
+  date: spokenDateSchema,
+  animalLabel: z.string(),
+  quarterLabel: z.string().nullable(),
+  detectionLabel: z.string().nullable(),
+  observedSigns: z.string().nullable(),
+  confidence,
+  notes: z.string().nullable(),
+});
+export type MastitisIntent = z.infer<typeof mastitisIntent>;
+
 // A fala não corresponde a nenhuma ação reconhecida.
 export const unknownIntent = z.object({
   type: z.literal('unknown'),
@@ -60,6 +114,10 @@ export const unknownIntent = z.object({
 export const voiceIntentSchema = z.discriminatedUnion('type', [
   dailyMilkTotalIntent,
   individualMilkSessionIntent,
+  milkCollectionIntent,
+  revenueIntent,
+  purchaseIntent,
+  mastitisIntent,
   unknownIntent,
 ]);
 export type VoiceIntent = z.infer<typeof voiceIntentSchema>;

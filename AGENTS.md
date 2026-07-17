@@ -13,6 +13,7 @@ Sistema simples de gestão de uma propriedade leiteira familiar.
 ## Regras centrais
 
 - Simplicidade acima de completude especulativa.
+- Frontend segue `docs/frontend-conventions.md`: formulários com `useForm`/`useSubmit`/`SubmitBar`/`useUnsavedGuard` (validação cedo, sem incomodar), revisão com `ReviewCard`, rótulo+tom via registro `lib/status.ts`.
 - Não inventar dados nem transformar estimativas em medições reais.
 - Não criar botão, filtro, endpoint ou campo sem uso real.
 - Não declarar conclusão sem validação.

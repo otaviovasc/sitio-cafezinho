@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Loader2, Mic, Square } from 'lucide-react';
+import { Camera, Loader2, Mic, Square } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, ApiError, json } from '../lib/api';
 import { useVoice } from '../lib/voice-context';
@@ -64,6 +64,13 @@ function CaptureSheet({ open, onClose }: { open: boolean; onClose: () => void })
     await submit(json('POST', { text: text.trim() }));
   }
 
+  async function sendDocument(file: File) {
+    const form = new FormData();
+    form.append('document', file);
+    if (text.trim()) form.append('context', text.trim());
+    await submit({ method: 'POST', body: form });
+  }
+
   return <Modal open={open} title="Assistente de registros" description="Fale naturalmente. Nada é salvo sem a sua revisão." onClose={close}>
     {mode === 'processing' ? <div className="flex items-center gap-3 py-8 text-sm text-[var(--muted)]"><Loader2 className="animate-spin" size={20} aria-hidden /> Processando a captura…</div>
       : mode === 'recording' ? <div className="grid justify-items-center gap-4 py-4 text-center">
@@ -74,8 +81,12 @@ function CaptureSheet({ open, onClose }: { open: boolean; onClose: () => void })
         : <div className="grid gap-4">
           {error && <ErrorState message={error} />}
           <button type="button" className="button button-primary w-full" data-autofocus onClick={() => void record()}><Mic size={18} aria-hidden /> Gravar áudio</button>
+          <label className="button button-secondary w-full cursor-pointer">
+            <Camera size={18} aria-hidden /> Enviar foto ou documento
+            <input type="file" accept="image/*,application/pdf" capture="environment" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void sendDocument(file); }} />
+          </label>
           <div className="grid gap-2">
-            <Textarea placeholder="Ou digite: hoje o primeiro lote tirou 700 litros de manhã…" value={text} onChange={(event) => setText(event.target.value)} />
+            <Textarea placeholder="Ou digite: hoje o primeiro lote tirou 700 litros de manhã… (também vira contexto da foto)" value={text} onChange={(event) => setText(event.target.value)} />
             <Button variant="secondary" disabled={!text.trim()} onClick={() => void sendText()}>Enviar texto</Button>
           </div>
         </div>}

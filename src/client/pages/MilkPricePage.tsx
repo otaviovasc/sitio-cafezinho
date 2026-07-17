@@ -1,11 +1,14 @@
-import { FormEvent, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { BadgeDollarSign, Pencil } from 'lucide-react';
 import { formatLiters, formatMoney, parseDecimal } from '../../domain/format';
 import { DecimalInput } from '../components/form-controls';
 import { useToast } from '../components/feedback-context';
 import { TimeSeriesChart } from '../components/TimeSeriesChart';
-import { Button, ErrorState, Field, FormErrorSummary, Input, LoadingState, PageHeader, ScrollArea, SectionCard, StatCard, Textarea } from '../components/ui';
+import { ErrorState, Field, FormErrorSummary, Input, LoadingState, PageHeader, ScrollArea, SectionCard, StatCard, SubmitBar, Textarea } from '../components/ui';
+import { useForm } from '../hooks/useForm';
 import { useResource } from '../hooks/useResource';
+import { useSubmit } from '../hooks/useSubmit';
+import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import { api, json } from '../lib/api';
 import { formatDecimalInput } from '../lib/form-format';
 import { today } from '../lib/labels';
@@ -44,76 +47,51 @@ function formatPrice(value: string | number) {
 export function MilkPricePage() {
   const toast = useToast();
   const formRef = useRef<HTMLFormElement>(null);
-  const formDirtyRef = useRef(false);
-  const [month, setMonth] = useState(today().slice(0, 7));
-  const [price, setPrice] = useState('');
-  const [notes, setNotes] = useState('');
-  const [fieldError, setFieldError] = useState('');
-  const [monthError, setMonthError] = useState('');
-  const [saveError, setSaveError] = useState('');
-  const [busy, setBusy] = useState(false);
-  const { data: summary, loading, error, reload } = useResource<MilkPriceSummary>(`/api/milk-prices/summary?month=${month}`);
+  const { busy, error: saveError, run } = useSubmit();
+  const form = useForm(
+    { month: today().slice(0, 7), price: '', notes: '' },
+    {
+      month: (value) => (value ? undefined : 'Informe o mês do preço.'),
+      price: (value) => {
+        const parsed = parseDecimal(value);
+        return parsed !== null && parsed > 0 ? undefined : 'Informe um preço maior que zero.';
+      },
+    },
+  );
+  useUnsavedGuard(form.dirty);
+  const { data: summary, loading, error, reload } = useResource<MilkPriceSummary>(`/api/milk-prices/summary?month=${form.values.month}`);
   const { data: history, loading: historyLoading, error: historyError, reload: reloadHistory } = useResource<MonthlyMilkPrice[]>('/api/milk-prices');
 
   useEffect(() => {
-    if (!summary || summary.month !== month || formDirtyRef.current) return;
-    setPrice(formatDecimalInput(summary.price?.pricePerLiter, 2, 4));
-    setNotes(summary.price?.notes ?? '');
-  }, [month, summary]);
+    if (!summary || summary.month !== form.values.month || form.dirty) return;
+    form.reset({ month: form.values.month, price: formatDecimalInput(summary.price?.pricePerLiter, 2, 4), notes: summary.price?.notes ?? '' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [summary]);
 
-  const selectedMonthHasPrice = Boolean(summary?.month === month && summary.price)
-    || Boolean(history?.some((item) => item.month === month));
+  const selectedMonthHasPrice = Boolean(summary?.month === form.values.month && summary.price)
+    || Boolean(history?.some((item) => item.month === form.values.month));
 
   function changeMonth(value: string) {
-    formDirtyRef.current = false;
-    setMonth(value);
-    setPrice('');
-    setNotes('');
-    setFieldError('');
-    setMonthError('');
-    setSaveError('');
+    form.reset({ month: value, price: '', notes: '' });
   }
 
   function editHistoricalPrice(item: MonthlyMilkPrice) {
-    formDirtyRef.current = false;
-    setMonth(item.month);
-    setPrice(formatDecimalInput(item.pricePerLiter, 2, 4));
-    setNotes(item.notes ?? '');
-    setFieldError('');
-    setMonthError('');
-    setSaveError('');
+    form.reset({ month: item.month, price: formatDecimalInput(item.pricePerLiter, 2, 4), notes: item.notes ?? '' });
     requestAnimationFrame(() => {
       formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       document.getElementById('monthly-milk-price')?.focus({ preventScroll: true });
     });
   }
 
-  async function save(event: FormEvent) {
-    event.preventDefault();
-    setFieldError('');
-    setMonthError('');
-    setSaveError('');
-    if (!month) {
-      setMonthError('Informe o mês do preço.');
-      return;
-    }
+  async function persist() {
+    const { month, price, notes } = form.values;
     const parsed = parseDecimal(price);
-    if (parsed === null || parsed <= 0) {
-      setFieldError('Informe um preço maior que zero.');
-      return;
-    }
+    if (parsed === null) return;
     const wasEditing = selectedMonthHasPrice;
-    setBusy(true);
-    try {
-      await api(`/api/milk-prices/${month}`, json('PUT', { pricePerLiter: parsed, notes: notes.trim() || null }));
-      formDirtyRef.current = false;
-      await Promise.all([reload(false), reloadHistory(false)]);
-      toast(wasEditing ? 'Preço do leite atualizado' : 'Preço do leite registrado');
-    } catch (cause) {
-      setSaveError(cause instanceof Error ? cause.message : 'Não foi possível salvar o preço do leite.');
-    } finally {
-      setBusy(false);
-    }
+    await api(`/api/milk-prices/${month}`, json('PUT', { pricePerLiter: parsed, notes: notes.trim() || null }));
+    form.reset({ month, price, notes });
+    await Promise.all([reload(false), reloadHistory(false)]);
+    toast(wasEditing ? 'Preço do leite atualizado' : 'Preço do leite registrado');
   }
 
   const chartData = (history ?? []).slice().reverse().map((item) => ({ date: `${item.month}-01`, price: Number(item.pricePerLiter) }));
@@ -121,22 +99,22 @@ export function MilkPricePage() {
   return <div className="page">
     <PageHeader icon={BadgeDollarSign} title="Preço do leite" subtitle="Informe um preço por mês para estimar o valor do leite coletado" />
     <div className="grid gap-5">
-      <form ref={formRef} className="page-narrow grid w-full gap-4" noValidate onSubmit={(event) => void save(event)}>
+      <form ref={formRef} className="page-narrow grid w-full gap-4" noValidate onSubmit={(event) => { event.preventDefault(); if (form.validate()) void run(persist); }}>
         {saveError && <ErrorState message={saveError} />}
-        <FormErrorSummary errors={[monthError, fieldError]} />
-        <SectionCard title={`Preço de ${monthLabel(month)}`}>
+        <FormErrorSummary errors={form.visibleErrors} />
+        <SectionCard title={`Preço de ${monthLabel(form.values.month)}`}>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Mês" error={monthError}><Input type="month" value={month} onChange={(event) => changeMonth(event.target.value)} required /></Field>
-            <Field label="Preço por litro" hint="Pode ser corrigido quando o valor final for conhecido." error={fieldError}><DecimalInput id="monthly-milk-price" prefix="R$" suffix="/L" minimumFractionDigits={2} maximumFractionDigits={4} value={price} required onValueChange={(value) => { formDirtyRef.current = true; setPrice(value); setFieldError(''); }} placeholder="Ex.: 1,72" /></Field>
-            <div className="sm:col-span-2"><Field label="Observação (opcional)"><Textarea value={notes} onChange={(event) => { formDirtyRef.current = true; setNotes(event.target.value); }} placeholder="Ex.: Preço informado pelo laticínio" /></Field></div>
+            <Field label="Mês" error={form.error('month')}><Input type="month" value={form.values.month} onChange={(event) => changeMonth(event.target.value)} required /></Field>
+            <Field label="Preço por litro" hint="Pode ser corrigido quando o valor final for conhecido." error={form.error('price')}><DecimalInput id="monthly-milk-price" prefix="R$" suffix="/L" minimumFractionDigits={2} maximumFractionDigits={4} value={form.values.price} required onValueChange={(value) => form.set('price', value)} onBlur={() => form.blur('price')} placeholder="Ex.: 1,72" /></Field>
+            <div className="sm:col-span-2"><Field label="Observação (opcional)"><Textarea value={form.values.notes} onChange={(event) => form.set('notes', event.target.value)} placeholder="Ex.: Preço informado pelo laticínio" /></Field></div>
           </div>
-          <div className="form-submit-bar mt-4"><Button type="submit" disabled={busy || loading}>{busy ? 'Salvando…' : selectedMonthHasPrice ? 'Salvar alteração' : 'Salvar preço'}</Button></div>
+          <SubmitBar label={selectedMonthHasPrice ? 'Salvar alteração' : 'Salvar preço'} busy={busy} disabled={loading} />
         </SectionCard>
       </form>
 
       {loading ? <LoadingState /> : error || !summary ? <ErrorState message={error || 'Resumo do preço indisponível.'} retry={reload} /> : <>
         <section>
-          <h2 className="mb-3 text-xl font-bold">Estimativa de {monthLabel(month)}</h2>
+          <h2 className="mb-3 text-xl font-bold">Estimativa de {monthLabel(form.values.month)}</h2>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <StatCard label="Preço informado" value={summary.price ? formatPrice(summary.price.pricePerLiter) : 'Não informado'} detail={summary.price ? 'Valor editável do mês' : 'Salve um preço para calcular'} />
             <StatCard label="Leite coletado" value={formatLiters(summary.collection.collectedLiters)} detail={`${summary.collection.collectionCount} coleta(s) registrada(s)`} />

@@ -6,18 +6,14 @@ import { AttachmentPanel, type Attachment } from '../components/AttachmentPanel'
 import { useConfirm, useToast } from '../components/feedback-context';
 import { ConfirmButton } from '../components/feedback';
 import { LitersInput } from '../components/form-controls';
-import { Badge, Button, EmptyState, ErrorState, Field, FormErrorSummary, Input, LoadingState, PageHeader, ScrollArea, SectionCard, Select, SubmitBar, Textarea } from '../components/ui';
+import { Badge, Button, EmptyState, ErrorState, Field, FormErrorSummary, Input, PageHeader, ScrollArea, SectionCard, Select, SkeletonList, SubmitBar, Textarea } from '../components/ui';
+import { useForm } from '../hooks/useForm';
 import { useResource } from '../hooks/useResource';
 import { useSubmit } from '../hooks/useSubmit';
+import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import { api, ApiError, json } from '../lib/api';
 import { today } from '../lib/labels';
-
-const sourceLabels: Record<string, string> = {
-  DRIVER_READING: 'Leitura do caminhoneiro',
-  TANK_READING: 'Leitura do tanque',
-  RECEIPT: 'Comprovante',
-  OTHER: 'Outra origem',
-};
+import { milkCollectionSourceLabel } from '../lib/status';
 
 type DayComparison = { productionLiters: number | null; collectedLiters: number; differenceLiters: number | null; productionBasis: 'HERD_TOTAL' | 'GROUP_SUM' | null; productionGroupCount: number };
 type MilkCollection = {
@@ -52,22 +48,29 @@ function CollectionComparison({ comparison }: { comparison: DayComparison }) {
 function MilkCollectionForm({ initial, onSaved }: { initial?: MilkCollectionDetail; onSaved: (collection: MilkCollection) => void }) {
   const confirm = useConfirm();
   const toast = useToast();
-  const [collectionDate, setCollectionDate] = useState(initial?.collectionDate ?? today());
-  const [liters, setLiters] = useState(initial?.liters ?? '');
-  const [collectedTime, setCollectedTime] = useState(timeFromIso(initial?.collectedAt));
-  const [source, setSource] = useState(initial?.source ?? 'TANK_READING');
-  const [notes, setNotes] = useState(initial?.notes ?? '');
   const { busy, error, run } = useSubmit();
-  const [fieldErrors, setFieldErrors] = useState<{ date?: string; liters?: string }>({});
+  const form = useForm(
+    {
+      collectionDate: initial?.collectionDate ?? today(),
+      liters: initial?.liters ?? '',
+      collectedTime: timeFromIso(initial?.collectedAt),
+      source: initial?.source ?? 'TANK_READING',
+      notes: initial?.notes ?? '',
+    },
+    {
+      collectionDate: (value) => (value ? undefined : 'Informe a data da coleta.'),
+      liters: (value) => {
+        const parsed = parseDecimal(value);
+        return parsed !== null && parsed > 0 ? undefined : 'Informe um volume maior que zero.';
+      },
+    },
+  );
+  useUnsavedGuard(form.dirty);
 
   async function persist(confirmPossibleDuplicate: boolean) {
+    const { collectionDate, liters, collectedTime, source, notes } = form.values;
     const parsedLiters = parseDecimal(liters);
-    const nextErrors = {
-      date: collectionDate ? undefined : 'Informe a data da coleta.',
-      liters: parsedLiters === null || parsedLiters <= 0 ? 'Informe um volume maior que zero.' : undefined,
-    };
-    setFieldErrors(nextErrors);
-    if (nextErrors.date || nextErrors.liters || parsedLiters === null) return;
+    if (parsedLiters === null) return;
     const collectedAt = collectedTime ? new Date(`${collectionDate}T${collectedTime}:00-03:00`).toISOString() : null;
     const path = initial ? `/api/milk-collections/${initial.id}` : '/api/milk-collections';
     try {
@@ -89,13 +92,13 @@ function MilkCollectionForm({ initial, onSaved }: { initial?: MilkCollectionDeta
     }
   }
 
-  return <form className="grid gap-4" noValidate onSubmit={(event) => { event.preventDefault(); void run(() => persist(false)); }}>
+  return <form className="grid gap-4" noValidate onSubmit={(event) => { event.preventDefault(); if (form.validate()) void run(() => persist(false)); }}>
     {error && <ErrorState message={error} />}
-    <FormErrorSummary errors={Object.values(fieldErrors)} />
+    <FormErrorSummary errors={form.visibleErrors} />
     <SectionCard title="Registro rápido">
-      <div className="grid gap-3 sm:grid-cols-2"><Field label="Data" error={fieldErrors.date}><Input type="date" value={collectionDate} onChange={(event) => { setCollectionDate(event.target.value); setFieldErrors((current) => ({ ...current, date: undefined })); }} required /></Field><Field label="Litros retirados" error={fieldErrors.liters}><LitersInput value={liters} onValueChange={(value) => { setLiters(value); setFieldErrors((current) => ({ ...current, liters: undefined })); }} placeholder="Ex.: 360" required autoFocus /></Field></div>
+      <div className="grid gap-3 sm:grid-cols-2"><Field label="Data" error={form.error('collectionDate')}><Input type="date" value={form.values.collectionDate} onChange={(event) => form.set('collectionDate', event.target.value)} onBlur={() => form.blur('collectionDate')} required /></Field><Field label="Litros retirados" error={form.error('liters')}><LitersInput value={form.values.liters} onValueChange={(value) => form.set('liters', value)} onBlur={() => form.blur('liters')} placeholder="Ex.: 360" required autoFocus /></Field></div>
     </SectionCard>
-    <details className="section-card" open={Boolean(initial?.collectedAt || initial?.notes)}><summary className="min-h-11 cursor-pointer py-2 text-lg font-bold">Mais detalhes</summary><div className="mt-3 grid gap-3 sm:grid-cols-2"><Field label="Horário (opcional)"><Input type="time" value={collectedTime} onChange={(event) => setCollectedTime(event.target.value)} /></Field><Field label="Origem da medição"><Select value={source} onChange={(event) => setSource(event.target.value)}>{Object.entries(sourceLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></Field><Field label="Observação"><Textarea value={notes} onChange={(event) => setNotes(event.target.value)} /></Field></div></details>
+    <details className="section-card" open={Boolean(initial?.collectedAt || initial?.notes)}><summary className="min-h-11 cursor-pointer py-2 text-lg font-bold">Mais detalhes</summary><div className="mt-3 grid gap-3 sm:grid-cols-2"><Field label="Horário (opcional)"><Input type="time" value={form.values.collectedTime} onChange={(event) => form.set('collectedTime', event.target.value)} /></Field><Field label="Origem da medição"><Select value={form.values.source} onChange={(event) => form.set('source', event.target.value)}>{Object.entries(milkCollectionSourceLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></Field><Field label="Observação"><Textarea value={form.values.notes} onChange={(event) => form.set('notes', event.target.value)} /></Field></div></details>
     <SubmitBar label={initial ? 'Salvar alteração' : 'Registrar coleta'} busy={busy} />
   </form>;
 }
@@ -116,11 +119,11 @@ export function MilkCollectionDetailPage() {
     try { await api(`/api/milk-collections/${id}`, { method: 'DELETE' }); navigate('/producao', { replace: true }); }
     catch (cause) { setActionError(cause instanceof Error ? cause.message : 'Não foi possível excluir a coleta.'); }
   }
-  if (loading) return <div className="page"><LoadingState /></div>;
+  if (loading) return <div className="page"><SkeletonList rows={4} /></div>;
   if (error || !data) return <div className="page"><ErrorState message={error || 'Coleta não encontrada.'} retry={reload} /></div>;
   if (editing) return <div className="page"><div className="page-narrow"><PageHeader icon={Truck} title="Editar coleta" action={<Button variant="secondary" onClick={() => setEditing(false)}>Cancelar</Button>} /><MilkCollectionForm initial={data} onSaved={async () => { await reload(); setEditing(false); }} /></div></div>;
   return <div className="page"><PageHeader icon={Truck} title={`Coleta de ${formatDate(data.collectionDate)}`} action={<Button onClick={() => setEditing(true)}>Editar</Button>} />
-    <div className="grid gap-5">{actionError && <ErrorState message={actionError} />}<SectionCard><div className="flex items-start justify-between gap-4"><div><p className="text-sm text-[var(--muted)]">Volume retirado</p><p className="text-3xl font-bold">{formatLiters(data.liters)}</p><p className="mt-2 text-sm">{sourceLabels[data.source]}{data.collectedAt ? ` · ${timeFromIso(data.collectedAt)}` : ''}</p>{data.notes && <p className="mt-2 text-sm text-[var(--muted)]">{data.notes}</p>}</div><Badge tone="success">Registrada</Badge></div></SectionCard>
+    <div className="grid gap-5">{actionError && <ErrorState message={actionError} />}<SectionCard><div className="flex items-start justify-between gap-4"><div><p className="text-sm text-[var(--muted)]">Volume retirado</p><p className="text-3xl font-bold">{formatLiters(data.liters)}</p><p className="mt-2 text-sm">{milkCollectionSourceLabel[data.source]}{data.collectedAt ? ` · ${timeFromIso(data.collectedAt)}` : ''}</p>{data.notes && <p className="mt-2 text-sm text-[var(--muted)]">{data.notes}</p>}</div><Badge tone="success">Registrada</Badge></div></SectionCard>
       <CollectionComparison comparison={data.dayComparison} />
       <SectionCard title="Documento da coleta"><AttachmentPanel attachments={data.attachments} milkCollectionId={id} onChange={reload} /></SectionCard>
       <SectionCard title="Excluir registro"><p className="mb-3 text-sm text-[var(--muted)]">Documentos vinculados devem ser excluídos primeiro.</p><ConfirmButton variant="danger" question="Excluir esta coleta?" onClick={() => void remove()}>Excluir coleta</ConfirmButton></SectionCard>
@@ -131,6 +134,6 @@ export function MilkCollectionDetailPage() {
 export function MilkCollectionsPanel() {
   const { data, loading, error, reload } = useResource<MilkCollection[]>('/api/milk-collections');
   return <section className="min-w-0"><div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div><h2 className="text-xl font-bold">Coletas</h2><p className="text-sm text-[var(--muted)]">Volume efetivamente retirado pelo laticínio</p></div><Link className="button button-primary" to="/producao/coletas/nova"><Plus size={18} aria-hidden />Registrar coleta</Link></div>
-    {loading ? <LoadingState /> : error ? <ErrorState message={error} retry={reload} /> : !data?.length ? <EmptyState title="Nenhuma coleta registrada" description="Registre o volume retirado pelo caminhão sem alterar a produção do dia." action={<Link className="button button-primary" to="/producao/coletas/nova">Registrar primeira coleta</Link>} /> : <SectionCard><ScrollArea label="Coletas recentes">{data.slice(0, 20).map((collection) => <Link className="mobile-item" key={collection.id} to={`/producao/coletas/${collection.id}`}><span className="min-w-0"><strong className="block">{formatDate(collection.collectionDate)}</strong><span className="block text-xs text-[var(--muted)]">{sourceLabels[collection.source]}{collection.collectedAt ? ` · ${timeFromIso(collection.collectedAt)}` : ''}</span></span><span className="text-right"><strong className="block">{formatLiters(collection.liters)}</strong>{collection.dayComparison.differenceLiters !== null && <span className="block text-xs text-[var(--muted)]">Diferença {formatLiters(collection.dayComparison.differenceLiters)}</span>}</span></Link>)}</ScrollArea></SectionCard>}
+    {loading ? <SkeletonList rows={4} /> : error ? <ErrorState message={error} retry={reload} /> : !data?.length ? <EmptyState title="Nenhuma coleta registrada" description="Registre o volume retirado pelo caminhão sem alterar a produção do dia." action={<Link className="button button-primary" to="/producao/coletas/nova">Registrar primeira coleta</Link>} /> : <SectionCard><ScrollArea label="Coletas recentes">{data.slice(0, 20).map((collection) => <Link className="mobile-item" key={collection.id} to={`/producao/coletas/${collection.id}`}><span className="min-w-0"><strong className="block">{formatDate(collection.collectionDate)}</strong><span className="block text-xs text-[var(--muted)]">{milkCollectionSourceLabel[collection.source]}{collection.collectedAt ? ` · ${timeFromIso(collection.collectedAt)}` : ''}</span></span><span className="text-right"><strong className="block">{formatLiters(collection.liters)}</strong>{collection.dayComparison.differenceLiters !== null && <span className="block text-xs text-[var(--muted)]">Diferença {formatLiters(collection.dayComparison.differenceLiters)}</span>}</span></Link>)}</ScrollArea></SectionCard>}
   </section>;
 }

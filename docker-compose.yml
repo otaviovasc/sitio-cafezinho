@@ -22,7 +22,7 @@ services:
       PORT: 3000
       STORAGE_MODE: local
       LOCAL_STORAGE_PATH: /data/uploads
-      SEED_DEMO_DATA: "true"
+      SEED_NOTEBOOK_DATA: "true"
     command: ["sh", "-c", "node dist/db/migrate.js && node dist/db/seed.js && node dist/server/index.js"]
     depends_on:
       db:

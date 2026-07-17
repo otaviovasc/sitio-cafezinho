@@ -34,7 +34,19 @@ const ACTIONS = `Tipos de ação suportados:
    Campos: type, date, measurements[] com { animalLabel, morningLiters, afternoonLiters, totalLiters, rawValueText, confidence, notes }.
    Preencha só os valores ditos; deixe os demais em null.
 
-3) "unknown" — a fala não corresponde a nenhuma ação acima. Campos: type, reason.`;
+3) "milk_collection" — coleta do laticínio (volume retirado).
+   Campos: type, date, liters, sourceLabel ("tanque", "caminhoneiro", "comprovante" ou null), rawValueText, confidence, notes.
+
+4) "revenue" — entrada de dinheiro (receita).
+   Campos: type, date, categoryLabel ("venda de leite", "venda de bezerro", "descarte", "venda de animal" ou null), description, amount, received (true se já recebida, false se a receber), buyerName, confidence, notes.
+
+5) "purchase" — compra ou despesa (saída de dinheiro).
+   Campos: type, date, categoryLabel ("ração", "mineral", "medicamento", "energia", "combustível", "manutenção" ou null), description, amount, supplierLabel (nome do fornecedor como falado ou null), dueDate (mesmo formato de date, ou null), paid (true se já paga), confidence, notes.
+
+6) "mastitis_case" — caso de mastite. Registre apenas o fato observado; nunca diagnostique nem prescreva.
+   Campos: type, date, animalLabel, quarterLabel ("posterior direito", "anterior esquerdo", etc. ou null), detectionLabel ("visual", "caneca de fundo preto", "CMT" ou null), observedSigns, confidence, notes.
+
+7) "unknown" — a fala não corresponde a nenhuma ação acima. Campos: type, reason.`;
 
 const EXAMPLES = `Exemplos:
 

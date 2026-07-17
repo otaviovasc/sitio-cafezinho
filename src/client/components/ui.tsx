@@ -101,6 +101,9 @@ export function LoadingState() { return <div className="section-card py-10 text-
 export function EmptyState({ title, description, action }: { title: string; description: string; action?: ReactNode }) {
   return <div className="section-card py-10 text-center"><h2 className="font-bold">{title}</h2><p className="mx-auto mt-1 max-w-md text-sm text-[var(--muted)]">{description}</p>{action && <div className="mt-4">{action}</div>}</div>;
 }
+export function InlineEmpty({ children, className = '' }: { children: ReactNode; className?: string }) {
+  return <p className={`text-sm text-[var(--muted)] ${className}`.trim()}>{children}</p>;
+}
 export function ErrorState({ message, retry }: { message: string; retry?: () => void }) {
   return <div className="notice notice-error" role="alert"><p className="whitespace-pre-line">{message}</p>{retry && <Button variant="secondary" className="mt-3" onClick={retry}>Tentar novamente</Button>}</div>;
 }

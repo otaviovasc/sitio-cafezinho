@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ClipboardCheck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { formatDate, formatLiters } from '../../domain/format';
+import { formatDate, formatLiters, formatMoney } from '../../domain/format';
 import type { MilkingRoutine } from '../../domain/herd';
 import { ReviewCard, type ReviewAccent } from '../components/review';
 import { useToast } from '../components/feedback-context';
@@ -115,34 +115,82 @@ function DailyTotalReview({ action, groups, onDone }: { action: ProposedAction; 
   </ReviewCard>;
 }
 
+const DIRECT_COMMIT = new Set(['MILK_COLLECTION', 'REVENUE', 'PURCHASE', 'MASTITIS_CASE']);
+
+function summarize(action: ProposedAction): { subtitle: string | undefined; value: string | undefined } {
+  const p = action.resolvedPayload ?? {};
+  const day = (value: unknown) => (value ? formatDate(String(value)) : 'Sem data');
+  const money = (value: unknown) => { const n = num(value); return n !== null ? formatMoney(n) : '—'; };
+  switch (action.actionType) {
+    case 'MILK_COLLECTION': {
+      const liters = num(p.liters);
+      return { subtitle: day(p.collectionDate), value: liters !== null ? formatLiters(liters) : '—' };
+    }
+    case 'REVENUE':
+      return { subtitle: `${day(p.revenueDate)} · ${p.description ?? ''}`, value: money(p.amount) };
+    case 'PURCHASE':
+      return { subtitle: `${day(p.purchaseDate)} · ${p.description ?? ''}`, value: money(p.totalAmount) };
+    case 'MASTITIS_CASE':
+      return { subtitle: `${day(p.detectedAt)} · ${p.animalName ?? p.animalLabel ?? 'animal'}`, value: undefined };
+    case 'INDIVIDUAL_MILK_SESSION': {
+      const imp = p.import as { sessionDate?: string; measurements?: unknown[] } | undefined;
+      return { subtitle: `${imp?.sessionDate ? formatDate(imp.sessionDate) : 'Sem data'} · ${imp?.measurements?.length ?? 0} vaca(s)`, value: undefined };
+    }
+    case 'UNKNOWN':
+      return { subtitle: String(p.reason ?? 'Fala não reconhecida'), value: undefined };
+    default:
+      return { subtitle: undefined, value: undefined };
+  }
+}
+
 function GenericReview({ action, onDone }: { action: ProposedAction; onDone: () => void }) {
   const toast = useToast();
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
   const payload = action.resolvedPayload ?? {};
   const pending = action.status === 'NEEDS_REVIEW';
   const isIndividual = action.actionType === 'INDIVIDUAL_MILK_SESSION';
   const importData = payload.import as { sessionDate?: string; measurements?: unknown[] } | undefined;
-  const subtitle = isIndividual
-    ? `${importData?.sessionDate ? formatDate(importData.sessionDate) : 'Sem data'} · ${importData?.measurements?.length ?? 0} vaca(s)`
-    : action.actionType === 'UNKNOWN' ? String(payload.reason ?? 'Fala não reconhecida') : undefined;
+  const { subtitle, value } = summarize(action);
+  const canConfirm = DIRECT_COMMIT.has(action.actionType) && action.commitStatus === 'READY';
 
+  async function confirm() {
+    setBusy(true);
+    setError('');
+    try {
+      await api(`/api/captures/${action.captureId}/actions/${action.id}/commit`, json('POST'));
+      toast('Salvo');
+      onDone();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : 'Não foi possível salvar.');
+      setBusy(false);
+    }
+  }
   async function remove() {
     setBusy(true);
     try { await dismiss(action); toast('Descartado'); onDone(); } catch { setBusy(false); }
   }
 
+  const badge = pending && DIRECT_COMMIT.has(action.actionType)
+    ? <StatusBadge descriptor={commitStatusDescriptor[action.commitStatus] ?? commitStatusDescriptor.NEEDS_REVIEW} />
+    : <StatusBadge descriptor={proposedActionStatusDescriptor[action.status] ?? proposedActionStatusDescriptor.NEEDS_REVIEW} />;
+
   return <ReviewCard
     accent={accentFor(action)}
     title={proposedActionTypeLabel[action.actionType] ?? action.actionType}
     subtitle={subtitle}
-    badge={<StatusBadge descriptor={proposedActionStatusDescriptor[action.status] ?? proposedActionStatusDescriptor.NEEDS_REVIEW} />}
+    value={value}
+    badge={badge}
     issues={pending ? (action.issues ?? []) : []}
     actions={!pending ? undefined : <>
+      {canConfirm && <Button disabled={busy} onClick={() => void confirm()}>Confirmar</Button>}
       {isIndividual && importData && <Button onClick={() => navigate('/producao/importar', { state: { prefillJson: JSON.stringify(importData) } })}>Revisar e importar</Button>}
       <Button variant="danger" disabled={busy} onClick={() => void remove()}>Descartar</Button>
     </>}
-  />;
+  >
+    {error ? <ErrorState message={error} /> : undefined}
+  </ReviewCard>;
 }
 
 function ActionReview({ action, groups, onDone }: { action: ProposedAction; groups: HerdGroup[]; onDone: () => void }) {

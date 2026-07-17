@@ -3,8 +3,8 @@ import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb } from '../../db/client.js';
-import { captures, herdGroups, proposedActions } from '../../db/schema.js';
-import { resolveIntent, type ResolvableGroup } from '../../domain/nl/resolve.js';
+import { animalAliases, animals, captures, herdGroups, proposedActions, suppliers } from '../../db/schema.js';
+import { resolveIntent, type ResolveContext } from '../../domain/nl/resolve.js';
 import { fail } from '../http/api-error.js';
 import { readJson, validate } from '../http/validation.js';
 import { commitProposedAction } from '../services/commit-registry.js';
@@ -23,17 +23,19 @@ type CaptureBase = {
   sttModel?: string | null;
 };
 
-async function loadResolvableGroups(): Promise<ResolvableGroup[]> {
-  return getDb().select({
-    id: herdGroups.id,
-    name: herdGroups.name,
-    milkingRoutine: herdGroups.milkingRoutine,
-    active: herdGroups.active,
-  }).from(herdGroups).where(eq(herdGroups.active, true));
+async function loadResolveContext(): Promise<ResolveContext> {
+  const db = getDb();
+  const [groups, animalRows, aliasRows, supplierRows] = await Promise.all([
+    db.select({ id: herdGroups.id, name: herdGroups.name, milkingRoutine: herdGroups.milkingRoutine, active: herdGroups.active }).from(herdGroups).where(eq(herdGroups.active, true)),
+    db.select({ id: animals.id, name: animals.name, tagNumber: animals.tagNumber }).from(animals),
+    db.select({ animalId: animalAliases.animalId, normalizedAlias: animalAliases.normalizedAlias }).from(animalAliases),
+    db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers),
+  ]);
+  return { groups, animals: animalRows, aliases: aliasRows, suppliers: supplierRows };
 }
 
-async function persistCapture(base: CaptureBase, interpretation: InterpretResult, groups: ResolvableGroup[], latencyMs: number) {
-  const resolved = interpretation.intents.map((intent) => resolveIntent(intent, groups));
+async function persistCapture(base: CaptureBase, interpretation: InterpretResult, ctx: ResolveContext, latencyMs: number) {
+  const resolved = interpretation.intents.map((intent) => resolveIntent(intent, ctx));
   return getDb().transaction(async (tx) => {
     const [capture] = await tx.insert(captures).values({
       inputKind: base.inputKind,
@@ -73,7 +75,7 @@ async function refreshCaptureStatus(captureId: string) {
 export const captureRoutes = new Hono()
   .post('/captures', async (c) => {
     const provider = getLlmProvider();
-    const groups = await loadResolvableGroups();
+    const ctx = await loadResolveContext();
     const contentType = c.req.header('content-type') ?? '';
     let base: CaptureBase;
 
@@ -106,8 +108,8 @@ export const captureRoutes = new Hono()
     if (!base.transcript.trim()) return fail('Não consegui entender o conteúdo. Tente de novo.', 422, 'EMPTY_TRANSCRIPT');
 
     const startedAt = Date.now();
-    const interpretation = await provider.interpret(base.transcript, { lotNames: groups.map((group) => group.name) });
-    const { capture, actions } = await persistCapture(base, interpretation, groups, Date.now() - startedAt);
+    const interpretation = await provider.interpret(base.transcript, { lotNames: ctx.groups.map((group) => group.name) });
+    const { capture, actions } = await persistCapture(base, interpretation, ctx, Date.now() - startedAt);
     return c.json({ captureId: capture.id, transcript: capture.transcript, status: capture.status, actions }, 201);
   })
   .get('/captures', async (c) => {

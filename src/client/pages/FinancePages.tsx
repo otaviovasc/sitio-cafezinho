@@ -1,4 +1,4 @@
-import { FormEvent, useState } from 'react';
+import { useState } from 'react';
 import { BadgeDollarSign, Banknote, CircleDollarSign, ShoppingCart } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { formatDate, formatMoney, parseDecimal } from '../../domain/format';
@@ -6,19 +6,21 @@ import { AttachmentPanel, type Attachment } from '../components/AttachmentPanel'
 import { FinanceDirectionSwitch } from '../components/FinanceDirectionSwitch';
 import { LitersInput, MoneyInput } from '../components/form-controls';
 import { ConfirmButton } from '../components/feedback';
-import { Badge, Button, ChoiceCard, ErrorState, Field, FormErrorSummary, Input, LoadingState, PageHeader, ScrollArea, SectionCard, Select, StatCard, Textarea } from '../components/ui';
+import { Button, ChoiceCard, ErrorState, Field, FormErrorSummary, Input, PageHeader, ScrollArea, SectionCard, Select, SkeletonList, StatCard, StatusBadge, SubmitBar, Textarea } from '../components/ui';
+import { purchaseStatusDescriptor, revenueStatusDescriptor } from '../lib/status';
+import { useForm } from '../hooks/useForm';
 import { useResource } from '../hooks/useResource';
+import { useSubmit } from '../hooks/useSubmit';
+import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import { api, json } from '../lib/api';
 import { today } from '../lib/labels';
 
 const categoryLabels: Record<string, string> = { MILK_SALE: 'Venda de leite', CALF_SALE: 'Venda de cria', CULL_SALE: 'Descarte', ANIMAL_SALE: 'Venda de animal', OTHER: 'Outra receita' };
-const statusLabels: Record<string, string> = { EXPECTED: 'A receber', RECEIVED: 'Recebida', CANCELLED: 'Cancelada' };
 type Animal = { id: string; name: string | null; tagNumber: string | null };
 type Revenue = { id: string; revenueDate: string; category: string; description: string; amount: string; status: string; receivedAt: string | null; animalId: string | null; animalName: string | null; tagNumber: string | null; buyerName: string | null; notes: string | null };
 type RevenueDetail = Revenue & { periodStart: string | null; periodEnd: string | null; quantity: string | null; unitPrice: string | null; bonusAmount: string; discountAmount: string; attachments: Attachment[] };
 type FinancePurchase = { id: string; purchaseDate: string; description: string; category: string; totalAmount: string; status: string; isOverdue: boolean };
 type FinanceSummary = { received: number; expected: number; paid: number; open: number; cashResult: number; overdue: number; overdueCount: number };
-type RevenueFieldErrors = Partial<Record<'revenueDate' | 'description' | 'amount' | 'periodEnd' | 'quantity' | 'unitPrice' | 'bonusAmount' | 'discountAmount', string>>;
 
 function monthLabel(value: string) {
   const [year, month] = value.split('-').map(Number);
@@ -26,88 +28,97 @@ function monthLabel(value: string) {
   return new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric', timeZone: 'America/Sao_Paulo' }).format(new Date(Date.UTC(year, month - 1, 1, 12)));
 }
 
-function purchaseStatus(item: FinancePurchase) {
-  if (item.status === 'PAID') return { label: 'Paga', tone: 'success' as const };
-  if (item.status === 'CANCELLED') return { label: 'Cancelada', tone: 'neutral' as const };
-  if (item.isOverdue) return { label: 'Vencida', tone: 'danger' as const };
-  return { label: 'A pagar', tone: 'warning' as const };
-}
-
 function RevenueForm({ initial, initialAnimalId, onSaved }: { initial?: RevenueDetail; initialAnimalId?: string; onSaved: (item: Revenue) => void }) {
   const { data: animals } = useResource<Animal[]>('/api/animals');
-  const [revenueDate, setRevenueDate] = useState(initial?.revenueDate ?? today());
-  const [description, setDescription] = useState(initial?.description ?? '');
-  const [amount, setAmount] = useState(initial?.amount ?? '');
-  const [received, setReceived] = useState(initial?.status === 'RECEIVED');
-  const [category, setCategory] = useState(initial?.category ?? 'OTHER');
-  const [animalId, setAnimalId] = useState(initial?.animalId ?? initialAnimalId ?? '');
-  const [periodStart, setPeriodStart] = useState(initial?.periodStart ?? '');
-  const [periodEnd, setPeriodEnd] = useState(initial?.periodEnd ?? '');
-  const [quantity, setQuantity] = useState(initial?.quantity ?? '');
-  const [unitPrice, setUnitPrice] = useState(initial?.unitPrice ?? '');
-  const [bonusAmount, setBonusAmount] = useState(initial?.bonusAmount ?? '');
-  const [discountAmount, setDiscountAmount] = useState(initial?.discountAmount ?? '');
-  const [buyerName, setBuyerName] = useState(initial?.buyerName ?? '');
-  const [notes, setNotes] = useState(initial?.notes ?? '');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [fieldErrors, setFieldErrors] = useState<RevenueFieldErrors>({});
-  async function save(event: FormEvent) {
-    event.preventDefault(); setError('');
-    const nextErrors: RevenueFieldErrors = {};
+  const { busy, error, run } = useSubmit();
+  const form = useForm(
+    {
+      revenueDate: initial?.revenueDate ?? today(),
+      description: initial?.description ?? '',
+      amount: initial?.amount ?? '',
+      received: initial?.status === 'RECEIVED',
+      category: initial?.category ?? 'OTHER',
+      animalId: initial?.animalId ?? initialAnimalId ?? '',
+      periodStart: initial?.periodStart ?? '',
+      periodEnd: initial?.periodEnd ?? '',
+      quantity: initial?.quantity ?? '',
+      unitPrice: initial?.unitPrice ?? '',
+      bonusAmount: initial?.bonusAmount ?? '',
+      discountAmount: initial?.discountAmount ?? '',
+      buyerName: initial?.buyerName ?? '',
+      notes: initial?.notes ?? '',
+    },
+    {
+      revenueDate: (value) => (value ? undefined : 'Informe a data da entrada.'),
+      description: (value) => (value.trim() ? undefined : 'Descreva de onde vem esta entrada.'),
+      amount: (value) => {
+        const parsed = parseDecimal(value);
+        return parsed !== null && parsed > 0 ? undefined : 'Informe um valor maior que zero.';
+      },
+      periodEnd: (value, all) => (all.category === 'MILK_SALE' && all.periodStart && value && value < all.periodStart ? 'O fim não pode ser anterior ao início.' : undefined),
+      quantity: (value, all) => {
+        if (all.category !== 'MILK_SALE' || !value.trim()) return undefined;
+        const parsed = parseDecimal(value);
+        return parsed === null || parsed < 0 ? 'Informe uma quantidade válida.' : undefined;
+      },
+      unitPrice: (value, all) => {
+        if (all.category !== 'MILK_SALE' || !value.trim()) return undefined;
+        const parsed = parseDecimal(value);
+        return parsed === null || parsed < 0 ? 'Informe um preço válido.' : undefined;
+      },
+      bonusAmount: (value, all) => {
+        if (all.category !== 'MILK_SALE' || !value.trim()) return undefined;
+        const parsed = parseDecimal(value);
+        return parsed === null || parsed < 0 ? 'Informe uma bonificação válida.' : undefined;
+      },
+      discountAmount: (value, all) => {
+        if (all.category !== 'MILK_SALE' || !value.trim()) return undefined;
+        const parsed = parseDecimal(value);
+        return parsed === null || parsed < 0 ? 'Informe um desconto válido.' : undefined;
+      },
+    },
+  );
+  useUnsavedGuard(form.dirty);
+
+  async function persist() {
+    const { revenueDate, category, description, amount, received, animalId, periodStart, periodEnd, quantity, unitPrice, bonusAmount, discountAmount, buyerName, notes } = form.values;
     const parsedAmount = parseDecimal(amount);
-    const parsedQuantity = parseDecimal(quantity);
-    const parsedUnitPrice = parseDecimal(unitPrice);
-    const parsedBonus = parseDecimal(bonusAmount);
-    const parsedDiscount = parseDecimal(discountAmount);
-    if (!revenueDate) nextErrors.revenueDate = 'Informe a data da entrada.';
-    if (!description.trim()) nextErrors.description = 'Descreva de onde vem esta entrada.';
-    if (parsedAmount === null || parsedAmount <= 0) nextErrors.amount = 'Informe um valor maior que zero.';
-    if (periodStart && periodEnd && periodEnd < periodStart) nextErrors.periodEnd = 'O fim não pode ser anterior ao início.';
-    if (quantity.trim() && (parsedQuantity === null || parsedQuantity < 0)) nextErrors.quantity = 'Informe uma quantidade válida.';
-    if (unitPrice.trim() && (parsedUnitPrice === null || parsedUnitPrice < 0)) nextErrors.unitPrice = 'Informe um preço válido.';
-    if (bonusAmount.trim() && (parsedBonus === null || parsedBonus < 0)) nextErrors.bonusAmount = 'Informe uma bonificação válida.';
-    if (discountAmount.trim() && (parsedDiscount === null || parsedDiscount < 0)) nextErrors.discountAmount = 'Informe um desconto válido.';
-    setFieldErrors(nextErrors);
-    if (Object.keys(nextErrors).length || parsedAmount === null) return;
-    setBusy(true);
-    try {
-      const body = {
-        revenueDate, category, description, amount: parsedAmount, status: received ? 'RECEIVED' : initial?.status === 'CANCELLED' ? 'CANCELLED' : 'EXPECTED',
-        receivedAt: received ? initial?.receivedAt ?? new Date().toISOString() : null, animalId: animalId || null,
-        periodStart: periodStart || null, periodEnd: periodEnd || null, quantity: parsedQuantity, unitPrice: parsedUnitPrice,
-        bonusAmount: parsedBonus, discountAmount: parsedDiscount, buyerName: buyerName.trim() || null, notes: notes.trim() || null,
-      };
-      const saved = await api<Revenue>(initial ? `/api/revenues/${initial.id}` : '/api/revenues', json(initial ? 'PATCH' : 'POST', body));
-      onSaved(saved);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível salvar a receita.'); }
-    finally { setBusy(false); }
+    if (parsedAmount === null) return;
+    const body = {
+      revenueDate, category, description, amount: parsedAmount, status: received ? 'RECEIVED' : initial?.status === 'CANCELLED' ? 'CANCELLED' : 'EXPECTED',
+      receivedAt: received ? initial?.receivedAt ?? new Date().toISOString() : null, animalId: animalId || null,
+      periodStart: periodStart || null, periodEnd: periodEnd || null, quantity: parseDecimal(quantity), unitPrice: parseDecimal(unitPrice),
+      bonusAmount: parseDecimal(bonusAmount), discountAmount: parseDecimal(discountAmount), buyerName: buyerName.trim() || null, notes: notes.trim() || null,
+    };
+    const saved = await api<Revenue>(initial ? `/api/revenues/${initial.id}` : '/api/revenues', json(initial ? 'PATCH' : 'POST', body));
+    onSaved(saved);
   }
-  return <form className="grid gap-4" noValidate onSubmit={(event) => void save(event)}>{error && <ErrorState message={error} />}<FormErrorSummary errors={Object.values(fieldErrors)} />
+
+  return <form className="grid gap-4" noValidate onSubmit={(event) => { event.preventDefault(); if (form.validate()) void run(persist); }}>{error && <ErrorState message={error} />}<FormErrorSummary errors={form.visibleErrors} />
     <SectionCard title="Dados da entrada"><div className="grid gap-3 sm:grid-cols-2">
-      <Field label="Categoria"><Select value={category} onChange={(event) => setCategory(event.target.value)}>{Object.entries(categoryLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</Select></Field>
-      <Field label="Data" error={fieldErrors.revenueDate}><Input type="date" value={revenueDate} required onChange={(event) => { setRevenueDate(event.target.value); setFieldErrors((current) => ({ ...current, revenueDate: undefined })); }} /></Field>
-      <Field label="Descrição" hint="Ex.: Pagamento do leite de julho" error={fieldErrors.description}><Input value={description} required onChange={(event) => { setDescription(event.target.value); setFieldErrors((current) => ({ ...current, description: undefined })); }} /></Field>
-      <Field label="Valor da entrada" hint="Use o valor líquido que entrou ou será recebido." error={fieldErrors.amount}><MoneyInput value={amount} required onValueChange={(value) => { setAmount(value); setFieldErrors((current) => ({ ...current, amount: undefined })); }} placeholder="0,00" /></Field>
+      <Field label="Categoria"><Select value={form.values.category} onChange={(event) => form.set('category', event.target.value)}>{Object.entries(categoryLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</Select></Field>
+      <Field label="Data" error={form.error('revenueDate')}><Input type="date" value={form.values.revenueDate} required onChange={(event) => form.set('revenueDate', event.target.value)} onBlur={() => form.blur('revenueDate')} /></Field>
+      <Field label="Descrição" hint="Ex.: Pagamento do leite de julho" error={form.error('description')}><Input value={form.values.description} required onChange={(event) => form.set('description', event.target.value)} onBlur={() => form.blur('description')} /></Field>
+      <Field label="Valor da entrada" hint="Use o valor líquido que entrou ou será recebido." error={form.error('amount')}><MoneyInput value={form.values.amount} required onValueChange={(value) => form.set('amount', value)} onBlur={() => form.blur('amount')} placeholder="0,00" /></Field>
     </div></SectionCard>
     {initial?.status === 'CANCELLED' ? <div className="notice notice-warning">Esta receita está cancelada. Edite somente os dados; reabra o lançamento na tela de detalhes para mudar a situação.</div> : <SectionCard title="Situação do recebimento"><div className="grid gap-2 sm:grid-cols-2">
-      <ChoiceCard name="revenue-status" value="received" checked={received} onChange={() => setReceived(true)} title="Já recebi" description="Entra no caixa registrado agora" />
-      <ChoiceCard name="revenue-status" value="expected" checked={!received} onChange={() => setReceived(false)} title="Ainda vou receber" description="Fica separado como valor a receber" />
+      <ChoiceCard name="revenue-status" value="received" checked={form.values.received} onChange={() => form.set('received', true)} title="Já recebi" description="Entra no caixa registrado agora" />
+      <ChoiceCard name="revenue-status" value="expected" checked={!form.values.received} onChange={() => form.set('received', false)} title="Ainda vou receber" description="Fica separado como valor a receber" />
     </div></SectionCard>}
-    {category === 'MILK_SALE' && <SectionCard title="Detalhes da venda de leite"><p className="mb-3 text-sm text-[var(--muted)]">Preencha somente o que estiver informado no relatório do laticínio.</p><div className="grid gap-3 sm:grid-cols-2">
-      <Field label="Início do período"><Input type="date" value={periodStart} onChange={(event) => setPeriodStart(event.target.value)} /></Field>
-      <Field label="Fim do período" error={fieldErrors.periodEnd}><Input type="date" value={periodEnd} onChange={(event) => { setPeriodEnd(event.target.value); setFieldErrors((current) => ({ ...current, periodEnd: undefined })); }} /></Field>
-      <Field label="Litros reconhecidos" error={fieldErrors.quantity}><LitersInput value={quantity} onValueChange={(value) => { setQuantity(value); setFieldErrors((current) => ({ ...current, quantity: undefined })); }} /></Field>
-      <Field label="Preço-base por litro" error={fieldErrors.unitPrice}><MoneyInput value={unitPrice} onValueChange={(value) => { setUnitPrice(value); setFieldErrors((current) => ({ ...current, unitPrice: undefined })); }} /></Field>
-      <Field label="Bonificações" error={fieldErrors.bonusAmount}><MoneyInput value={bonusAmount} onValueChange={(value) => { setBonusAmount(value); setFieldErrors((current) => ({ ...current, bonusAmount: undefined })); }} /></Field>
-      <Field label="Descontos" error={fieldErrors.discountAmount}><MoneyInput value={discountAmount} onValueChange={(value) => { setDiscountAmount(value); setFieldErrors((current) => ({ ...current, discountAmount: undefined })); }} /></Field>
+    {form.values.category === 'MILK_SALE' && <SectionCard title="Detalhes da venda de leite"><p className="mb-3 text-sm text-[var(--muted)]">Preencha somente o que estiver informado no relatório do laticínio.</p><div className="grid gap-3 sm:grid-cols-2">
+      <Field label="Início do período"><Input type="date" value={form.values.periodStart} onChange={(event) => form.set('periodStart', event.target.value)} /></Field>
+      <Field label="Fim do período" error={form.error('periodEnd')}><Input type="date" value={form.values.periodEnd} onChange={(event) => form.set('periodEnd', event.target.value)} onBlur={() => form.blur('periodEnd')} /></Field>
+      <Field label="Litros reconhecidos" error={form.error('quantity')}><LitersInput value={form.values.quantity} onValueChange={(value) => form.set('quantity', value)} onBlur={() => form.blur('quantity')} /></Field>
+      <Field label="Preço-base por litro" error={form.error('unitPrice')}><MoneyInput value={form.values.unitPrice} onValueChange={(value) => form.set('unitPrice', value)} onBlur={() => form.blur('unitPrice')} /></Field>
+      <Field label="Bonificações" error={form.error('bonusAmount')}><MoneyInput value={form.values.bonusAmount} onValueChange={(value) => form.set('bonusAmount', value)} onBlur={() => form.blur('bonusAmount')} /></Field>
+      <Field label="Descontos" error={form.error('discountAmount')}><MoneyInput value={form.values.discountAmount} onValueChange={(value) => form.set('discountAmount', value)} onBlur={() => form.blur('discountAmount')} /></Field>
     </div></SectionCard>}
     <details className="section-card" open={Boolean(initial)}><summary className="min-h-11 cursor-pointer py-2 text-lg font-bold">Informações opcionais</summary><div className="mt-3 grid gap-3 sm:grid-cols-2">
-      <Field label="Comprador"><Input value={buyerName} onChange={(event) => setBuyerName(event.target.value)} /></Field>
-      <Field label="Animal vinculado"><Select value={animalId} onChange={(event) => setAnimalId(event.target.value)}><option value="">Sem animal</option>{animals?.map((animal) => <option value={animal.id} key={animal.id}>{animal.name || `Brinco ${animal.tagNumber}`}</option>)}</Select></Field>
-      <div className="sm:col-span-2"><Field label="Observações"><Textarea value={notes} onChange={(event) => setNotes(event.target.value)} /></Field></div>
+      <Field label="Comprador"><Input value={form.values.buyerName} onChange={(event) => form.set('buyerName', event.target.value)} /></Field>
+      <Field label="Animal vinculado"><Select value={form.values.animalId} onChange={(event) => form.set('animalId', event.target.value)}><option value="">Sem animal</option>{animals?.map((animal) => <option value={animal.id} key={animal.id}>{animal.name || `Brinco ${animal.tagNumber}`}</option>)}</Select></Field>
+      <div className="sm:col-span-2"><Field label="Observações"><Textarea value={form.values.notes} onChange={(event) => form.set('notes', event.target.value)} /></Field></div>
     </div></details>
-    <div className="form-submit-bar"><Button type="submit" disabled={busy}>{busy ? 'Salvando…' : initial ? 'Salvar alterações' : 'Registrar entrada'}</Button></div>
+    <SubmitBar label={initial ? 'Salvar alterações' : 'Registrar entrada'} busy={busy} />
   </form>;
 }
 
@@ -124,7 +135,7 @@ export function FinancePage() {
         <Link className="finance-action finance-action-milk" to="/financeiro/preco-leite"><BadgeDollarSign size={30} aria-hidden /><span><strong>Preço do leite</strong><small>Valor mensal e estimativa sobre as coletas</small></span></Link>
       </div>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><h2 className="text-xl font-bold">Resumo de {monthLabel(month)}</h2><p className="text-sm text-[var(--muted)]">Somente valores registrados neste sistema.</p></div><div className="w-full sm:w-48"><Field label="Mês do resumo"><Input type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></Field></div></div>
-      {summaryLoading ? <LoadingState /> : summaryError || !summary ? <ErrorState message={summaryError || 'Resumo indisponível.'} retry={reloadSummary} /> : <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+      {summaryLoading ? <SkeletonList rows={3} /> : summaryError || !summary ? <ErrorState message={summaryError || 'Resumo indisponível.'} retry={reloadSummary} /> : <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
         <StatCard label="Entradas recebidas" value={formatMoney(summary.received)} />
         <StatCard label="Saídas pagas" value={formatMoney(summary.paid)} />
         <StatCard label="Resultado de caixa registrado" value={formatMoney(summary.cashResult)} detail="Entradas recebidas menos saídas pagas. Não é lucro." />
@@ -133,8 +144,8 @@ export function FinancePage() {
         <StatCard label="Compras vencidas" value={formatMoney(summary.overdue)} detail={`${summary.overdueCount} compra(s)`} />
       </div>}
       <div className="grid gap-5 lg:grid-cols-2">
-        <SectionCard title="Entradas recentes" action={<Link className="button button-secondary" to="/receitas/nova">Nova entrada</Link>}>{loading ? <p className="py-6 text-center text-sm text-[var(--muted)]" role="status">Carregando entradas…</p> : error ? <ErrorState message={error} retry={reload} /> : !revenues?.length ? <p className="py-6 text-center text-sm text-[var(--muted)]">Nenhuma entrada registrada.</p> : <ScrollArea label="Entradas recentes">{revenues.slice(0, 8).map((item) => <Link className="mobile-item" key={item.id} to={`/receitas/${item.id}`}><span className="min-w-0"><strong className="block truncate">{item.description}</strong><span className="block text-xs text-[var(--muted)]">{formatDate(item.revenueDate)} · {categoryLabels[item.category]}</span></span><span className="shrink-0 text-right"><strong className="block">{formatMoney(item.amount)}</strong><Badge tone={item.status === 'RECEIVED' ? 'success' : item.status === 'CANCELLED' ? 'neutral' : 'warning'}>{statusLabels[item.status]}</Badge></span></Link>)}</ScrollArea>}</SectionCard>
-        <SectionCard title="Saídas recentes" action={<Link className="button button-secondary" to="/compras">Ver todas</Link>}>{purchasesLoading ? <p className="py-6 text-center text-sm text-[var(--muted)]" role="status">Carregando saídas…</p> : purchasesError ? <ErrorState message={purchasesError} retry={reloadPurchases} /> : !purchases?.length ? <p className="py-6 text-center text-sm text-[var(--muted)]">Nenhuma saída registrada.</p> : <ScrollArea label="Saídas recentes">{purchases.slice(0, 8).map((item) => { const status = purchaseStatus(item); return <Link className="mobile-item" key={item.id} to={`/compras/${item.id}`}><span className="min-w-0"><strong className="block truncate">{item.description}</strong><span className="block text-xs text-[var(--muted)]">{formatDate(item.purchaseDate)}</span></span><span className="shrink-0 text-right"><strong className="block">{formatMoney(item.totalAmount)}</strong><Badge tone={status.tone}>{status.label}</Badge></span></Link>; })}</ScrollArea>}</SectionCard>
+        <SectionCard title="Entradas recentes" action={<Link className="button button-secondary" to="/receitas/nova">Nova entrada</Link>}>{loading ? <p className="py-6 text-center text-sm text-[var(--muted)]" role="status">Carregando entradas…</p> : error ? <ErrorState message={error} retry={reload} /> : !revenues?.length ? <p className="py-6 text-center text-sm text-[var(--muted)]">Nenhuma entrada registrada.</p> : <ScrollArea label="Entradas recentes">{revenues.slice(0, 8).map((item) => <Link className="mobile-item" key={item.id} to={`/receitas/${item.id}`}><span className="min-w-0"><strong className="block truncate">{item.description}</strong><span className="block text-xs text-[var(--muted)]">{formatDate(item.revenueDate)} · {categoryLabels[item.category]}</span></span><span className="shrink-0 text-right"><strong className="block">{formatMoney(item.amount)}</strong><StatusBadge descriptor={revenueStatusDescriptor[item.status]} /></span></Link>)}</ScrollArea>}</SectionCard>
+        <SectionCard title="Saídas recentes" action={<Link className="button button-secondary" to="/compras">Ver todas</Link>}>{purchasesLoading ? <p className="py-6 text-center text-sm text-[var(--muted)]" role="status">Carregando saídas…</p> : purchasesError ? <ErrorState message={purchasesError} retry={reloadPurchases} /> : !purchases?.length ? <p className="py-6 text-center text-sm text-[var(--muted)]">Nenhuma saída registrada.</p> : <ScrollArea label="Saídas recentes">{purchases.slice(0, 8).map((item) => <Link className="mobile-item" key={item.id} to={`/compras/${item.id}`}><span className="min-w-0"><strong className="block truncate">{item.description}</strong><span className="block text-xs text-[var(--muted)]">{formatDate(item.purchaseDate)}</span></span><span className="shrink-0 text-right"><strong className="block">{formatMoney(item.totalAmount)}</strong><StatusBadge descriptor={purchaseStatusDescriptor(item.status, item.isOverdue)} /></span></Link>)}</ScrollArea>}</SectionCard>
       </div>
     </div>
   </div>;
@@ -159,8 +170,8 @@ export function RevenueDetailPage() {
     } catch (cause) { setActionError(cause instanceof Error ? cause.message : 'Não foi possível atualizar a receita.'); }
     finally { setBusy(false); }
   }
-  if (loading) return <div className="page"><LoadingState /></div>;
+  if (loading) return <div className="page"><SkeletonList rows={4} /></div>;
   if (error || !data) return <div className="page"><ErrorState message={error || 'Receita não encontrada.'} retry={reload} /></div>;
   if (editing) return <div className="page"><div className="page-narrow"><PageHeader icon={Banknote} title="Editar entrada" action={<Button variant="secondary" onClick={() => setEditing(false)}>Cancelar</Button>} /><RevenueForm initial={data} onSaved={async () => { await reload(); setEditing(false); }} /></div></div>;
-  return <div className="page"><PageHeader icon={Banknote} title={data.description} subtitle={`${formatDate(data.revenueDate)} · ${categoryLabels[data.category]}`} action={<Button onClick={() => setEditing(true)}>Editar</Button>} /><div className="grid gap-5">{actionError && <ErrorState message={actionError} />}<SectionCard><div className="flex items-start justify-between gap-4"><div><p className="text-sm text-[var(--muted)]">Valor líquido da entrada</p><p className="text-3xl font-bold">{formatMoney(data.amount)}</p>{data.buyerName && <p className="mt-2 text-sm">Comprador: {data.buyerName}</p>}{data.animalId && <Link className="mt-2 block text-sm font-semibold text-[var(--primary)]" to={`/rebanho/${data.animalId}`}>Ver animal vinculado</Link>}</div><Badge tone={data.status === 'RECEIVED' ? 'success' : data.status === 'CANCELLED' ? 'neutral' : 'warning'}>{statusLabels[data.status]}</Badge></div>{data.notes && <p className="mt-4 text-sm">{data.notes}</p>}<div className="mt-4 flex flex-wrap gap-2">{data.status !== 'RECEIVED' && data.status !== 'CANCELLED' && <Button disabled={busy} onClick={() => void action('receive')}>Marcar como recebida</Button>}{data.status === 'RECEIVED' && <Button variant="secondary" disabled={busy} onClick={() => void action('expect')}>Voltar para a receber</Button>}{data.status === 'CANCELLED' && <Button variant="secondary" disabled={busy} onClick={() => void action('expect')}>Reabrir como a receber</Button>}{data.status !== 'CANCELLED' && <ConfirmButton variant="danger" disabled={busy} question="Cancelar esta entrada? Ela deixará de entrar nos totais." onClick={() => void action('cancel')}>Cancelar entrada</ConfirmButton>}</div></SectionCard>{data.category === 'MILK_SALE' && <SectionCard title="Detalhes do leite"><div className="grid gap-2 sm:grid-cols-2">{data.periodStart && <p>Período: <strong>{formatDate(data.periodStart)}{data.periodEnd ? ` a ${formatDate(data.periodEnd)}` : ''}</strong></p>}{data.quantity && <p>Litros reconhecidos: <strong>{Number(data.quantity).toLocaleString('pt-BR')}</strong></p>}{data.unitPrice && <p>Preço-base: <strong>{formatMoney(data.unitPrice)}/L</strong></p>}<p>Bonificações: <strong>{formatMoney(data.bonusAmount)}</strong></p><p>Descontos: <strong>{formatMoney(data.discountAmount)}</strong></p></div></SectionCard>}<SectionCard title="Comprovantes e relatórios"><AttachmentPanel attachments={data.attachments} revenueId={id} onChange={reload} /></SectionCard></div></div>;
+  return <div className="page"><PageHeader icon={Banknote} title={data.description} subtitle={`${formatDate(data.revenueDate)} · ${categoryLabels[data.category]}`} action={<Button onClick={() => setEditing(true)}>Editar</Button>} /><div className="grid gap-5">{actionError && <ErrorState message={actionError} />}<SectionCard><div className="flex items-start justify-between gap-4"><div><p className="text-sm text-[var(--muted)]">Valor líquido da entrada</p><p className="text-3xl font-bold">{formatMoney(data.amount)}</p>{data.buyerName && <p className="mt-2 text-sm">Comprador: {data.buyerName}</p>}{data.animalId && <Link className="mt-2 block text-sm font-semibold text-[var(--primary)]" to={`/rebanho/${data.animalId}`}>Ver animal vinculado</Link>}</div><StatusBadge descriptor={revenueStatusDescriptor[data.status]} /></div>{data.notes && <p className="mt-4 text-sm">{data.notes}</p>}<div className="mt-4 flex flex-wrap gap-2">{data.status !== 'RECEIVED' && data.status !== 'CANCELLED' && <Button disabled={busy} onClick={() => void action('receive')}>Marcar como recebida</Button>}{data.status === 'RECEIVED' && <Button variant="secondary" disabled={busy} onClick={() => void action('expect')}>Voltar para a receber</Button>}{data.status === 'CANCELLED' && <Button variant="secondary" disabled={busy} onClick={() => void action('expect')}>Reabrir como a receber</Button>}{data.status !== 'CANCELLED' && <ConfirmButton variant="danger" disabled={busy} question="Cancelar esta entrada? Ela deixará de entrar nos totais." onClick={() => void action('cancel')}>Cancelar entrada</ConfirmButton>}</div></SectionCard>{data.category === 'MILK_SALE' && <SectionCard title="Detalhes do leite"><div className="grid gap-2 sm:grid-cols-2">{data.periodStart && <p>Período: <strong>{formatDate(data.periodStart)}{data.periodEnd ? ` a ${formatDate(data.periodEnd)}` : ''}</strong></p>}{data.quantity && <p>Litros reconhecidos: <strong>{Number(data.quantity).toLocaleString('pt-BR')}</strong></p>}{data.unitPrice && <p>Preço-base: <strong>{formatMoney(data.unitPrice)}/L</strong></p>}<p>Bonificações: <strong>{formatMoney(data.bonusAmount)}</strong></p><p>Descontos: <strong>{formatMoney(data.discountAmount)}</strong></p></div></SectionCard>}<SectionCard title="Comprovantes e relatórios"><AttachmentPanel attachments={data.attachments} revenueId={id} onChange={reload} /></SectionCard></div></div>;
 }

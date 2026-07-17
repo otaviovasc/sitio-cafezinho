@@ -67,7 +67,14 @@ async function runSeed() {
     const [lote2] = await tx.select().from(herdGroups).where(eq(herdGroups.name, 'Lote 2')).limit(1);
     if (!lote1 || !lote2) throw new Error('Não foi possível preparar os lotes iniciais.');
 
-    if (process.env.SEED_DEMO_DATA !== 'true') {
+    // Camadas de seed:
+    //   (nenhuma flag)     -> apenas estrutura (Lote 1 / Lote 2)
+    //   SEED_NOTEBOOK_DATA -> estrutura + transcrição real do caderno (rebanho + sessão 2026-05-06)
+    //   SEED_DEMO_DATA     -> tudo acima + dados fictícios/demonstrativos
+    const includeDemo = process.env.SEED_DEMO_DATA === 'true';
+    const includeNotebook = includeDemo || process.env.SEED_NOTEBOOK_DATA === 'true';
+
+    if (!includeNotebook) {
       console.log('Estrutura inicial aplicada sem dados demonstrativos.');
       return;
     }
@@ -101,6 +108,22 @@ async function runSeed() {
         const [assignment] = await tx.insert(animalGroupAssignments).values({ animalId: animal.id, groupId: lote1.id, startedOn: initialDate, notes: 'Lote inicial dos dados demonstrativos.' }).returning();
         currentAssignments.push(assignment);
       }
+    }
+
+    // ----- Transcrição real do caderno: sessão de controle de 2026-05-06 -----
+    const [canonical] = await tx.select({ id: milkSessions.id }).from(milkSessions).where(and(eq(milkSessions.sessionDate, seedDate), eq(milkSessions.source, 'NOTEBOOK_SEED'), eq(milkSessions.title, seedTitle))).limit(1);
+    if (!canonical) {
+      const [session] = await tx.insert(milkSessions).values({ sessionDate: seedDate, inputMode: 'COMBINED_TOTAL', source: 'NOTEBOOK_SEED', title: seedTitle, notes: 'Transcrição inicial do caderno. Os valores representam a soma da manhã com a tarde.' }).returning();
+      await tx.insert(milkMeasurements).values([
+        ...confirmedSeed.map((row) => ({ milkSessionId: session.id, animalId: animalByLabel.get(normalizeLabel(row.rawAnimalLabel))?.id, rawAnimalLabel: row.rawAnimalLabel, morningLiters: null, afternoonLiters: null, totalLiters: row.totalLiters.toFixed(2), confidence: 'HIGH' as const, status: 'CONFIRMED' as const })),
+        { milkSessionId: session.id, animalId: animalByLabel.get(normalizeLabel(pendingSeed.rawAnimalLabel))?.id, rawAnimalLabel: pendingSeed.rawAnimalLabel, rawValueText: pendingSeed.rawValueText, morningLiters: null, afternoonLiters: null, totalLiters: pendingSeed.totalLiters.toFixed(2), confidence: 'LOW' as const, status: 'NEEDS_REVIEW' as const, notes: 'Valor anotado com interrogações no caderno' },
+        ...excludedSeed.map((row) => ({ milkSessionId: session.id, animalId: animalByLabel.get(normalizeLabel(row.rawAnimalLabel))?.id, rawAnimalLabel: row.rawAnimalLabel, rawValueText: row.rawValueText, morningLiters: null, afternoonLiters: null, totalLiters: row.totalLiters.toFixed(2), confidence: 'MEDIUM' as const, status: 'EXCLUDED' as const, notes: 'Linha riscada no caderno' })),
+      ]);
+    }
+
+    if (!includeDemo) {
+      console.log('Seed com transcrição real do caderno aplicado (sem dados fictícios).');
+      return;
     }
 
     for (const seed of heiferSeeds) {
@@ -163,16 +186,6 @@ async function runSeed() {
       const morning = roundedHalf(total * (0.57 + (index % 3) * 0.01));
       const afternoon = total - morning;
       await tx.update(dailyMilkTotals).set({ morningLiters: morning.toFixed(2), afternoonLiters: afternoon.toFixed(2), updatedAt: new Date() }).where(eq(dailyMilkTotals.id, row.id));
-    }
-
-    const [canonical] = await tx.select({ id: milkSessions.id }).from(milkSessions).where(and(eq(milkSessions.sessionDate, seedDate), eq(milkSessions.source, 'NOTEBOOK_SEED'), eq(milkSessions.title, seedTitle))).limit(1);
-    if (!canonical) {
-      const [session] = await tx.insert(milkSessions).values({ sessionDate: seedDate, inputMode: 'COMBINED_TOTAL', source: 'NOTEBOOK_SEED', title: seedTitle, notes: 'Transcrição inicial do caderno. Os valores representam a soma da manhã com a tarde.' }).returning();
-      await tx.insert(milkMeasurements).values([
-        ...confirmedSeed.map((row) => ({ milkSessionId: session.id, animalId: animalByLabel.get(normalizeLabel(row.rawAnimalLabel))?.id, rawAnimalLabel: row.rawAnimalLabel, morningLiters: null, afternoonLiters: null, totalLiters: row.totalLiters.toFixed(2), confidence: 'HIGH' as const, status: 'CONFIRMED' as const })),
-        { milkSessionId: session.id, animalId: animalByLabel.get(normalizeLabel(pendingSeed.rawAnimalLabel))?.id, rawAnimalLabel: pendingSeed.rawAnimalLabel, rawValueText: pendingSeed.rawValueText, morningLiters: null, afternoonLiters: null, totalLiters: pendingSeed.totalLiters.toFixed(2), confidence: 'LOW' as const, status: 'NEEDS_REVIEW' as const, notes: 'Valor anotado com interrogações no caderno' },
-        ...excludedSeed.map((row) => ({ milkSessionId: session.id, animalId: animalByLabel.get(normalizeLabel(row.rawAnimalLabel))?.id, rawAnimalLabel: row.rawAnimalLabel, rawValueText: row.rawValueText, morningLiters: null, afternoonLiters: null, totalLiters: row.totalLiters.toFixed(2), confidence: 'MEDIUM' as const, status: 'EXCLUDED' as const, notes: 'Linha riscada no caderno' })),
-      ]);
     }
 
     const [demoMarker] = await tx.select({ id: milkSessions.id }).from(milkSessions).where(eq(milkSessions.title, demoMarkerTitle)).limit(1);

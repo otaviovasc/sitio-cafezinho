@@ -6,10 +6,22 @@ import {
   resolveDailyMilkTotal,
   resolveHerdGroup,
   resolveIndividualMilkSession,
+  resolveMastitis,
+  resolveMilkCollection,
+  resolvePurchase,
+  resolveRevenue,
   resolveSpokenDate,
   type ResolvableGroup,
 } from '../../src/domain/nl/resolve';
-import type { DailyMilkTotalIntent, IndividualMilkSessionIntent, SpokenDate } from '../../src/domain/nl/intents';
+import type {
+  DailyMilkTotalIntent,
+  IndividualMilkSessionIntent,
+  MastitisIntent,
+  MilkCollectionIntent,
+  PurchaseIntent,
+  RevenueIntent,
+  SpokenDate,
+} from '../../src/domain/nl/intents';
 
 const NOW = new Date('2026-07-17T12:00:00-03:00');
 
@@ -137,6 +149,55 @@ describe('resolveIndividualMilkSession — Exemplo 3', () => {
     expect(parsed.measurements).toHaveLength(2);
     expect(parsed.measurements[0].rawAnimalLabel).toBe('Mimosa');
     expect(parsed.measurements[1].totalLiters).toBe(9.5);
+  });
+});
+
+describe('resolvers de registro — mapeamento de rótulos falados', () => {
+  it('coleta: volume + origem "tanque" → READY / TANK_READING', () => {
+    const intent: MilkCollectionIntent = { type: 'milk_collection', date: spoken('hoje', 'hoje'), liters: 1200, sourceLabel: 'tanque', rawValueText: '1200', confidence: 'HIGH', notes: null };
+    const resolved = resolveMilkCollection(intent, NOW);
+    expect(resolved.commitStatus).toBe('READY');
+    expect(resolved.resolvedPayload.source).toBe('TANK_READING');
+    expect(resolved.resolvedPayload.collectionDate).toBe('2026-07-17');
+  });
+
+  it('coleta sem volume → NEEDS_REVIEW', () => {
+    const intent: MilkCollectionIntent = { type: 'milk_collection', date: spoken('hoje', 'hoje'), liters: null, sourceLabel: null, rawValueText: null, confidence: 'LOW', notes: null };
+    expect(resolveMilkCollection(intent, NOW).commitStatus).toBe('NEEDS_REVIEW');
+  });
+
+  it('receita: "venda de leite" recebida → MILK_SALE / RECEIVED', () => {
+    const intent: RevenueIntent = { type: 'revenue', date: spoken('hoje', 'hoje'), categoryLabel: 'venda de leite', description: 'Leite da quinzena', amount: 5000, received: true, buyerName: 'Laticínio X', confidence: 'HIGH', notes: null };
+    const resolved = resolveRevenue(intent, NOW);
+    expect(resolved.commitStatus).toBe('READY');
+    expect(resolved.resolvedPayload.category).toBe('MILK_SALE');
+    expect(resolved.resolvedPayload.status).toBe('RECEIVED');
+  });
+
+  it('compra: "ração" com fornecedor cadastrado + vencimento → FEED / supplierId / OPEN', () => {
+    const suppliers = [{ id: 's1', name: 'Agropecuária X' }];
+    const intent: PurchaseIntent = { type: 'purchase', date: spoken('hoje', 'hoje'), categoryLabel: 'ração', description: 'Ração 2 sacos', amount: 1200, supplierLabel: 'Agropecuária X', dueDate: { relative: null, iso: '2026-08-10', rawText: 'dia 10' }, paid: false, confidence: 'HIGH', notes: null };
+    const resolved = resolvePurchase(intent, suppliers, NOW);
+    expect(resolved.commitStatus).toBe('READY');
+    expect(resolved.resolvedPayload.category).toBe('FEED');
+    expect(resolved.resolvedPayload.supplierId).toBe('s1');
+    expect(resolved.resolvedPayload.status).toBe('OPEN');
+    expect(resolved.resolvedPayload.dueDate).toBe('2026-08-10');
+  });
+
+  it('mastite: vaca conhecida + quarto → READY / REAR_RIGHT; desconhecida → NEEDS_REVIEW', () => {
+    const animals = [{ id: 'a1', name: 'Mimosa', tagNumber: null }];
+    const known: MastitisIntent = { type: 'mastitis_case', date: spoken('hoje', 'hoje'), animalLabel: 'Mimosa', quarterLabel: 'posterior direito', detectionLabel: 'visual', observedSigns: 'leite com grumos', confidence: 'HIGH', notes: null };
+    const resolvedKnown = resolveMastitis(known, animals, [], NOW);
+    expect(resolvedKnown.commitStatus).toBe('READY');
+    expect(resolvedKnown.resolvedPayload.animalId).toBe('a1');
+    expect(resolvedKnown.resolvedPayload.affectedQuarter).toBe('REAR_RIGHT');
+    expect(resolvedKnown.resolvedPayload.detectionMethod).toBe('VISUAL');
+
+    const unknown: MastitisIntent = { ...known, animalLabel: 'Estrela' };
+    const resolvedUnknown = resolveMastitis(unknown, animals, [], NOW);
+    expect(resolvedUnknown.commitStatus).toBe('NEEDS_REVIEW');
+    expect(resolvedUnknown.resolvedPayload.animalId).toBeNull();
   });
 });
 

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { parseDecimal } from '../../../domain/format';
 import { LitersInput } from '../../components/form-controls';
 import { Button, Field, Select, Textarea } from '../../components/ui';
+import { milkMeasurementStatusDescriptor } from '../../lib/status';
 
 export type MeasurementEditValue = {
   animalId: string | null;
@@ -78,7 +79,7 @@ export function MilkMeasurementEditor({ measurement, animals, busy, onSave, onCa
         <div className="field"><span className="field-label">Total recalculado</span><div className="input flex items-center font-bold">{calculatedTotal === null ? '—' : `${calculatedTotal.toLocaleString('pt-BR')} L`}</div></div>
       </>}
       <Field label="Confiança"><Select value={confidence} onChange={(event) => setConfidence(event.target.value)}><option value="HIGH">Alta</option><option value="MEDIUM">Média</option><option value="LOW">Baixa</option></Select></Field>
-      <Field label="Situação"><Select value={status} onChange={(event) => setStatus(event.target.value)}><option value="CONFIRMED">Confirmado</option><option value="NEEDS_REVIEW">Aguardando revisão</option><option value="EXCLUDED">Excluído</option></Select></Field>
+      <Field label="Situação"><Select value={status} onChange={(event) => setStatus(event.target.value)}>{Object.entries(milkMeasurementStatusDescriptor).map(([value, { label }]) => <option key={value} value={value}>{label}</option>)}</Select></Field>
       <Field label="Observação"><Textarea className="min-h-12" value={notes} onChange={(event) => setNotes(event.target.value)} /></Field>
     </div>
     <div className="mt-3 flex flex-wrap gap-2"><Button disabled={busy} onClick={submit}>{busy ? 'Salvando…' : 'Salvar correção'}</Button><Button variant="secondary" disabled={busy} onClick={onCancel}>Cancelar</Button></div>
