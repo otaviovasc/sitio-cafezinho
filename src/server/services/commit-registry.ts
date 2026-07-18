@@ -105,10 +105,6 @@ const committers: Partial<Record<ProposedActionType, Committer>> = {
   },
 };
 
-export function canCommitDirectly(actionType: ProposedActionType): boolean {
-  return actionType in committers;
-}
-
 export async function commitProposedAction(
   actionType: ProposedActionType,
   payload: Record<string, unknown>,

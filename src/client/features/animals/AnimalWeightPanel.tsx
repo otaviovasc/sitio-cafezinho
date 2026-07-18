@@ -18,7 +18,7 @@ export type AnimalWeight = {
 export function AnimalWeightPanel({ weights }: { weights: AnimalWeight[] }) {
   const confirmed = weights.filter((row) => row.status === 'CONFIRMED' && row.weightKg !== null);
   return <SectionCard title="Histórico de pesagens" icon={Scale} className="lg:col-span-2">
-    <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-[var(--muted)]">Somente medições reais; linhas em revisão permanecem identificadas.</p><Link className="button button-secondary" to="/pesos/importar"><Upload size={17} aria-hidden />Nova pesagem</Link></div>
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-[var(--muted)]">Somente medições reais; linhas em revisão permanecem identificadas.</p><Link className="button button-secondary" to="/pesos/novo"><Upload size={17} aria-hidden />Nova pesagem</Link></div>
     {!weights.length ? <InlineEmpty>Nenhuma pesagem registrada.</InlineEmpty> : <ScrollArea label="Histórico de pesagens">{weights.map((row) => {
       const confirmedIndex = confirmed.findIndex((candidate) => candidate.id === row.id);
       const previous = confirmedIndex >= 0 ? confirmed[confirmedIndex + 1] : null;

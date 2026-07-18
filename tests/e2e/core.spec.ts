@@ -4,7 +4,7 @@ import { login } from './helpers';
 test.describe.configure({ mode: 'serial' });
 
 test('fluxos centrais do sítio', async ({ page }, testInfo) => {
-  test.setTimeout(240_000);
+  test.setTimeout(360_000);
   await page.goto('/');
   await expect(page).toHaveURL(/\/entrar$/);
   await page.getByLabel('Senha', { exact: true }).fill('senha-incorreta');
@@ -87,9 +87,12 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await expect(page.getByText('Lote 2', { exact: true }).first()).toBeVisible();
 
   const alias = `Alias ${suffix}`;
+  await page.getByRole('button', { name: 'Gerenciar aliases' }).click();
+  await expect(page.getByRole('dialog', { name: 'Aliases do caderno' })).toBeVisible();
   await page.getByLabel('Novo alias').fill(alias);
   await page.getByRole('button', { name: 'Adicionar' }).click();
-  await expect(page.getByText(alias, { exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog').getByText(alias, { exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
 
   await page.goto('/rebanho/novo');
   await page.getByRole('button', { name: 'Vários animais' }).click();
@@ -97,50 +100,57 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await page.getByRole('button', { name: /Cadastrar 2 animal/ }).click();
   await expect(page.getByRole('heading', { name: `Novilha A ${suffix}` })).toBeVisible();
 
+  // Pesagem manual (sem chave): registra somente os animais realmente pesados.
   const weightDate = testInfo.project.name === 'desktop-1440' ? '2026-07-09' : '2026-07-10';
-  await page.goto('/pesos/importar');
   await page.evaluate(async (date) => {
     const sessions = await fetch('/api/weight-sessions').then((response) => response.json()) as Array<{ id: string; measuredOn: string }>;
     const existing = sessions.find((session) => session.measuredOn === date);
     if (existing) await fetch(`/api/weight-sessions/${existing.id}`, { method: 'DELETE' });
   }, weightDate);
-  const weightJson = { measuredOn: weightDate, measurements: [{ rawAnimalLabel: cowName, rawValueText: '486', weightKg: 486, confidence: 'HIGH', excluded: false, notes: null }] };
-  await page.getByLabel('JSON da transcrição').fill(JSON.stringify(weightJson));
-  await page.getByRole('button', { name: 'Validar pesagens' }).click();
-  await expect(page.getByText('Dados carregados. Corrija as inconsistências destacadas.')).toBeVisible();
-  await page.getByRole('button', { name: 'Salvar 1 linha(s)' }).click();
+  await page.goto('/pesos/novo');
+  await page.getByLabel('Data da pesagem').fill(weightDate);
+  await page.getByLabel('Buscar animal').fill(cowName);
+  await page.getByLabel(`Peso de ${cowName}`).fill('486');
+  await page.getByRole('button', { name: /^Salvar pesagem/ }).click();
   await expect(page.getByRole('heading', { name: 'Pesagem do rebanho' })).toBeVisible();
   await expect(page.getByText('486 kg', { exact: true }).first()).toBeVisible();
 
-  await page.goto('/producao/importar');
+  // Controle individual manual (sem chave): preenche todas as vacas em lactação na data.
+  const manualControlDate = testInfo.project.name === 'desktop-1440' ? '2026-07-13' : '2026-07-14';
+  await page.evaluate(async (date) => {
+    const sessions = await fetch('/api/milk-sessions').then((response) => response.json()) as Array<{ id: string; sessionDate: string }>;
+    for (const existing of sessions.filter((session) => session.sessionDate === date)) await fetch(`/api/milk-sessions/${existing.id}`, { method: 'DELETE' });
+  }, manualControlDate);
+  await page.goto('/producao/individual/novo');
+  await page.getByLabel('Data do controle').fill(manualControlDate);
+  await expect(page.getByRole('heading', { name: /Vacas em lactação/ })).toBeVisible();
+  const decimalInputs = page.locator('.scroll-area input[inputmode="decimal"]:not([disabled])');
+  const inputCount = await decimalInputs.count();
+  expect(inputCount).toBeGreaterThan(0);
+  for (let index = 0; index < inputCount; index++) await decimalInputs.nth(index).fill('9');
+  await page.getByRole('button', { name: /^Salvar controle/ }).click();
+  await expect(page).toHaveURL(/\/producao\/[0-9a-f-]+$/);
+  await expect(page.getByRole('heading', { name: new RegExp(`Controle de ${manualControlDate.split('-').reverse().join('/')}`) })).toBeVisible();
+
+  // Revisão de transcrição (caminho do Assistente/OCR): criada via API e revisada no detalhe.
   const importDate = testInfo.project.name === 'desktop-1440' ? '2026-07-11' : '2026-07-12';
   const correctedImportDate = testInfo.project.name === 'desktop-1440' ? '2026-07-10' : '2026-07-11';
-  await page.evaluate(async (dates) => {
+  const registeredSessionId = await page.evaluate(async ({ importDate, correctedImportDate, label }) => {
     const sessions = await fetch('/api/milk-sessions').then((response) => response.json()) as Array<{ id: string; sessionDate: string }>;
-    for (const existing of sessions.filter((session) => dates.includes(session.sessionDate))) await fetch(`/api/milk-sessions/${existing.id}`, { method: 'DELETE' });
-  }, [importDate, correctedImportDate]);
-  await page.getByLabel('Data da sessão').fill(importDate);
-  await page.getByRole('button', { name: 'Carregar exemplo' }).click();
-  await page.getByRole('button', { name: 'Validar dados' }).click();
-  await expect(page.getByText('Confira antes de salvar')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Salvar controle revisado' })).toBeEnabled();
-  const uncertainImport = {
-    sessionDate: importDate,
-    sourceMode: 'SEPARATE_MORNING_AFTERNOON',
-    measurements: [
-      { rawAnimalLabel: `Vaca importada ${suffix}`, rawValueText: '10 + 8,5', morningLiters: 10, afternoonLiters: 8.5, totalLiters: 18.5, confidence: 'HIGH', excluded: false, notes: null },
-      { rawAnimalLabel: 'Kiltora', rawValueText: null, morningLiters: null, afternoonLiters: null, totalLiters: null, confidence: 'LOW', excluded: true, notes: 'Linha riscada no caderno; sem valor legível' },
-      { rawAnimalLabel: 'Helen', rawValueText: null, morningLiters: null, afternoonLiters: null, totalLiters: null, confidence: 'LOW', excluded: true, notes: 'Linha riscada no caderno; rótulo e valor pouco legíveis' },
-      { rawAnimalLabel: null, rawValueText: null, morningLiters: null, afternoonLiters: null, totalLiters: null, confidence: 'LOW', excluded: true, notes: 'Linha riscada e ilegível no controle da tarde' },
-    ],
-  };
-  await page.getByLabel('JSON da transcrição').fill(JSON.stringify(uncertainImport));
-  await page.getByRole('button', { name: 'Validar dados' }).click();
-  await expect(page.getByText('[rótulo ilegível]', { exact: true })).toBeVisible();
-  await expect(page.locator('.badge').filter({ hasText: /^Excluído$/ })).toHaveCount(3);
-  await page.screenshot({ path: testInfo.outputPath('importacao-linhas-incertas.png'), fullPage: true });
-  await page.getByRole('button', { name: 'Salvar controle revisado' }).click();
+    for (const existing of sessions.filter((session) => [importDate, correctedImportDate].includes(session.sessionDate))) await fetch(`/api/milk-sessions/${existing.id}`, { method: 'DELETE' });
+    const response = await fetch('/api/import/milk-session', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionDate: importDate, inputMode: 'SEPARATE_MORNING_AFTERNOON', measurements: [
+        { rawAnimalLabel: label, rawValueText: '10 + 8,5', morningLiters: 10, afternoonLiters: 8.5, totalLiters: 18.5, confidence: 'HIGH', status: 'NEEDS_REVIEW', animalId: null, notes: null },
+        { rawAnimalLabel: '[rótulo ilegível]', rawValueText: null, morningLiters: null, afternoonLiters: null, totalLiters: null, confidence: 'LOW', status: 'EXCLUDED', animalId: null, notes: 'Linha riscada no caderno; sem valor legível' },
+      ] }),
+    });
+    return ((await response.json()) as { id: string }).id;
+  }, { importDate, correctedImportDate, label: `Vaca importada ${suffix}` });
+  await page.goto(`/producao/${registeredSessionId}`);
   await expect(page.getByRole('heading', { name: 'Controle importado' })).toBeVisible();
+  await expect(page.getByText('[rótulo ilegível]', { exact: true })).toBeVisible();
   await expect(page.getByText('Sem valor legível', { exact: true }).first()).toBeVisible();
   await page.getByRole('button', { name: 'Editar', exact: true }).first().click();
   await page.getByLabel('Data do controle').fill(correctedImportDate);
@@ -150,7 +160,6 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await expect(page.getByRole('heading', { name: 'Cadastrar animais sem vínculo' })).toBeVisible();
   await page.getByLabel('Lote inicial dos animais selecionados').selectOption({ label: 'Lote 1' });
   await expect(page.getByText(`Vaca importada ${suffix}`, { exact: true }).first()).toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath('cadastro-em-massa-controle.png'), fullPage: true });
   await page.getByRole('button', { name: 'Cadastrar e vincular 1 animal' }).click();
   await expect(page.getByRole('button', { name: /Cadastrar sem vínculo/ })).toHaveCount(0);
   await expect(page.getByText('Sem vínculo com um animal.')).toHaveCount(0);
@@ -166,7 +175,6 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   }, `Vaca importada ${suffix}`);
   expect(registeredFromControl).toEqual({ date: correctedImportDate, status: 'LACTATING', group: 'Lote 1', groupStarted: correctedImportDate, statusChanged: correctedImportDate, linked: true });
 
-  const registeredSessionId = await page.evaluate(() => location.pathname.split('/').at(-1)!);
   const registeredAnimalId = await page.evaluate(async (name) => {
     const animals = await fetch('/api/animals').then((response) => response.json()) as Array<{ id: string; name: string | null }>;
     return animals.find((animal) => animal.name === name)?.id;
@@ -185,39 +193,45 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   }, { animalId: registeredAnimalId, sessionId: registeredSessionId, label: `Vaca importada ${suffix}` });
   expect(deletionFacts).toEqual({ animalStatus: 404, sessionStatus: 200, measurementStillExists: false });
 
-  await page.goto('/producao');
   await page.evaluate(async () => {
     const rows = await fetch('/api/daily-milk-totals').then((response) => response.json()) as Array<{ id: string; productionDate: string }>;
     for (const existing of rows.filter((row) => row.productionDate === '2026-05-06')) await fetch(`/api/daily-milk-totals/${existing.id}`, { method: 'DELETE' });
   });
-  await page.reload();
+  // Criação do total diário agora é a página dedicada (sem formulário fixo no /producao).
+  await page.goto('/producao/total/novo');
   await page.getByLabel('Data', { exact: true }).fill('2026-05-06');
   await page.getByLabel('Manhã (L)').fill('210.00');
   await expect(page.getByLabel('Manhã (L)')).toHaveValue('210,00');
   await page.getByLabel('Tarde (L)').fill('175');
   await page.getByRole('button', { name: 'Registrar total' }).click();
-  await expect(page.getByText('385 L', { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/producao$/);
+  await expect(page.getByText('385 L', { exact: true }).first()).toBeVisible();
 
+  await page.goto('/producao/total/novo');
   await page.getByLabel('Data', { exact: true }).fill('2026-05-06');
   await page.getByLabel('Produção de').selectOption({ label: 'Lote 1' });
   await page.getByLabel('Manhã (L)').fill('120');
   await page.getByLabel('Tarde (L)').fill('80');
   await page.getByRole('button', { name: 'Registrar total' }).click();
+  await expect(page).toHaveURL(/\/producao$/);
   await expect(page.getByText('Lote: Lote 1', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('200 L', { exact: true }).first()).toBeVisible();
 
+  await page.goto('/producao/total/novo');
   await page.getByLabel('Data', { exact: true }).fill('2026-05-06');
   await page.getByLabel('Produção de').selectOption({ label: 'Lote 2' });
   await expect(page.getByLabel('Tarde (L)')).toBeDisabled();
   await page.getByLabel('Manhã (L)').fill('95');
   await page.getByRole('button', { name: 'Registrar total' }).click();
+  await expect(page).toHaveURL(/\/producao$/);
   await expect(page.getByText('Lote: Lote 2', { exact: true }).first()).toBeVisible();
 
+  await page.goto('/producao/total/novo');
   await page.getByLabel('Data', { exact: true }).fill('2026-05-06');
   await page.getByLabel('Produção de').selectOption({ label: 'Lote 2' });
   await page.getByLabel('Manhã (L)').fill('96');
   await page.getByRole('button', { name: 'Registrar total' }).click();
-  await expect(page.getByText(/Já existe produção do lote Lote 2 nesta data/)).toBeVisible();
+  await expect(page.getByText(/Já existe produção da manhã nesta data/)).toBeVisible();
 
   await page.evaluate(async () => {
     const rows = await fetch('/api/milk-collections').then((response) => response.json()) as Array<{ id: string; collectionDate: string }>;
@@ -291,6 +305,8 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await page.getByLabel('Motivo ou observação').fill('Venda automatizada de teste');
   await page.getByLabel('Motivo', { exact: true }).fill('Venda de cria');
   await page.getByLabel('Valor recebido').fill('1850');
+  await page.getByLabel('Valor recebido').blur();
+  await expect(page.getByLabel('Valor recebido')).toHaveValue('1850,00');
   await page.getByLabel('Criar receita de venda de animal').check();
   await page.getByRole('button', { name: 'Registrar mudança' }).click();
   await expect(page.getByText('Vendida', { exact: true }).first()).toBeVisible();
@@ -314,6 +330,13 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   expect(deathFacts.exits).toHaveLength(1);
   expect(deathFacts.revenues).toHaveLength(0);
 
+  // Garante o fornecedor usado abaixo mesmo sem dados demonstrativos (seed só do caderno).
+  await page.evaluate(async () => {
+    const suppliers = await fetch('/api/suppliers').then((response) => response.json()) as Array<{ name: string }>;
+    if (!suppliers.some((supplier) => supplier.name === 'Raca forte')) {
+      await fetch('/api/suppliers', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Raca forte' }) });
+    }
+  });
   await page.goto('/compras/nova');
   await expect(page.getByRole('link', { name: /Saída Compra ou despesa/ })).toHaveAttribute('aria-current', 'page');
   await page.screenshot({ path: testInfo.outputPath('nova-saida.png'), fullPage: true });

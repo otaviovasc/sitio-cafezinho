@@ -6,7 +6,8 @@ import { FinanceDirectionSwitch } from '../components/FinanceDirectionSwitch';
 import { DecimalInput, MoneyInput } from '../components/form-controls';
 import { useConfirm } from '../components/feedback-context';
 import { ConfirmButton } from '../components/feedback';
-import { Button, ChoiceCard, EmptyState, ErrorState, Field, FilterBar, FormErrorSummary, InlineEmpty, Input, PageHeader, ScrollArea, SectionCard, Select, SkeletonList, StatusBadge, SubmitBar, Textarea } from '../components/ui';
+import { Button, ChoiceCard, EmptyState, ErrorState, Field, FormErrorSummary, InlineEmpty, Input, PageHeader, ScrollArea, SectionCard, Select, SkeletonList, StatusBadge, SubmitBar, Textarea } from '../components/ui';
+import { FilterControls } from '../components/FilterControls';
 import { purchaseStatusDescriptor } from '../lib/status';
 import { useForm } from '../hooks/useForm';
 import { useResource } from '../hooks/useResource';
@@ -33,7 +34,13 @@ export function PurchasesPage() {
       && `${purchase.description} ${purchase.supplierName ?? ''}`.toLocaleLowerCase('pt-BR').includes(search.toLocaleLowerCase('pt-BR'));
   });
   return <div className="page"><PageHeader icon={WalletCards} title="Compras" subtitle="Saídas: compras, contas e despesas da propriedade" action={<Link className="button button-primary" to="/compras/nova"><Plus size={18} aria-hidden />Registrar saída</Link>} />
-    <FilterBar><Field label="Buscar"><Input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Descrição ou fornecedor" /></Field><Field label="Situação"><Select value={filter} onChange={(event) => setFilter(event.target.value)}><option value="ALL">Todas</option><option value="OPEN">Abertas</option><option value="OVERDUE">Vencidas</option><option value="PAID">Pagas</option><option value="CANCELLED">Canceladas</option></Select></Field><Field label="Categoria"><Select value={category} onChange={(event) => setCategory(event.target.value)}><option value="ALL">Todas</option>{Object.entries(categoryLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></Field></FilterBar>
+    <FilterControls
+      search={{ value: search, onChange: setSearch, placeholder: 'Descrição ou fornecedor' }}
+      selects={[
+        { label: 'Situação', value: filter, onChange: setFilter, options: [{ value: 'ALL', label: 'Todas' }, { value: 'OPEN', label: 'Abertas' }, { value: 'OVERDUE', label: 'Vencidas' }, { value: 'PAID', label: 'Pagas' }, { value: 'CANCELLED', label: 'Canceladas' }] },
+        { label: 'Categoria', value: category, onChange: setCategory, options: [{ value: 'ALL', label: 'Todas' }, ...Object.entries(categoryLabels).map(([value, label]) => ({ value, label }))] },
+      ]}
+    />
     <div className="mt-5">{loading ? <SkeletonList rows={6} /> : error ? <ErrorState message={error} retry={reload} /> : !filtered.length ? <EmptyState title="Nenhuma compra encontrada" description="Ajuste os filtros ou registre uma nova compra." /> : <SectionCard><ScrollArea label="Lista de compras">{filtered.map((purchase) => <Link className="mobile-item" to={`/compras/${purchase.id}`} key={purchase.id}><span className="min-w-0"><strong className="block truncate">{purchase.description}</strong><span className="text-sm text-[var(--muted)]">{formatDate(purchase.purchaseDate)} · {categoryLabels[purchase.category]}</span><span className="mt-1 block"><StatusBadge descriptor={purchaseStatusDescriptor(purchase.status, purchase.isOverdue, 'Aberta')} /></span></span><strong>{formatMoney(purchase.totalAmount)}</strong></Link>)}</ScrollArea></SectionCard>}</div>
   </div>;
 }

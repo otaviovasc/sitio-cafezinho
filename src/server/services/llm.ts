@@ -159,7 +159,3 @@ export function getLlmProvider(): LlmProvider {
   }
   return cached;
 }
-
-export function resetLlmProviderForTests() {
-  cached = undefined;
-}

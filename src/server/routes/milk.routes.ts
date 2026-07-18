@@ -78,6 +78,12 @@ export const milkRoutes = new Hono()
       .groupBy(milkSessions.id).orderBy(desc(milkSessions.sessionDate), desc(milkSessions.createdAt));
     return c.json(rows);
   })
+  .get('/milking-herd', async (c) => {
+    const parsed = z.string().date().safeParse(c.req.query('date'));
+    if (!parsed.success) return fail('Informe uma data válida.', 400, 'INVALID_DATE');
+    const herd = await loadMilkingHerdOnDate(parsed.data);
+    return c.json(herd.map((animal) => ({ id: animal.id, name: animal.name, tagNumber: animal.tagNumber, milkingRoutine: animal.milkingRoutine })));
+  })
   .get('/milk-production-timeline', async (c) => {
     const daily = await getDb().select().from(dailyMilkTotals).orderBy(asc(dailyMilkTotals.productionDate));
     const resolvedDaily = resolveDailyMilkByDate(daily);
@@ -301,5 +307,10 @@ export const milkRoutes = new Hono()
   .post('/import/milk-session', async (c) => {
     const body = validate(sessionSchema, await readJson(c));
     const created = await createMilkSession({ ...body, source: 'IMPORT', title: body.title || 'Controle importado' });
+    return c.json(created, 201);
+  })
+  .post('/milk-sessions', async (c) => {
+    const body = validate(sessionSchema, await readJson(c));
+    const created = await createMilkSession({ ...body, source: 'MANUAL', title: body.title || null });
     return c.json(created, 201);
   });

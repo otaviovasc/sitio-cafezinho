@@ -10,12 +10,13 @@ import { DashboardPage } from './pages/DashboardPage';
 import { DocumentsPage } from './pages/DocumentsPage';
 import { LoginPage } from './pages/LoginPage';
 import { ImportMilkPage, MilkSessionDetailPage, MilkSessionsPage } from './pages/MilkPages';
+import { NewDailyMilkTotalPage, NewIndividualControlPage } from './pages/MilkCreatePages';
 import { MilkCollectionDetailPage, NewMilkCollectionPage } from './pages/MilkCollectionPages';
 import { MastitisCaseDetailPage, MastitisCasesPage, NewMastitisCasePage } from './pages/MastitisPages';
 import { FinancePage, NewRevenuePage, RevenueDetailPage } from './pages/FinancePages';
 import { DataSettingsPage } from './pages/DataSettingsPage';
 import { NewPurchasePage, PurchaseDetailPage, PurchasesPage, SupplierDetailPage, SuppliersPage } from './pages/PurchasePages';
-import { ImportWeightsPage, WeightSessionDetailPage, WeightSessionsPage } from './pages/WeightPages';
+import { NewWeightSessionPage, WeightSessionDetailPage, WeightSessionsPage } from './pages/WeightPages';
 import { MilkPricePage } from './pages/MilkPricePage';
 
 export function App() {
@@ -46,7 +47,9 @@ export function App() {
     <Route path="/rebanho/novo" element={<NewAnimalPage />} />
     <Route path="/rebanho/:id" element={<AnimalDetailPage />} />
     <Route path="/producao" element={<MilkSessionsPage />} />
-    <Route path="/producao/nova" element={<Navigate to="/producao/importar" replace />} />
+    <Route path="/producao/nova" element={<Navigate to="/producao/individual/novo" replace />} />
+    <Route path="/producao/total/novo" element={<NewDailyMilkTotalPage />} />
+    <Route path="/producao/individual/novo" element={<NewIndividualControlPage />} />
     <Route path="/producao/importar" element={<ImportMilkPage />} />
     <Route path="/producao/coletas/nova" element={<NewMilkCollectionPage />} />
     <Route path="/producao/coletas/:id" element={<MilkCollectionDetailPage />} />
@@ -66,7 +69,8 @@ export function App() {
     <Route path="/fornecedores/:id" element={<SupplierDetailPage />} />
     <Route path="/documentos" element={<DocumentsPage />} />
     <Route path="/pesos" element={<WeightSessionsPage />} />
-    <Route path="/pesos/importar" element={<ImportWeightsPage />} />
+    <Route path="/pesos/novo" element={<NewWeightSessionPage />} />
+    <Route path="/pesos/importar" element={<Navigate to="/pesos/novo" replace />} />
     <Route path="/pesos/:id" element={<WeightSessionDetailPage />} />
     <Route path="*" element={<Navigate to="/" replace />} />
   </Routes></AppShell></VoiceContext.Provider>;

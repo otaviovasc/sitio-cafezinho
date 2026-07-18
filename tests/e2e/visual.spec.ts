@@ -51,7 +51,7 @@ test('captura estados principais sem rolagem horizontal', async ({ page }, testI
     await capturePaintedViewport(page, testInfo.outputPath(`${name}.png`));
   }
 
-  await page.goto('/producao');
+  await page.goto('/producao/total/novo');
   await page.getByLabel('Produção de').selectOption({ label: 'Lote 2' });
   await page.getByLabel('Manhã (L)').fill('210,5');
   await expect(page.getByLabel('Tarde (L)')).toBeDisabled();
@@ -83,24 +83,20 @@ test('captura estados principais sem rolagem horizontal', async ({ page }, testI
     await capturePaintedViewport(page, testInfo.outputPath('controle-revisao.png'));
   }
 
-  await page.goto('/pesos/importar');
-  await page.getByRole('button', { name: 'Carregar exemplo' }).click();
-  await page.getByRole('button', { name: 'Validar pesagens' }).click();
-  await expect(page.getByText('3. Revisar antes de salvar')).toBeVisible();
-  await page.getByText('3. Revisar antes de salvar').scrollIntoViewIfNeeded();
-  await capturePaintedViewport(page, testInfo.outputPath('peso-revisao.png'));
+  await page.goto('/pesos/novo');
+  await expect(page.getByRole('heading', { name: 'Nova pesagem' })).toBeVisible();
+  await page.getByLabel('Buscar animal').fill('Caruja');
+  await page.getByLabel('Peso de Caruja').fill('486');
+  await capturePaintedViewport(page, testInfo.outputPath('peso-manual.png'));
+
+  await page.goto('/producao/individual/novo');
+  await expect(page.getByRole('heading', { name: /Vacas em lactação/ })).toBeVisible();
+  await capturePaintedViewport(page, testInfo.outputPath('controle-individual-manual.png'));
 
   await page.goto('/producao/importar');
-  await page.getByLabel('JSON da transcrição').fill('{');
-  await page.getByRole('button', { name: 'Validar dados' }).click();
-  await expect(page.getByText('O conteúdo não é um JSON válido.')).toBeVisible();
-  await capturePaintedViewport(page, testInfo.outputPath('importacao-validacao.png'));
-
-  await page.getByRole('button', { name: 'Carregar exemplo' }).click();
-  await page.getByRole('button', { name: 'Validar dados' }).click();
-  await expect(page.getByText('3. Revisar o controle')).toBeVisible();
-  await page.getByText('3. Revisar o controle').scrollIntoViewIfNeeded();
-  await capturePaintedViewport(page, testInfo.outputPath('importacao-revisao.png'));
+  await expect(page.getByRole('heading', { name: 'Revisar transcrição' })).toBeVisible();
+  await expect(page.getByText('Nenhuma transcrição para revisar')).toBeVisible();
+  await capturePaintedViewport(page, testInfo.outputPath('importacao-sem-transcricao.png'));
 
   const bulkRegistrationDate = testInfo.project.name === 'mobile-360' ? '2026-07-13' : '2026-07-14';
   const bulkSessionId = await page.evaluate(async (date) => {
@@ -146,6 +142,10 @@ test('captura estados principais sem rolagem horizontal', async ({ page }, testI
   await expect(page.getByRole('alert').filter({ hasText: 'Revise os campos destacados' })).toBeFocused();
   await capturePaintedViewport(page, testInfo.outputPath('coleta-validacao.png'));
 
+  // Garante um preço de julho/2026 no histórico mesmo sem dados demonstrativos (seed só do caderno).
+  await page.evaluate(async () => {
+    await fetch('/api/milk-prices/2026-07', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pricePerLiter: 1.75, notes: 'Preço de referência do teste visual' }) });
+  });
   await page.goto('/financeiro/preco-leite');
   await page.getByRole('button', { name: /Editar preço de julho de 2026/i }).click();
   await expect(page.getByLabel('Mês', { exact: true })).toHaveValue('2026-07');

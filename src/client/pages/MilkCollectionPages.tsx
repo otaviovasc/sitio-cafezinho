@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Plus, Truck } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { formatDate, formatLiters, parseDecimal } from '../../domain/format';
+import { GUARDRAILS, rangeError } from '../../domain/guardrails';
 import { AttachmentPanel, type Attachment } from '../components/AttachmentPanel';
 import { useConfirm, useToast } from '../components/feedback-context';
 import { ConfirmButton } from '../components/feedback';
@@ -61,7 +62,8 @@ function MilkCollectionForm({ initial, onSaved }: { initial?: MilkCollectionDeta
       collectionDate: (value) => (value ? undefined : 'Informe a data da coleta.'),
       liters: (value) => {
         const parsed = parseDecimal(value);
-        return parsed !== null && parsed > 0 ? undefined : 'Informe um volume maior que zero.';
+        if (parsed === null || parsed <= 0) return 'Informe um volume maior que zero.';
+        return rangeError(parsed, GUARDRAILS.collectionLiters, ' L');
       },
     },
   );

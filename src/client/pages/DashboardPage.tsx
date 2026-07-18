@@ -30,8 +30,8 @@ const quickActionGroups = [
     title: 'Registrar e atualizar',
     description: 'Lançamentos que alimentam o acompanhamento do sítio.',
     actions: [
-      { to: '/producao/importar', label: 'Controle individual', description: 'Medições de cada animal', icon: Upload },
-      { to: '/pesos/importar', label: 'Registrar pesos', description: 'Importar e revisar pesagens', icon: Scale },
+      { to: '/producao/individual/novo', label: 'Controle individual', description: 'Medições de cada animal', icon: Upload },
+      { to: '/pesos/novo', label: 'Registrar pesos', description: 'Pesagem, mesmo parcial', icon: Scale },
       { to: '/mastite/nova', label: 'Registrar mastite', description: 'Fato observado e decisão', icon: Activity },
       { to: '/rebanho/novo', label: 'Cadastrar animal', description: 'Um animal ou uma lista', icon: CowHead },
       { to: '/receitas/nova', label: 'Registrar entrada', description: 'Receita recebida ou esperada', icon: Banknote },
@@ -68,7 +68,7 @@ export function DashboardPage() {
       <SectionCard icon={CalendarClock} title="Fechamento do dia">
         <p className="mb-4 text-sm text-[var(--muted)]">Registre os dois fatos medidos durante o dia. Um não substitui o outro.</p>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Link className={`daily-task ${productionComplete ? 'daily-task-complete' : 'daily-task-pending'}`} to="/producao#total-diario">
+          <Link className={`daily-task ${productionComplete ? 'daily-task-complete' : 'daily-task-pending'}`} to="/producao/total/novo">
             <span className="daily-task-icon">{productionComplete ? <CheckCircle2 size={22} aria-hidden /> : <Milk size={22} aria-hidden />}</span>
             <span className="min-w-0 flex-1"><strong>Produção do dia</strong><small>{data.attention.productionMissing ? 'Registrar rebanho todo ou por lote' : data.attention.productionGroupsMissing > 0 ? `${data.attention.productionGroupsMissing} lote(s) ainda sem registro` : `${formatLiters(data.today.milk.productionLiters ?? 0)} registrado`}</small></span>
             <Badge tone={productionComplete ? 'success' : 'warning'}>{productionComplete ? 'Feito' : 'Pendente'}</Badge>

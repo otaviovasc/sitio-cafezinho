@@ -24,6 +24,9 @@ export function useForm<T extends Record<string, unknown>>(initial: T, validator
 
   const set = useCallback(<K extends keyof T>(key: K, value: T[K]) => {
     const next = { ...valuesRef.current, [key]: value };
+    // Atualiza o ref de forma síncrona para que dois `set` no mesmo handler
+    // encadeiem (o segundo enxerga o primeiro) em vez de o último sobrescrever.
+    valuesRef.current = next;
     setValuesState(next);
     if (touchedRef.current[key]) setErrors((prev) => ({ ...prev, [key]: validateField(key, next) }));
   }, [validateField]);
