@@ -28,8 +28,12 @@ export function GameLojaSheet({ open, onClose, onPurchased }: {
   const inventoryResource = useResource<FeedInventoryRow[]>('/api/feed-inventory');
   const [category, setCategory] = useState<LojaCategoryId>('sementes');
   const [openItemId, setOpenItemId] = useState<string | null>(null);
-  const [quantity, setQuantity] = useState('');
-  const [price, setPrice] = useState('');
+  /** Quantos pacotes (sacos, frascos…) estão sendo comprados. */
+  const [packs, setPacks] = useState('1');
+  /** Tamanho do pacote na unidade canônica (o "saco de X kg", editável). */
+  const [packSize, setPackSize] = useState('');
+  /** Preço POR PACOTE (sugerido, editável). */
+  const [unitPrice, setUnitPrice] = useState('');
   const [paid, setPaid] = useState(true);
   const [formError, setFormError] = useState('');
 
@@ -42,12 +46,21 @@ export function GameLojaSheet({ open, onClose, onPurchased }: {
 
   function openItem(item: LojaItem) {
     setOpenItemId(item.id);
-    setQuantity(item.defaultQuantity ? String(item.defaultQuantity) : '1');
-    setPrice(item.suggestedPrice.toFixed(2).replace('.', ','));
+    setPacks('1');
+    setPackSize(item.defaultQuantity ? String(item.defaultQuantity) : '');
+    setUnitPrice(item.suggestedPrice.toFixed(2).replace('.', ','));
     setPaid(true);
     setFormError('');
     setError('');
   }
+
+  const parsedPacks = parseDecimal(packs);
+  const parsedPackSize = parseDecimal(packSize);
+  const parsedUnitPrice = parseDecimal(unitPrice);
+  /** Total em R$ = pacotes × preço do pacote. */
+  const totalPrice = parsedPacks !== null && parsedUnitPrice !== null ? Math.round(parsedPacks * parsedUnitPrice * 100) / 100 : null;
+  /** Total creditado no depósito = pacotes × tamanho do pacote. */
+  const totalQuantity = parsedPacks !== null && parsedPackSize !== null ? Math.round(parsedPacks * parsedPackSize * 1000) / 1000 : null;
 
   /** Garante o item no catálogo do Depósito e devolve o id (cria se faltar). */
   async function ensureFeedItem(item: LojaItem): Promise<string> {
@@ -67,22 +80,34 @@ export function GameLojaSheet({ open, onClose, onPurchased }: {
   }
 
   async function buy(item: LojaItem) {
-    const parsedPrice = parseDecimal(price);
-    if (parsedPrice === null || parsedPrice <= 0) { setFormError('Informe o valor da compra.'); return; }
-    const parsedQuantity = item.stockable ? parseDecimal(quantity) : null;
-    if (item.stockable && (parsedQuantity === null || parsedQuantity <= 0)) { setFormError('Informe a quantidade.'); return; }
+    if (parsedPacks === null || parsedPacks <= 0) { setFormError(`Informe quantos ${item.packNoun}s está comprando.`); return; }
+    if (parsedUnitPrice === null || parsedUnitPrice <= 0 || totalPrice === null) { setFormError(`Informe o preço por ${item.packNoun}.`); return; }
+    if (item.stockable && (parsedPackSize === null || parsedPackSize <= 0 || totalQuantity === null)) {
+      setFormError(`Informe o tamanho do ${item.packNoun} (${item.canonicalUnit ? feedUnitSuffix[item.canonicalUnit] : 'un'}).`);
+      return;
+    }
     setFormError('');
+    const packsLabel = parsedPacks === 1 ? item.packNoun : `${parsedPacks}× ${item.packNoun}`;
+    const sizeLabel = item.stockable && item.canonicalUnit ? ` de ${parsedPackSize} ${feedUnitSuffix[item.canonicalUnit]}` : '';
     await run(async () => {
       const purchase = await api<{ id: string }>('/api/purchases', json('POST', {
         purchaseDate: today(),
-        description: `Loja do sítio: ${item.name} (${item.packLabel})`,
+        description: `Loja do sítio: ${item.name} (${packsLabel}${sizeLabel})`,
         category: item.purchaseCategory,
-        totalAmount: parsedPrice,
+        totalAmount: totalPrice,
         status: paid ? 'PAID' : 'OPEN',
+      }));
+      // Linha de item da compra (/compras → Itens): 3 × saco de 20 kg a R$ 420.
+      await api(`/api/purchases/${purchase.id}/items`, json('POST', {
+        description: `${item.name} — ${item.packNoun}${sizeLabel}`,
+        quantity: parsedPacks,
+        unit: item.purchaseUnit,
+        unitPrice: parsedUnitPrice,
+        totalPrice,
       }));
       if (item.stockable) {
         const feedItemId = await ensureFeedItem(item);
-        await api('/api/feed-purchase-entries', json('POST', { feedItemId, purchaseId: purchase.id, quantity: parsedQuantity }));
+        await api('/api/feed-purchase-entries', json('POST', { feedItemId, purchaseId: purchase.id, quantity: totalQuantity }));
       }
       setOpenItemId(null);
       void inventoryResource.reload(false);
@@ -123,16 +148,24 @@ export function GameLojaSheet({ open, onClose, onPurchased }: {
             </button>
             {opened && <div className="mt-3 grid gap-3 border-t border-[rgb(58_61_53_/_12%)] pt-3">
               {formError && <p className="text-sm font-bold text-[var(--danger,#b3261e)]" role="alert">{formError}</p>}
-              <div className="grid grid-cols-2 gap-3">
-                {item.stockable && <label className="grid gap-1 text-xs font-bold text-[#6b6e60]">
+              <div className={`grid gap-3 ${item.stockable ? 'grid-cols-3' : 'grid-cols-2'}`}>
+                <label className="grid gap-1 text-xs font-bold text-[#6b6e60]">
                   Quantidade
-                  <DecimalInput aria-label={`Quantidade de ${item.name}`} value={quantity} maximumFractionDigits={3} suffix={item.canonicalUnit ? feedUnitSuffix[item.canonicalUnit] : undefined} onValueChange={setQuantity} />
+                  <DecimalInput aria-label={`Quantidade de ${item.packNoun}s de ${item.name}`} value={packs} maximumFractionDigits={2} suffix={item.packNoun} onValueChange={setPacks} />
+                </label>
+                {item.stockable && <label className="grid gap-1 text-xs font-bold text-[#6b6e60]">
+                  Tamanho do {item.packNoun}
+                  <DecimalInput aria-label={`Tamanho do ${item.packNoun} de ${item.name}`} value={packSize} maximumFractionDigits={3} suffix={item.canonicalUnit ? feedUnitSuffix[item.canonicalUnit] : undefined} onValueChange={setPackSize} />
                 </label>}
                 <label className="grid gap-1 text-xs font-bold text-[#6b6e60]">
-                  Valor total (edite o sugerido)
-                  <MoneyInput aria-label={`Valor de ${item.name}`} value={price} onValueChange={setPrice} />
+                  Preço por {item.packNoun}
+                  <MoneyInput aria-label={`Preço por ${item.packNoun} de ${item.name}`} value={unitPrice} onValueChange={setUnitPrice} />
                 </label>
               </div>
+              <p className="text-sm font-semibold" data-testid={`loja-summary-${item.id}`}>
+                {totalPrice !== null ? <>Total: <strong className="tabular-nums">R$ {totalPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong></> : 'Preencha quantidade e preço.'}
+                {item.stockable && totalQuantity !== null && item.canonicalUnit && <> · entra no depósito: <strong className="tabular-nums">{formatFeedQuantity(totalQuantity, item.canonicalUnit)}</strong></>}
+              </p>
               <label className="inline-flex items-center gap-2 text-sm font-semibold">
                 <input type="checkbox" checked={paid} onChange={(event) => setPaid(event.target.checked)} /> Já está pago
               </label>

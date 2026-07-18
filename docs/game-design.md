@@ -141,14 +141,20 @@ atributos `data-*` para asserção sem pixels.
 
 A porta de entrada de compras do jogo (chip "Loja" no HUD, botão no Depósito e
 atalho na Plantação): vitrine por categoria (sementes, fertilizantes, ração e
-sal, saúde, ordenha, combustível, manutenção) com itens populares e **preço e
-quantidade SUGERIDOS como placeholder editável** (`loja-catalog.ts` — nada ali
-é fato). Comprar grava a compra REAL em `/api/purchases` (categoria financeira
-correta por item) e, para itens `stockable` (sementes, adubo, ração, sal),
-garante o item no catálogo (`/api/feed-items`, match por nome) e credita o
-Depósito via `/api/feed-purchase-entries` — a economia do HUD reflete na hora
-porque a compra é real. Itens não estocáveis (remédio, diesel, manutenção) só
-geram o fato financeiro. Folha `game-loja-sheet`; som `buy` na compra.
+sal, saúde, ordenha, combustível, manutenção) com itens populares e **tudo
+editável como placeholder** (`loja-catalog.ts` — nada ali é fato): quantidade
+de pacotes (`packNoun`: saco, frasco, bombona…), tamanho do pacote na unidade
+canônica (o "saco de X kg") e preço POR PACOTE; o total em R$ e o total
+creditado no depósito são derivados e exibidos (`loja-summary-{id}`). Comprar
+grava a compra REAL em `/api/purchases` (categoria financeira correta por
+item) **+ a linha de item da nota** em `POST /api/purchases/:id/items`
+(descrição, quantidade em `purchaseUnit` BAG/UNIT/BOX…, preço unitário e
+total — /compras mostra os "Itens" certinhos, `itemsDifference` 0) e, para
+itens `stockable` (sementes, adubo, ração, sal), garante o item no catálogo
+(`/api/feed-items`, match por nome) e credita o Depósito com pacotes × tamanho
+via `/api/feed-purchase-entries` — a economia do HUD reflete na hora porque a
+compra é real. Itens não estocáveis (remédio, diesel, manutenção) geram só o
+fato financeiro (compra + linha de item). Folha `game-loja-sheet`; som `buy`.
 
 ## Plantação (PLANTACAO)
 
