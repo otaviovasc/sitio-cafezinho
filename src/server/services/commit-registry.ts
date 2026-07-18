@@ -1,5 +1,5 @@
 import { getDb } from '../../db/client.js';
-import { mastitisCases, milkCollections, purchases, revenues } from '../../db/schema.js';
+import { feedingEventItems, feedingEvents, feedPurchaseEntries, mastitisCases, milkCollections, purchases, revenues } from '../../db/schema.js';
 import { decimalString } from '../../domain/format.js';
 import type { ProposedActionType } from '../../domain/nl/resolve.js';
 import { fail } from '../http/api-error.js';
@@ -84,6 +84,76 @@ const committers: Partial<Record<ProposedActionType, Committer>> = {
       notes: (payload.notes as string | null | undefined) ?? null,
     }).returning();
     return { recordType: 'purchase', recordId: created.id };
+  },
+
+  // Compra de alimento falada: a compra financeira real + a entry que credita
+  // o inventário, na mesma transação. A revisão humana já confirmou item e
+  // quantidade — aqui só validamos o essencial.
+  FEED_PURCHASE: async (payload) => {
+    const amount = payload.totalAmount;
+    if (amount === null || amount === undefined) return fail('Informe o valor da compra.', 400, 'AMOUNT_REQUIRED');
+    const feedItemId = payload.feedItemId as string | null | undefined;
+    if (!feedItemId) return fail('Selecione o item do catálogo antes de salvar.', 400, 'FEED_ITEM_REQUIRED');
+    const quantity = payload.quantity;
+    if (quantity === null || quantity === undefined || Number(quantity) <= 0) return fail('Informe a quantidade comprada na unidade do item.', 400, 'QUANTITY_REQUIRED');
+    const total = decimalString(Number(amount));
+    const status = (payload.status as PurchaseStatus | undefined) ?? 'OPEN';
+    return getDb().transaction(async (tx) => {
+      const [purchase] = await tx.insert(purchases).values({
+        purchaseDate: String(payload.purchaseDate),
+        description: String(payload.description ?? 'Compra de alimento'),
+        category: 'FEED',
+        grossAmount: total,
+        totalAmount: total,
+        supplierId: (payload.supplierId as string | null | undefined) ?? null,
+        status,
+        paidAt: status === 'PAID' ? new Date() : null,
+        notes: (payload.notes as string | null | undefined) ?? null,
+      }).returning();
+      await tx.insert(feedPurchaseEntries).values({
+        feedItemId,
+        purchaseId: purchase.id,
+        quantity: Number(quantity).toFixed(3),
+      });
+      return { recordType: 'purchase', recordId: purchase.id };
+    });
+  },
+
+  // Trato falado: feeding_event + linhas na mesma transação. O saldo derivado
+  // pode ficar negativo — a revisão humana é a confirmação explícita.
+  FEEDING_EVENT: async (payload) => {
+    const context = payload.context as string | null | undefined;
+    if (!context || !['MILKING', 'PASTURE', 'STATION'].includes(context)) {
+      return fail('Informe onde o trato foi dado (ordenha, estação ou pasto).', 400, 'CONTEXT_REQUIRED');
+    }
+    const herdGroupId = (payload.herdGroupId as string | null | undefined) ?? null;
+    if (context === 'MILKING' && !herdGroupId) return fail('Selecione o lote do trato da ordenha.', 400, 'GROUP_REQUIRED');
+    const rawItems = Array.isArray(payload.items) ? (payload.items as Array<Record<string, unknown>>) : [];
+    const items = rawItems.map((item) => ({
+      feedItemId: item.feedItemId as string | null | undefined,
+      quantity: item.quantity as number | string | null | undefined,
+    }));
+    if (!items.length) return fail('Adicione pelo menos um item.', 400, 'ITEMS_REQUIRED');
+    for (const item of items) {
+      if (!item.feedItemId) return fail('Selecione o item de cada linha antes de salvar.', 400, 'FEED_ITEM_REQUIRED');
+      if (item.quantity === null || item.quantity === undefined || Number(item.quantity) <= 0) {
+        return fail('Informe a quantidade de cada linha na unidade do item.', 400, 'QUANTITY_REQUIRED');
+      }
+    }
+    return getDb().transaction(async (tx) => {
+      const [event] = await tx.insert(feedingEvents).values({
+        date: String(payload.date),
+        context: context as 'MILKING' | 'PASTURE' | 'STATION',
+        herdGroupId,
+        notes: (payload.notes as string | null | undefined) ?? null,
+      }).returning();
+      await tx.insert(feedingEventItems).values(items.map((item) => ({
+        feedingEventId: event.id,
+        feedItemId: item.feedItemId!,
+        quantity: Number(item.quantity).toFixed(3),
+      })));
+      return { recordType: 'feeding_event', recordId: event.id };
+    });
   },
 
   MASTITIS_CASE: async (payload) => {

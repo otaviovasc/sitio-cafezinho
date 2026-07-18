@@ -16,6 +16,8 @@ export const proposedActionTypeLabel: Record<string, string> = {
   PURCHASE: 'Compra',
   REVENUE: 'Receita',
   WEIGHT_SESSION: 'Pesagem',
+  FEED_PURCHASE: 'Compra de alimento',
+  FEEDING_EVENT: 'Trato',
   UNKNOWN: 'Não reconhecido',
 };
 

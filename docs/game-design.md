@@ -1,0 +1,199 @@
+# Design do jogo — "Tabuleiro do Sítio" (/jogo)
+
+Fonte única de verdade do design da camada de jogo. Toda convenção nova criada
+durante a implementação DEVE ser registrada aqui. Referências de arte escolhidas
+pelo usuário: **Mini Motorways/Mini Metro** (paleta enxuta, iconografia, limpeza
+de UI), **Dorfromantik** (linguagem pastoral de campos, pastel calmo),
+**ISLANDERS** (feel de posicionamento, HUD discreto).
+
+## Regra de ouro
+
+O jogo é uma lente sobre dados reais. **Toda ação do jogo grava um fato real
+pelos endpoints validados existentes** (`/api/daily-milk-totals`,
+`/api/milk-collections`, `/api/milk-sessions`, …). Zero moeda fictícia, zero
+simulação, zero endpoint de escrita próprio para fatos de fazenda. Streaks e
+economia são sempre derivados, nunca armazenados.
+
+## Direção de arte
+
+- **Assinatura:** o traçado bruto do GPS vira brinquedo. O PERÍMETRO passa por
+  suavização de Chaikin (2 iterações, `roundRing()` em
+  `src/domain/game/geometry.ts`) e recebe sombra suave (`feDropShadow` único em
+  `GameDefs`) — o sítio parece um diorama recortado sobre uma mesa. Os PASTOS
+  são a exceção deliberada (decisão do usuário, 2026-07-18): renderizam
+  EXATAMENTE os pontos traçados no editor, sem arredondar — o que a pessoa
+  desenhou é o que aparece.
+- **Estilo:** flat vetorial top-down. Sem outline preto, gradientes com no
+  máximo 2 stops, ruído zero. Formas arredondadas e amigáveis.
+- **Cor:** no máximo **2 cores de destaque por cena** (telhado `roof`, leite no
+  tanque); todo o resto é campo pastel. Paleta completa e nomeada em
+  `src/client/features/game/tokens.ts` — nunca hex solto em componente.
+- **Chão e limite:** TODO o interior do perímetro é GRAMA (gradiente
+  `game-ground-grass` + padrão de tufos em opacidade cheia), nunca terra crua;
+  os pastos são o mesmo capim em tons do patchwork. O limite do sítio é uma
+  cerca de verdade — trilhos de madeira + mourões equiespaçados
+  (`spacedPointsAlongRing`, `gameTokens.fence`), grupo
+  `data-testid="game-fence"` com `data-post-count`. Cada PASTO recebe a MESMA
+  cerca em madeira mais clara (`woodLight`/`woodLightDark`,
+  `game-fence-pasture-{id}`), seguindo o contorno exato do traçado.
+- **Contenção:** pastos e instalações não existem fora do perímetro — o
+  servidor recusa (`PASTURE_OUTSIDE_PERIMETER`,
+  `INSTALLATION_OUTSIDE_PERIMETER`; validação por vértice com
+  `pointInPolygon`).
+- **Folhas de instalação:** AÇÕES sempre em cima; listagens (estoque, animais)
+  vêm depois.
+- **Câmera como moldura:** escala mínima = 1 (o enquadramento do sítio inteiro,
+  com a margem do `paddingRatio` da projeção); o pan trava suavemente nos
+  limites do terreno (`clampCamera` puro em `src/domain/game/camera.ts`) — não
+  existe navegar para fora do mapa.
+
+| Token | Hex | Uso |
+|---|---|---|
+| `paper` | `#F5F0E4` | A "mesa" fora do perímetro |
+| `grass` / `grassLight` | `#ADBF8B` / `#BFCF9E` | Chão do sítio dentro da cerca (gradiente `game-ground-grass` + tufos `game-grass`; mais amuado que os pastos de propósito) |
+| `pasture[0..2]` | `#B7CE93` `#A4C17E` `#C9DBA8` | Patchwork dos pastos (`styleVariant` cíclico) |
+| `meadowEdge` | `#8FA96B` | Traço entre pastos |
+| `dirt` | `#D9BC90` | Curral, entorno da mangueira |
+| `wood` / `woodDark` | `#8A6F4D` / `#6E5638` | Cerca do perímetro e mourões (testa escura) |
+| `woodLight` / `woodLightDark` | `#B29A76` / `#95805D` | Cerca dos pastos (a mesma cerca, mais clara) |
+| `roof` | `#D98E73` | Telhados (accent quente, com parcimônia) |
+| `milk` / `steel` | `#FFF9EF` / `#9FB4C7` | Tanque de leite |
+| `ink` | `#3A3D35` | Rótulos e ícones no mapa |
+| `tree` / `treeShade` | `#6E8F57` / `#5A7A46` | Árvores |
+| `cow` / `cowSpot` | `#F7F2E9` / `#4A443C` | Vacas |
+
+## Tipografia
+
+- Corpo e formulários do app continuam com a fonte padrão (`--font`).
+- Dentro de `.game-root` a família é **Nunito Variable**
+  (`@fontsource-variable/nunito`, self-hosted, importada em `GameShell.tsx`).
+- Números do HUD: peso 800, `font-variant-numeric: tabular-nums`.
+- Rótulos de HUD: caixa alta pequena, tracking largo (`small` do `.game-hud-chip`).
+
+## HUD e folhas de ação — fluidos e ambientados (exigência do usuário)
+
+O HUD **vive dentro do mundo do jogo**, nunca parece um app por cima dele:
+
+- Chips flutuantes (`.game-hud-chip`): fundo `#FFFEF9`, canto full-rounded,
+  sombra suave, Nunito. Economia embaixo à esquerda, streak em cima à direita.
+  Colapsáveis no mobile. Nada de painel opaco cobrindo o mapa.
+- A folha de ações de uma instalação (`GameActionSheet`) NÃO usa o `Modal`
+  padrão do app: é uma folha própria `.game-sheet` que desliza da borda
+  inferior (220ms ease-out, `sheetMs`), com fundo `paper`, cabeçalho com o
+  sprite da instalação e botões-cartão no estilo do jogo. Acessibilidade igual
+  ao Modal (focus trap, Esc fecha, `role="dialog"`).
+- A moldura comum das folhas vive em `GameSheet.tsx` (portal + backdrop +
+  focus trap + Esc + retorno de foco). Toda folha nova (`GameGroupSheet`,
+  folhas de instalações) monta o conteúdo dentro dela — nunca reimplementar o
+  trap nem usar o Modal padrão.
+- O rebanho no pasto também é clicável: `herd-cluster-{groupId}` é um botão SVG
+  (Enter/Espaço) que abre a folha do LOTE (`game-group-sheet`) com contagem
+  real, lista de animais e ações rápidas por endpoints reais (cio, situação,
+  link para a ficha).
+- Ações pendentes/urgências (fase futura de missões) aparecem como marcadores
+  no próprio mapa + lista na folha, sempre com a regra que as gerou visível
+  ("Coleta de hoje não registrada — regra: toda tarde há coleta").
+
+## Movimento
+
+Poucos momentos, orquestrados, todos em CSS e desligados por
+`prefers-reduced-motion` (bloco global já existente em `styles.css`):
+
+1. Load: diorama "assenta" (`game-settle`, 400ms, uma vez).
+2. Registro de produção: tanque enche com ease-out até `data-level`.
+3. Registro de coleta: caminhão atravessa uma vez (`data-state="driving"`).
+4. Editor: vértice pulsa 1x ao ser adicionado.
+5. Folha de ações desliza (220ms).
+
+Sem idle-animations em loop. Estados animados SEMPRE espelhados em atributos
+`data-*` para asserção sem pixels.
+
+## Sprites
+
+- Componentes React SVG em `src/client/features/game/sprites/`, viewBox local
+  fixo `0 0 64 64`, sem estado próprio; recebem só props de posição/escala.
+- Nomes: `CowSprite`, `MangueiraSprite`, `TankGauge`, `TruckSprite`,
+  `TreeSprite`.
+- Cores exclusivamente de `gameTokens.colors`.
+
+## CSS
+
+- Todo estilo do jogo em classes `.game-*` num bloco próprio de
+  `src/client/styles.css`, com vars `--game-*` definidas em `.game-root`.
+- O jogo não usa `.page`/`.section-card`/`.button` dentro do mapa — a UI do
+  mundo é própria (`.game-cta`, `.game-hud-chip`, `.game-sheet`). Formulários
+  reutilizados (ex.: `DailyMilkTotalForm`) mantêm o estilo padrão do app dentro
+  da folha, o que é aceitável: são "papelada real" do sítio.
+
+## Convenções de `data-testid`
+
+| testid | Elemento | Atributos de estado |
+|---|---|---|
+| `game-root` | Moldura do jogo | — |
+| `game-empty` | Convite de configuração | — |
+| `game-camera` | `<g>` com pan/zoom | `transform` |
+| `game-zone-{id}` | Polígono de zona | — |
+| `game-zone-label-{id}` | Rótulo da zona | — |
+| `game-fence` | Cerca do perímetro (mourões) | `data-post-count` |
+| `game-fence-pasture-{id}` | Cerca clara do pasto | `data-post-count` |
+| `herd-cluster-{groupId}` | Cluster de vacas do lote | — |
+| `herd-count-{groupId}` | Badge de contagem | — |
+| `game-corral` | Curral de não-mapeados | — |
+| `game-installation-{kind}` | Instalação (kind minúsculo; `garagem` é decorativa: `role="img"`, sem ações) | — |
+| `game-deposito-sheet` | Folha do Depósito (inventário de alimentação) | — |
+| `feed-inventory-list` / `feed-inventory-item-{id}` / `feed-inventory-balance-{id}` | Lista de saldo derivado por item | — |
+| `game-estacao-sheet` | Folha da Estação de Alimentação (trato STATION) | — |
+| `feeding-event-form` / `feed-line-{n}` / `feed-line-balance-{n}` | Formulário de trato e linhas item+quantidade | — |
+| `feeding-confirm-beyond` | Botão de confirmação de uso além do saldo | — |
+| `game-tank` | Medidor do tanque | `data-level` (0–1) |
+| `game-truck` | Caminhão do laticínio | `data-state` (`idle`/`driving`) |
+| `hud-economy` | Chip de economia | — |
+| `hud-streak` | Chip de streak | — |
+| `editor-map` | Container do Leaflet | — |
+| `editor-location` | Passo de localização | — |
+| `editor-finish` | Botão de fechar polígono | — |
+| `game-action-sheet` | Folha de ações da mangueira | — |
+| `game-group-sheet` | Folha do LOTE (abre no clique do `herd-cluster-*`) | — |
+| `game-group-animals` | Lista de animais dentro da folha do lote | — |
+| `game-group-animal-{id}` | Linha de animal na folha do lote | — |
+| `game-group-animal-actions` | Ações rápidas do animal selecionado | — |
+
+## Layout do HUD (respeita o mic-fab do app no canto inferior direito)
+
+- Curral (`game-corral`): topo esquerdo. Streak (`hud-streak`): topo direito.
+- Economia (`hud-economy`): base esquerda. Chip "Mapa" (editar): acima da economia.
+- Controles de zoom: coluna à direita, ACIMA do mic-fab (`.game-zoom-controls`).
+- O canto inferior direito pertence ao mic-fab global — nada do jogo ali.
+
+## Receita: adicionar uma instalação nova (ex.: Depósito)
+
+1. **Enum:** adicionar valor em `map_installation_kind` (`src/db/schema.ts`) se
+   ainda não existir; migração escrita À MÃO (`pnpm db:generate` gera
+   full-schema inválido — padrão `drizzle/0014_feeding_inventory.sql` +
+   entrada em `drizzle/meta/_journal.json`).
+2. **Sprite:** criar `XSprite.tsx` em `sprites/` (viewBox 64, tokens).
+3. **Layer:** mapear o kind → sprite em `layers/InstallationLayer.tsx`
+   (`ACTIONABLE_KINDS` decide se vira botão ou decoração `role="img"`).
+4. **Editor:** acrescentar o kind em `INSTALLATION_LABELS`/passo 4 do editor
+   (`GameMapEditorPage`).
+5. **Folha de ações:** criar uma folha própria montada sobre `GameSheet`
+   (ex.: `GameDepositoSheet`) — cada ação grava fato real via endpoint
+   existente (regra de ouro) — e abrir por kind no `GamePage`.
+6. **Testes:** `data-testid="game-installation-<kind minúsculo>"`, e2e
+   clicando e validando a folha; screenshot no visual spec. Instalações da
+   fixture e2e ficam em `createGameMapFixture` (helpers.ts).
+
+Instalações atuais: MANGUEIRA (produção/coleta/trato da ordenha), DEPOSITO
+(inventário de alimentação: compra real credita, trato debita, saldo sempre
+derivado), ESTACAO_ALIMENTACAO (trato STATION com saldo por linha), GARAGEM
+(decorativa), CASA (enum reservado, ainda sem sprite).
+
+## Testes
+
+- Determinismo: layout de rebanho por hash estável do `groupId`; datas sempre do
+  servidor (`state.today.date`); sem `Math.random` no domínio do jogo.
+- Fixture e2e: `createGameMapFixture(page)` em `tests/e2e/helpers.ts` cria
+  perímetro/pasto/mangueira via API (independente do editor).
+- Visual: `capturePaintedViewport` com `animations: 'disabled'`.
+- Guarda de performance: < 1500 nós SVG sob `game-root` (clusters capados em 8
+  sprites + badge `+N`).

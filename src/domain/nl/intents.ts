@@ -105,6 +105,44 @@ export const mastitisIntent = z.object({
 });
 export type MastitisIntent = z.infer<typeof mastitisIntent>;
 
+// Compra de alimento com quantidade (credita o inventário além da compra).
+// O modelo devolve rótulos como falados ("sacos", "toneladas"); a conversão
+// para a unidade canônica é determinística no resolvedor.
+export const feedPurchaseIntent = z.object({
+  type: z.literal('feed_purchase'),
+  date: spokenDateSchema,
+  itemLabel: z.string().min(1),
+  quantity: z.number().positive().nullable(),
+  unitLabel: z.string().nullable(),
+  amount: z.number().nonnegative().nullable(),
+  supplierLabel: z.string().nullable(),
+  paid: z.boolean(),
+  rawValueText: z.string().nullable(),
+  confidence,
+  notes: z.string().nullable(),
+});
+export type FeedPurchaseIntent = z.infer<typeof feedPurchaseIntent>;
+
+// Trato (evento de alimentação): uma fala pode ter várias linhas item+quantidade.
+export const feedingLineIntent = z.object({
+  itemLabel: z.string().min(1),
+  quantity: z.number().positive().nullable(),
+  unitLabel: z.string().nullable(),
+  rawValueText: z.string().nullable(),
+});
+export type FeedingLineIntent = z.infer<typeof feedingLineIntent>;
+
+export const feedingEventIntent = z.object({
+  type: z.literal('feeding_event'),
+  date: spokenDateSchema,
+  contextLabel: z.string().nullable(),
+  scopeLabel: z.string().nullable(),
+  lines: z.array(feedingLineIntent).min(1),
+  confidence,
+  notes: z.string().nullable(),
+});
+export type FeedingEventIntent = z.infer<typeof feedingEventIntent>;
+
 // A fala não corresponde a nenhuma ação reconhecida.
 export const unknownIntent = z.object({
   type: z.literal('unknown'),
@@ -118,6 +156,8 @@ export const voiceIntentSchema = z.discriminatedUnion('type', [
   revenueIntent,
   purchaseIntent,
   mastitisIntent,
+  feedPurchaseIntent,
+  feedingEventIntent,
   unknownIntent,
 ]);
 export type VoiceIntent = z.infer<typeof voiceIntentSchema>;

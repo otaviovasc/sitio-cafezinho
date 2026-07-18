@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
 import { LoadingState } from './components/ui';
 import { api } from './lib/api';
 import { VoiceContext } from './lib/voice-context';
 import { RevisarPage } from './pages/RevisarPage';
-import { AnimalDetailPage, AnimalsPage, NewAnimalPage } from './pages/AnimalsPage';
+import { AnimalDetailPage, AnimalsPage, HerdGroupAnimalsPage, NewAnimalPage } from './pages/AnimalsPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { DocumentsPage } from './pages/DocumentsPage';
 import { LoginPage } from './pages/LoginPage';
@@ -18,6 +18,11 @@ import { DataSettingsPage } from './pages/DataSettingsPage';
 import { NewPurchasePage, PurchaseDetailPage, PurchasesPage, SupplierDetailPage, SuppliersPage } from './pages/PurchasePages';
 import { NewWeightSessionPage, WeightSessionDetailPage, WeightSessionsPage } from './pages/WeightPages';
 import { MilkPricePage } from './pages/MilkPricePage';
+import { NewFeedingEventPage } from './pages/FeedingPages';
+import { GamePage } from './pages/GamePage';
+
+// Leaflet (satélite do editor) só entra no bundle quando o editor abre.
+const GameMapEditorPage = lazy(() => import('./pages/GameMapEditorPage').then((module) => ({ default: module.GameMapEditorPage })));
 
 export function App() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
@@ -42,9 +47,12 @@ export function App() {
 
   return <VoiceContext.Provider value={{ voiceEnabled }}><AppShell><Routes>
     <Route path="/" element={<DashboardPage />} />
+    <Route path="/jogo" element={<GamePage />} />
+    <Route path="/jogo/mapa/editor" element={<Suspense fallback={<div className="page"><LoadingState /></div>}><GameMapEditorPage /></Suspense>} />
     <Route path="/revisar" element={<RevisarPage />} />
     <Route path="/rebanho" element={<AnimalsPage />} />
     <Route path="/rebanho/novo" element={<NewAnimalPage />} />
+    <Route path="/rebanho/lote/:groupId" element={<HerdGroupAnimalsPage />} />
     <Route path="/rebanho/:id" element={<AnimalDetailPage />} />
     <Route path="/producao" element={<MilkSessionsPage />} />
     <Route path="/producao/nova" element={<Navigate to="/producao/individual/novo" replace />} />
@@ -52,6 +60,7 @@ export function App() {
     <Route path="/producao/individual/novo" element={<NewIndividualControlPage />} />
     <Route path="/producao/importar" element={<ImportMilkPage />} />
     <Route path="/producao/coletas/nova" element={<NewMilkCollectionPage />} />
+    <Route path="/alimentacao/trato/novo" element={<NewFeedingEventPage />} />
     <Route path="/producao/coletas/:id" element={<MilkCollectionDetailPage />} />
     <Route path="/mastite" element={<MastitisCasesPage />} />
     <Route path="/mastite/nova" element={<NewMastitisCasePage />} />

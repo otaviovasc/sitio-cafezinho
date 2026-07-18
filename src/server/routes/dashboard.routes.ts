@@ -1,7 +1,7 @@
 import { desc, isNull } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { getDb } from '../../db/client.js';
-import { animalGroupAssignments, animals, animalWeights, attachments, dailyMilkTotals, herdGroups, mastitisActions, mastitisCases, milkCollections, milkMeasurements, milkSessions, monthlyMilkPrices, purchases, revenues } from '../../db/schema.js';
+import { animalGroupAssignments, animals, animalWeights, attachments, dailyMilkTotals, feedingEvents, herdGroups, mastitisActions, mastitisCases, milkCollections, milkMeasurements, milkSessions, monthlyMilkPrices, purchases, revenues } from '../../db/schema.js';
 import { resolveDailyMilkDay, summarizeDailyMilk } from '../../domain/daily-milk.js';
 import { summarizeRegisteredCash } from '../../domain/finance.js';
 import { mastitisActionTiming, withdrawalState } from '../../domain/mastitis.js';
@@ -34,11 +34,13 @@ export const dashboardRoutes = new Hono().get('/dashboard', async (c) => {
     db.select().from(mastitisActions).orderBy(mastitisActions.scheduledFor),
     db.select().from(monthlyMilkPrices).orderBy(desc(monthlyMilkPrices.month)),
   ]);
+  const feedingRows = await db.select().from(feedingEvents).orderBy(desc(feedingEvents.date));
   const today = dateKeyInSaoPaulo();
   const tomorrow = nextDate(today);
   const month = today.slice(0, 7);
   const todayProduction = resolveDailyMilkDay(dailyRows, today);
   const todayCollections = collectionRows.filter((row) => row.collectionDate === today);
+  const todayFeedings = feedingRows.filter((row) => row.date === today);
   const todayMilk = summarizeMilkDay(todayProduction?.totalLiters ?? null, todayCollections.map((row) => row.liters));
   const openPurchases = purchaseRows.filter((row) => row.status === 'OPEN');
   const overduePurchases = openPurchases.filter((row) => isOverdue(row));
@@ -76,6 +78,7 @@ export const dashboardRoutes = new Hono().get('/dashboard', async (c) => {
     today: {
       production: todayProduction,
       collectionCount: todayCollections.length,
+      feedingCount: todayFeedings.length,
       milk: todayMilk,
       activeTreatmentCount: activeCases.filter((item) => item.status === 'IN_TREATMENT').length,
       activeCaseCount: activeCases.length,
@@ -87,6 +90,7 @@ export const dashboardRoutes = new Hono().get('/dashboard', async (c) => {
       productionMissing: !todayProduction,
       productionGroupsMissing,
       collectionMissing: todayCollections.length === 0,
+      feedingMissing: todayFeedings.length === 0,
       mastitisActionsToday: actionsToday.length,
       overdueMastitisActions: overdueActions.length,
       withdrawals: withdrawals.length,

@@ -1,9 +1,13 @@
 import { dateKeyInSaoPaulo } from '../purchases.js';
 import { normalizeLabel } from '../format.js';
+import { tonsToKg, type FeedUnit, type FeedingContext } from '../feeding.js';
 import type { MilkingRoutine } from '../herd.js';
 import { matchAnimalByLabel, type MatchableAlias, type MatchableAnimal } from './matching.js';
 import type {
   DailyMilkTotalIntent,
+  FeedingEventIntent,
+  FeedingLineIntent,
+  FeedPurchaseIntent,
   IndividualMilkSessionIntent,
   MastitisIntent,
   MilkCollectionIntent,
@@ -14,11 +18,13 @@ import type {
 } from './intents.js';
 
 export type MatchableSupplier = { id: string; name: string };
+export type MatchableFeedItem = { id: string; name: string; canonicalUnit: FeedUnit; active: boolean };
 export type ResolveContext = {
   groups: ResolvableGroup[];
   animals: MatchableAnimal[];
   aliases: MatchableAlias[];
   suppliers: MatchableSupplier[];
+  feedItems: MatchableFeedItem[];
 };
 
 function pickByKeyword(label: string | null, table: ReadonlyArray<readonly [readonly string[], string]>, fallback: string): string {
@@ -72,6 +78,8 @@ export type ProposedActionType =
   | 'PURCHASE'
   | 'REVENUE'
   | 'WEIGHT_SESSION'
+  | 'FEED_PURCHASE'
+  | 'FEEDING_EVENT'
   | 'UNKNOWN';
 
 export type CommitStatus = 'READY' | 'NEEDS_REVIEW' | 'NEEDS_PERIOD' | 'UNREPRESENTABLE';
@@ -334,6 +342,183 @@ export function resolveMastitis(intent: MastitisIntent, animals: MatchableAnimal
   };
 }
 
+/**
+ * Casamento exato de item de alimentação por nome normalizado (regra do repo:
+ * sem fuzzy). Desconhecido → undefined, que vira pendência de revisão — nunca
+ * cria item novo por inferência.
+ */
+export function matchFeedItemByLabel(rawLabel: string, feedItems: MatchableFeedItem[]): MatchableFeedItem | undefined {
+  const normalized = normalizeLabel(rawLabel);
+  return feedItems.find((item) => item.active && normalizeLabel(item.name) === normalized);
+}
+
+/**
+ * Converte quantidade+unidade FALADAS para a unidade canônica do item.
+ * Determinístico: toneladas ×1000 (só para itens em KG); sacos/fardos não têm
+ * conversão conhecida → null com issue (a revisão pede a quantidade certa).
+ * Unidade não dita → assume a canônica, mas marca para conferência.
+ */
+export function resolveFeedQuantity(
+  quantity: number | null,
+  unitLabel: string | null,
+  canonicalUnit: FeedUnit,
+): { quantity: number | null; issue: string | null } {
+  if (quantity === null || quantity <= 0) return { quantity: null, issue: 'Informe a quantidade.' };
+  if (!unitLabel || !unitLabel.trim()) {
+    return { quantity, issue: `Unidade não informada; confirme se o valor está em ${canonicalUnit === 'KG' ? 'kg' : canonicalUnit === 'LITER' ? 'litros' : 'unidades'}.` };
+  }
+  const normalized = normalizeLabel(unitLabel);
+  const isTon = /\btoneladas?\b|^t$|^ton$/.test(normalized);
+  const isKg = /quilos?|kilos?|^kgs?$/.test(normalized);
+  const isLiter = /litros?|^l$|^lts?$/.test(normalized);
+  const isUnit = /unidades?|^un$|pecas?/.test(normalized);
+  if (canonicalUnit === 'KG') {
+    if (isTon) return { quantity: tonsToKg(quantity), issue: null };
+    if (isKg) return { quantity, issue: null };
+  }
+  if (canonicalUnit === 'LITER' && isLiter) return { quantity, issue: null };
+  if (canonicalUnit === 'UNIT' && isUnit) return { quantity, issue: null };
+  return { quantity: null, issue: `Não sei converter “${unitLabel}” para a unidade do item; informe a quantidade na revisão.` };
+}
+
+const FEEDING_CONTEXT_KEYWORDS = [
+  [['ordenha', 'mangueira', 'sala de ordenha'], 'MILKING'],
+  [['estacao', 'cocho', 'confinamento'], 'STATION'],
+  [['pasto', 'piquete', 'campo'], 'PASTURE'],
+] as const;
+
+function resolveFeedingContext(contextLabel: string | null): FeedingContext | null {
+  if (!contextLabel) return null;
+  const normalized = normalizeLabel(contextLabel);
+  for (const [keywords, value] of FEEDING_CONTEXT_KEYWORDS) {
+    if (keywords.some((keyword) => normalized.includes(keyword))) return value;
+  }
+  return null;
+}
+
+/**
+ * Compra de alimento: cria a compra financeira real + a entry que credita o
+ * estoque. Só fica READY quando o item casa exatamente, a quantidade é
+ * conversível para a unidade canônica e o valor foi dito.
+ */
+export function resolveFeedPurchase(intent: FeedPurchaseIntent, ctx: ResolveContext, now = new Date()): ResolvedAction {
+  const issues: string[] = [];
+  let commitStatus: CommitStatus = 'READY';
+  const item = matchFeedItemByLabel(intent.itemLabel, ctx.feedItems);
+  let quantity: number | null = null;
+  if (!item) {
+    commitStatus = 'NEEDS_REVIEW';
+    issues.push(`Item “${intent.itemLabel}” não está no catálogo de alimentação; selecione ou cadastre antes de confirmar.`);
+  } else {
+    const resolved = resolveFeedQuantity(intent.quantity, intent.unitLabel, item.canonicalUnit);
+    quantity = resolved.quantity;
+    if (resolved.issue) {
+      commitStatus = 'NEEDS_REVIEW';
+      issues.push(resolved.issue);
+    }
+  }
+  if (intent.amount === null || intent.amount <= 0) {
+    commitStatus = 'NEEDS_REVIEW';
+    issues.push('Informe o valor da compra.');
+  }
+  let supplierId: string | null = null;
+  if (intent.supplierLabel) {
+    const normalized = normalizeLabel(intent.supplierLabel);
+    const supplier = ctx.suppliers.find((row) => normalizeLabel(row.name) === normalized);
+    supplierId = supplier?.id ?? null;
+    if (!supplier) issues.push(`Fornecedor “${intent.supplierLabel}” não cadastrado; será salvo sem vínculo.`);
+  }
+  return {
+    actionType: 'FEED_PURCHASE',
+    rawIntent: intent,
+    resolvedPayload: {
+      purchaseDate: resolveSpokenDate(intent.date, now),
+      description: `Compra de ${item?.name ?? intent.itemLabel}`,
+      category: 'FEED',
+      totalAmount: intent.amount,
+      status: intent.paid ? 'PAID' : 'OPEN',
+      supplierId,
+      feedItemId: item?.id ?? null,
+      quantity,
+      notes: intent.notes,
+      // campos de exibição para a revisão
+      itemLabel: intent.itemLabel,
+      resolvedItemName: item?.name ?? null,
+      canonicalUnit: item?.canonicalUnit ?? null,
+      spokenQuantity: intent.quantity,
+      spokenUnit: intent.unitLabel,
+      supplierLabel: intent.supplierLabel,
+      rawValueText: intent.rawValueText,
+    },
+    issues,
+    commitStatus,
+  };
+}
+
+/**
+ * Trato falado: contexto por palavra-chave, lote por casamento exato (ciente
+ * de ordinais) e cada linha item+quantidade convertida para a unidade
+ * canônica. Qualquer ponta solta (item desconhecido, unidade não conversível,
+ * contexto não dito, lote obrigatório ausente) → NEEDS_REVIEW, nunca palpite.
+ */
+export function resolveFeedingEvent(intent: FeedingEventIntent, ctx: ResolveContext, now = new Date()): ResolvedAction {
+  const issues: string[] = [];
+  let commitStatus: CommitStatus = 'READY';
+
+  const context = resolveFeedingContext(intent.contextLabel);
+  if (!context) {
+    commitStatus = 'NEEDS_REVIEW';
+    issues.push(intent.contextLabel
+      ? `Não reconheci onde o trato foi dado (“${intent.contextLabel}”); escolha na revisão.`
+      : 'Informe onde o trato foi dado (ordenha, estação ou pasto).');
+  }
+
+  const { group, issues: groupIssues } = resolveHerdGroup(intent.scopeLabel, ctx.groups);
+  issues.push(...groupIssues);
+  if (intent.scopeLabel && !group) commitStatus = 'NEEDS_REVIEW';
+  if (context === 'MILKING' && !group) {
+    commitStatus = 'NEEDS_REVIEW';
+    if (!intent.scopeLabel) issues.push('Trato da ordenha precisa do lote; selecione na revisão.');
+  }
+  if (context === 'MILKING' && group?.milkingRoutine === 'NOT_MILKED') {
+    commitStatus = 'NEEDS_REVIEW';
+    issues.push(`O lote ${group.name} não participa da ordenha.`);
+  }
+
+  const items = intent.lines.map((line: FeedingLineIntent) => {
+    const item = matchFeedItemByLabel(line.itemLabel, ctx.feedItems);
+    if (!item) {
+      commitStatus = 'NEEDS_REVIEW';
+      issues.push(`Item “${line.itemLabel}” não está no catálogo de alimentação; selecione ou cadastre antes de confirmar.`);
+      return { feedItemId: null, itemLabel: line.itemLabel, resolvedItemName: null, canonicalUnit: null, quantity: null, spokenQuantity: line.quantity, spokenUnit: line.unitLabel, rawValueText: line.rawValueText };
+    }
+    const resolved = resolveFeedQuantity(line.quantity, line.unitLabel, item.canonicalUnit);
+    if (resolved.issue) {
+      commitStatus = 'NEEDS_REVIEW';
+      issues.push(`${item.name}: ${resolved.issue}`);
+    }
+    return { feedItemId: item.id, itemLabel: line.itemLabel, resolvedItemName: item.name, canonicalUnit: item.canonicalUnit, quantity: resolved.quantity, spokenQuantity: line.quantity, spokenUnit: line.unitLabel, rawValueText: line.rawValueText };
+  });
+
+  return {
+    actionType: 'FEEDING_EVENT',
+    rawIntent: intent,
+    resolvedPayload: {
+      date: resolveSpokenDate(intent.date, now),
+      context,
+      herdGroupId: group?.id ?? null,
+      items,
+      notes: intent.notes,
+      // campos de exibição para a revisão
+      contextLabel: intent.contextLabel,
+      scopeLabel: intent.scopeLabel,
+      resolvedGroupName: group?.name ?? null,
+    },
+    issues,
+    commitStatus,
+  };
+}
+
 /** Despacha uma intenção para o resolvedor determinístico correspondente. */
 export function resolveIntent(intent: VoiceIntent, ctx: ResolveContext, now = new Date()): ResolvedAction {
   switch (intent.type) {
@@ -343,6 +528,8 @@ export function resolveIntent(intent: VoiceIntent, ctx: ResolveContext, now = ne
     case 'revenue': return resolveRevenue(intent, now);
     case 'purchase': return resolvePurchase(intent, ctx.suppliers, now);
     case 'mastitis_case': return resolveMastitis(intent, ctx.animals, ctx.aliases, now);
+    case 'feed_purchase': return resolveFeedPurchase(intent, ctx, now);
+    case 'feeding_event': return resolveFeedingEvent(intent, ctx, now);
     case 'unknown':
       return {
         actionType: 'UNKNOWN',

@@ -3,7 +3,7 @@ import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb } from '../../db/client.js';
-import { animalAliases, animals, captures, herdGroups, proposedActions, suppliers } from '../../db/schema.js';
+import { animalAliases, animals, captures, feedItems, herdGroups, proposedActions, suppliers } from '../../db/schema.js';
 import { resolveIntent, type ResolveContext } from '../../domain/nl/resolve.js';
 import { fail } from '../http/api-error.js';
 import { readJson, validate } from '../http/validation.js';
@@ -25,13 +25,14 @@ type CaptureBase = {
 
 async function loadResolveContext(): Promise<ResolveContext> {
   const db = getDb();
-  const [groups, animalRows, aliasRows, supplierRows] = await Promise.all([
+  const [groups, animalRows, aliasRows, supplierRows, feedItemRows] = await Promise.all([
     db.select({ id: herdGroups.id, name: herdGroups.name, milkingRoutine: herdGroups.milkingRoutine, active: herdGroups.active }).from(herdGroups).where(eq(herdGroups.active, true)),
     db.select({ id: animals.id, name: animals.name, tagNumber: animals.tagNumber }).from(animals),
     db.select({ animalId: animalAliases.animalId, normalizedAlias: animalAliases.normalizedAlias }).from(animalAliases),
     db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers),
+    db.select({ id: feedItems.id, name: feedItems.name, canonicalUnit: feedItems.canonicalUnit, active: feedItems.active }).from(feedItems),
   ]);
-  return { groups, animals: animalRows, aliases: aliasRows, suppliers: supplierRows };
+  return { groups, animals: animalRows, aliases: aliasRows, suppliers: supplierRows, feedItems: feedItemRows };
 }
 
 async function persistCapture(base: CaptureBase, interpretation: InterpretResult, ctx: ResolveContext, latencyMs: number) {
@@ -108,7 +109,10 @@ export const captureRoutes = new Hono()
     if (!base.transcript.trim()) return fail('Não consegui entender o conteúdo. Tente de novo.', 422, 'EMPTY_TRANSCRIPT');
 
     const startedAt = Date.now();
-    const interpretation = await provider.interpret(base.transcript, { lotNames: ctx.groups.map((group) => group.name) });
+    const interpretation = await provider.interpret(base.transcript, {
+      lotNames: ctx.groups.map((group) => group.name),
+      feedItemNames: ctx.feedItems.filter((item) => item.active).map((item) => item.name),
+    });
     const { capture, actions } = await persistCapture(base, interpretation, ctx, Date.now() - startedAt);
     return c.json({ captureId: capture.id, transcript: capture.transcript, status: capture.status, actions }, 201);
   })

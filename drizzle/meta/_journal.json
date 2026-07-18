@@ -92,6 +92,27 @@
       "when": 1784308400000,
       "tag": "0012_incremental_daily_milk",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1784339908890,
+      "tag": "0013_game_map",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1784340000000,
+      "tag": "0014_feeding_inventory",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1784340100000,
+      "tag": "0015_feeding_nl_actions",
+      "breakpoints": true
     }
   ]
 }

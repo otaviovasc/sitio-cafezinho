@@ -411,3 +411,53 @@ test('abre e atualiza um preço mensal pelo histórico', async ({ page }) => {
   const saved = await page.evaluate(async () => fetch('/api/milk-prices/summary?month=2026-09').then((response) => response.json()) as Promise<{ price: { pricePerLiter: string } }>);
   expect(saved.price.pricePerLiter).toBe('1.8400');
 });
+
+test('rebanho abre por lotes, com contagem e pasto recalculados via API', async ({ page }) => {
+  await login(page);
+  await page.goto('/rebanho');
+
+  // Contagens e pastos esperados derivados de forma independente das APIs.
+  const expected = await page.evaluate(async () => {
+    const [animals, groups, map] = await Promise.all([
+      fetch('/api/animals').then((response) => response.json()) as Promise<Array<{ status: string; currentGroup: { id: string } | null }>>,
+      fetch('/api/herd-groups').then((response) => response.json()) as Promise<Array<{ id: string; name: string; active: boolean }>>,
+      fetch('/api/game/map').then((response) => response.json()) as Promise<{ zones: Array<{ kind: string; name: string; herdGroupId: string | null }> }>,
+    ]);
+    const alive = new Set(['HEIFER', 'LACTATING', 'DRY']);
+    return {
+      groups: groups.filter((group) => group.active).map((group) => ({
+        id: group.id,
+        name: group.name,
+        count: animals.filter((animal) => animal.currentGroup?.id === group.id).length,
+        pasture: map.zones.find((zone) => zone.kind === 'PASTURE' && zone.herdGroupId === group.id)?.name ?? null,
+      })),
+      unassigned: animals.filter((animal) => alive.has(animal.status) && !animal.currentGroup).length,
+    };
+  });
+
+  for (const group of expected.groups) {
+    const card = page.getByTestId(`herd-group-card-${group.id}`);
+    await expect(card).toBeVisible();
+    await expect(page.getByTestId(`herd-group-count-${group.id}`)).toContainText(String(group.count));
+    if (group.pasture) await expect(page.getByTestId(`herd-group-pasture-${group.id}`)).toContainText(group.pasture);
+    else await expect(page.getByTestId(`herd-group-pasture-${group.id}`)).toContainText('Sem pasto no mapa');
+  }
+  await expect(page.getByTestId('herd-group-card-sem-lote')).toHaveCount(expected.unassigned > 0 ? 1 : 0);
+
+  // Navegação lote → animais: a lista mostra exatamente os animais do lote.
+  const firstWithAnimals = expected.groups.find((group) => group.count > 0);
+  if (firstWithAnimals) {
+    await page.getByTestId(`herd-group-card-${firstWithAnimals.id}`).click();
+    await expect(page).toHaveURL(new RegExp(`/rebanho/lote/${firstWithAnimals.id}$`));
+    await expect(page.getByRole('heading', { name: firstWithAnimals.name })).toBeVisible();
+    await expect(page.getByTestId('herd-group-animals').locator('a[aria-label^="Abrir histórico de"]:visible')).toHaveCount(firstWithAnimals.count);
+    // A linha continua levando ao detalhe do animal.
+    await page.getByTestId('herd-group-animals').locator('a[aria-label^="Abrir histórico de"]:visible').first().click();
+    await expect(page).toHaveURL(/\/rebanho\/[0-9a-f-]{36}$/);
+  }
+
+  // Busca genuína na tela inicial continua revelando animais direto.
+  await page.goto('/rebanho');
+  await page.getByLabel('Buscar').fill('Caruja');
+  await expect(page.locator('a[aria-label="Abrir histórico de Caruja"]:visible')).toBeVisible();
+});

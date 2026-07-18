@@ -24,10 +24,12 @@
     "google-drive:authorize": "tsx scripts/google-drive-authorize.ts"
   },
   "dependencies": {
+    "@fontsource-variable/nunito": "^5.2.7",
     "@hono/node-server": "^1.14.1",
     "drizzle-orm": "^0.44.2",
     "googleapis": "^150.0.1",
     "hono": "^4.7.11",
+    "leaflet": "^1.9.4",
     "lucide-react": "^1.24.0",
     "pg": "^8.16.0",
     "react": "^19.1.0",
@@ -40,6 +42,7 @@
   "devDependencies": {
     "@eslint/js": "^9.28.0",
     "@playwright/test": "^1.52.0",
+    "@types/leaflet": "^1.9.21",
     "@types/node": "^22.15.30",
     "@types/pg": "^8.15.4",
     "@types/react": "^19.1.8",

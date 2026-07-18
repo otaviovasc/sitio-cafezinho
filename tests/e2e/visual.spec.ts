@@ -32,12 +32,14 @@ test('captura estados principais sem rolagem horizontal', async ({ page }, testI
     ['compras', '/compras'],
     ['documentos', '/documentos'],
     ['registrar-coleta', '/producao/coletas/nova'],
+    ['registrar-trato', '/alimentacao/trato/novo'],
     ['mastite', '/mastite'],
     ['nova-receita', '/receitas/nova'],
     ['nova-compra', '/compras/nova'],
     ['financeiro', '/financeiro'],
     ['preco-leite', '/financeiro/preco-leite'],
     ['exportacao-dados', '/configuracoes/dados'],
+    ['jogo', '/jogo'],
   ] as const;
   for (const [name, route] of routes) {
     await page.goto(route);

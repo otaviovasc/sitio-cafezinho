@@ -60,10 +60,22 @@ export const captureInputKind = pgEnum('capture_input_kind', ['AUDIO', 'DOCUMENT
 export const captureStatus = pgEnum('capture_status', ['PROCESSING', 'NEEDS_REVIEW', 'REVIEWED', 'FAILED', 'DISMISSED']);
 export const proposedActionType = pgEnum('proposed_action_type', [
   'DAILY_MILK_TOTAL', 'INDIVIDUAL_MILK_SESSION', 'MILK_COLLECTION', 'MASTITIS_CASE',
-  'PURCHASE', 'REVENUE', 'WEIGHT_SESSION', 'UNKNOWN',
+  'PURCHASE', 'REVENUE', 'WEIGHT_SESSION', 'FEED_PURCHASE', 'FEEDING_EVENT', 'UNKNOWN',
 ]);
 export const proposedActionCommitStatus = pgEnum('proposed_action_commit_status', ['READY', 'NEEDS_REVIEW', 'NEEDS_PERIOD', 'UNREPRESENTABLE']);
 export const proposedActionStatus = pgEnum('proposed_action_status', ['NEEDS_REVIEW', 'CONFIRMED', 'DISMISSED', 'FAILED']);
+
+// Camada de jogo (/jogo): o mapa é configuração de exibição — polígonos em
+// lat/lng traçados uma vez sobre satélite. Não é fato de fazenda; o vínculo
+// zona↔lote apenas diz ONDE desenhar o lote no tabuleiro.
+export const mapZoneKind = pgEnum('map_zone_kind', ['PERIMETER', 'PASTURE']);
+export const mapInstallationKind = pgEnum('map_installation_kind', ['MANGUEIRA', 'DEPOSITO', 'GARAGEM', 'CASA', 'ESTACAO_ALIMENTACAO']);
+
+// Inventário de alimentação: um item só entra no estoque por compra registrada
+// (feed_purchase_entries credita; feeding_event_items debita). O saldo é
+// sempre DERIVADO (comprado − consumido), nunca armazenado — anti-inferência.
+export const feedUnit = pgEnum('feed_unit', ['KG', 'LITER', 'UNIT']);
+export const feedingContext = pgEnum('feeding_context', ['MILKING', 'PASTURE', 'STATION']);
 
 export const herdGroups = pgTable('herd_groups', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -464,6 +476,87 @@ export const proposedActions = pgTable('proposed_actions', {
   index('proposed_actions_status_idx').on(table.status),
 ]);
 
+// Zonas do mapa do jogo: 1 perímetro ativo; pastos podem apontar para um lote
+// (1 pasto ativo por lote). `ring` é o anel em lat/lng originais do traçado —
+// fonte única; projeção e suavização são derivadas no domínio.
+export const mapZones = pgTable('map_zones', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  kind: mapZoneKind('kind').notNull(),
+  name: text('name').notNull(),
+  herdGroupId: uuid('herd_group_id').references(() => herdGroups.id, { onDelete: 'set null' }),
+  ring: jsonb('ring').notNull(),
+  styleVariant: integer('style_variant').notNull().default(0),
+  active: boolean('active').notNull().default(true),
+  ...auditColumns,
+}, (table) => [
+  uniqueIndex('map_zones_perimeter_unique').on(table.kind).where(sql`${table.kind} = 'PERIMETER' and ${table.active}`),
+  uniqueIndex('map_zones_herd_group_unique').on(table.herdGroupId).where(sql`${table.herdGroupId} is not null and ${table.active}`),
+  check('map_zones_ring_min_points', sql`jsonb_array_length(${table.ring}) >= 3`),
+  check('map_zones_perimeter_unlinked', sql`${table.kind} != 'PERIMETER' or ${table.herdGroupId} is null`),
+]);
+
+// Instalações do mapa (MVP: só MANGUEIRA tem ações; enum amplo é a costura
+// para Depósito/Garagem/Casa). `position` = { lat, lng }.
+export const mapInstallations = pgTable('map_installations', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  kind: mapInstallationKind('kind').notNull(),
+  name: text('name').notNull(),
+  position: jsonb('position').notNull(),
+  active: boolean('active').notNull().default(true),
+  ...auditColumns,
+}, (table) => [
+  uniqueIndex('map_installations_kind_unique').on(table.kind).where(sql`${table.active}`),
+]);
+
+// Catálogo de alimentos (nome PT-BR + unidade canônica). Toneladas viram KG no
+// formulário (×1000); o banco só conhece a unidade canônica.
+export const feedItems = pgTable('feed_items', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: text('name').notNull(),
+  canonicalUnit: feedUnit('canonical_unit').notNull(),
+  active: boolean('active').notNull().default(true),
+  ...auditColumns,
+}, (table) => [uniqueIndex('feed_items_name_unique').on(table.name)]);
+
+// Crédito de estoque: sempre vinculado a uma compra real (purchases). A compra
+// segue o fluxo financeiro de sempre; a entry só credita o inventário.
+export const feedPurchaseEntries = pgTable('feed_purchase_entries', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  feedItemId: uuid('feed_item_id').notNull().references(() => feedItems.id, { onDelete: 'restrict' }),
+  purchaseId: uuid('purchase_id').notNull().references(() => purchases.id, { onDelete: 'cascade' }),
+  quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+  notes: text('notes'),
+  ...auditColumns,
+}, (table) => [
+  index('feed_purchase_entries_item_idx').on(table.feedItemId),
+  index('feed_purchase_entries_purchase_idx').on(table.purchaseId),
+  check('feed_purchase_entries_positive', sql`${table.quantity} > 0`),
+]);
+
+// Débito de estoque: um trato (evento de alimentação) com uma ou mais linhas.
+export const feedingEvents = pgTable('feeding_events', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  date: date('date').notNull(),
+  context: feedingContext('context').notNull(),
+  herdGroupId: uuid('herd_group_id').references(() => herdGroups.id, { onDelete: 'restrict' }),
+  notes: text('notes'),
+  ...auditColumns,
+}, (table) => [
+  index('feeding_events_date_idx').on(table.date),
+  index('feeding_events_group_idx').on(table.herdGroupId),
+]);
+
+export const feedingEventItems = pgTable('feeding_event_items', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  feedingEventId: uuid('feeding_event_id').notNull().references(() => feedingEvents.id, { onDelete: 'cascade' }),
+  feedItemId: uuid('feed_item_id').notNull().references(() => feedItems.id, { onDelete: 'restrict' }),
+  quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+}, (table) => [
+  index('feeding_event_items_event_idx').on(table.feedingEventId),
+  index('feeding_event_items_item_idx').on(table.feedItemId),
+  check('feeding_event_items_positive', sql`${table.quantity} > 0`),
+]);
+
 export type Animal = typeof animals.$inferSelect;
 export type HerdGroup = typeof herdGroups.$inferSelect;
 export type WeightSession = typeof weightSessions.$inferSelect;
@@ -476,3 +569,9 @@ export type Purchase = typeof purchases.$inferSelect;
 export type Attachment = typeof attachments.$inferSelect;
 export type Capture = typeof captures.$inferSelect;
 export type ProposedAction = typeof proposedActions.$inferSelect;
+export type MapZone = typeof mapZones.$inferSelect;
+export type MapInstallation = typeof mapInstallations.$inferSelect;
+export type FeedItem = typeof feedItems.$inferSelect;
+export type FeedPurchaseEntry = typeof feedPurchaseEntries.$inferSelect;
+export type FeedingEvent = typeof feedingEvents.$inferSelect;
+export type FeedingEventItem = typeof feedingEventItems.$inferSelect;

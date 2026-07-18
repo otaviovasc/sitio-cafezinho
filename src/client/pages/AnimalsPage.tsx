@@ -1,5 +1,5 @@
 import { FormEvent, useState } from 'react';
-import { Activity, ArrowRightLeft, Banknote, ChartLine, HeartPulse, Pencil, Plus, Scale, Tags, Trash2, Upload } from 'lucide-react';
+import { Activity, ArrowLeft, ArrowRightLeft, Banknote, ChartLine, HeartPulse, MapPin, Pencil, Plus, Scale, Tags, Trash2, TriangleAlert, Upload } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import type { AnimalStatus } from '../../domain/animal-lifecycle';
 import { allowedNextStatuses, statusRequiresMilkingGroup } from '../../domain/animal-lifecycle';
@@ -60,42 +60,117 @@ export type AnimalDetail = Omit<Animal, 'latestWeight' | 'latestProduction'> & {
 
 function animalName(animal: Pick<Animal, 'name' | 'tagNumber'>) { return animal.name || `Brinco ${animal.tagNumber}`; }
 
+type MapZoneSummary = { id: string; kind: string; name: string; herdGroupId: string | null };
+type GameMapSummary = { zones: MapZoneSummary[] };
+
+const ALIVE_STATUSES = new Set<AnimalStatus>(['HEIFER', 'LACTATING', 'DRY']);
+
+/** Linhas reutilizáveis da lista de animais (tabela no desktop, cartões no mobile). */
+function AnimalRows({ animals: rows }: { animals: Animal[] }) {
+  return <SectionCard>
+    <ScrollArea label="Lista do rebanho" className="max-h-[42rem]">
+      <div className="hidden lg:block"><table className="data-table"><thead><tr><th>Animal</th><th>Ciclo</th><th>Lote de ordenha</th><th>Último controle</th><th>Último peso</th></tr></thead><tbody>{rows.map((animal) => <tr key={animal.id}><td colSpan={5} className="p-0"><Link aria-label={`Abrir histórico de ${animalName(animal)}`} className="grid grid-cols-[1.35fr_1fr_1.2fr_1fr_1fr] items-center gap-3 border-b border-[var(--border)] px-3 py-3 text-[var(--text)] transition hover:bg-[var(--surface-strong)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--primary)]" to={`/rebanho/${animal.id}`}><span className="min-w-0"><strong className="text-[var(--primary)]">{animalName(animal)}</strong>{animal.name && animal.tagNumber && <span className="block text-xs text-[var(--muted)]">Brinco {animal.tagNumber}</span>}</span><StatusBadge descriptor={animalStatusDescriptor(animal.status)} /><span className="text-sm">{animal.currentGroup?.name ?? '—'}{animal.currentGroup && <span className="block text-xs text-[var(--muted)]">{milkingRoutineLabels[animal.currentGroup.milkingRoutine]}</span>}</span><span className="text-sm">{animal.latestProduction ? <><strong>{formatLiters(animal.latestProduction.totalLiters)}</strong><span className="block text-xs text-[var(--muted)]">{formatDate(animal.latestProduction.sessionDate)}</span></> : '—'}</span><span className="text-sm">{animal.latestWeight ? <><strong>{formatWeight(animal.latestWeight.weightKg)}</strong><span className="block text-xs text-[var(--muted)]">{new Date(animal.latestWeight.measuredAt).toLocaleDateString('pt-BR')}</span></> : '—'}</span></Link></td></tr>)}</tbody></table></div>
+      <div className="lg:hidden">{rows.map((animal) => <Link aria-label={`Abrir histórico de ${animalName(animal)}`} className="block border-b border-[var(--border)] px-1 py-4 text-[var(--text)] transition last:border-b-0 hover:bg-[var(--surface-strong)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--primary)]" to={`/rebanho/${animal.id}`} key={animal.id}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><strong className="block truncate text-[var(--primary)]">{animalName(animal)}</strong><span className="text-sm text-[var(--muted)]">{animal.currentGroup?.name ?? (animal.status === 'LACTATING' ? 'Sem lote' : 'Fora da ordenha')}{animal.name && animal.tagNumber ? ` · Brinco ${animal.tagNumber}` : ''}</span></div><StatusBadge descriptor={animalStatusDescriptor(animal.status)} /></div><div className="mt-3 grid grid-cols-2 gap-2 text-sm"><div><span className="block text-xs text-[var(--muted)]">Último controle</span><strong>{animal.latestProduction ? formatLiters(animal.latestProduction.totalLiters) : 'Sem medição'}</strong></div><div><span className="block text-xs text-[var(--muted)]">Último peso</span><strong>{animal.latestWeight ? formatWeight(animal.latestWeight.weightKg) : 'Sem pesagem'}</strong></div></div></Link>)}</div>
+    </ScrollArea>
+  </SectionCard>;
+}
+
+function matchesAnimalSearch(animal: Animal, normalizedSearch: string) {
+  return `${animal.name || ''} ${animal.tagNumber || ''} ${animal.aliases.map((alias) => alias.alias).join(' ')}`.toLocaleLowerCase('pt-BR').includes(normalizedSearch);
+}
+
+/**
+ * Tela inicial do rebanho: a porta de entrada é o LOTE, não o animal. Cada
+ * cartão traz contagem real (assignments abertos) e o pasto vinculado no mapa
+ * do jogo; a busca continua genuína — digitar revela os animais direto.
+ */
 export function AnimalsPage() {
   const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('ALL');
-  const [groupId, setGroupId] = useState('ALL');
-  const [attention, setAttention] = useState('ALL');
   const { data, loading, error, reload } = useResource<Animal[]>('/api/animals');
-  const { data: groups = [] } = useResource<HerdGroup[]>('/api/herd-groups');
+  const { data: groups } = useResource<HerdGroup[]>('/api/herd-groups');
+  const { data: gameMap } = useResource<GameMapSummary>('/api/game/map');
   const normalizedSearch = search.trim().toLocaleLowerCase('pt-BR');
-  const filtered = data?.filter((animal) => {
-    const matchesSearch = `${animal.name || ''} ${animal.tagNumber || ''} ${animal.aliases.map((alias) => alias.alias).join(' ')}`.toLocaleLowerCase('pt-BR').includes(normalizedSearch);
-    const matchesAttention = attention === 'ALL'
-      || (attention === 'NO_GROUP' && animal.status === 'LACTATING' && !animal.currentGroup)
-      || (attention === 'NO_WEIGHT' && !animal.latestWeight)
-      || (attention === 'NO_PRODUCTION' && animal.status === 'LACTATING' && !animal.latestProduction);
-    return matchesSearch && matchesAttention && (status === 'ALL' || animal.status === status) && (groupId === 'ALL' || animal.currentGroup?.id === groupId);
-  }) ?? [];
+  const searching = normalizedSearch.length > 0;
+  const searchResults = searching ? data?.filter((animal) => matchesAnimalSearch(animal, normalizedSearch)) ?? [] : [];
   const lactating = data?.filter((animal) => animal.status === 'LACTATING').length ?? 0;
   const dry = data?.filter((animal) => animal.status === 'DRY').length ?? 0;
   const heifers = data?.filter((animal) => animal.status === 'HEIFER').length ?? 0;
+  const pastureByGroup = new Map((gameMap?.zones ?? []).filter((zone) => zone.kind === 'PASTURE' && zone.herdGroupId).map((zone) => [zone.herdGroupId!, zone]));
+  const activeGroups = groups?.filter((group) => group.active) ?? [];
+  const countByGroup = new Map<string, number>();
+  for (const animal of data ?? []) {
+    if (animal.currentGroup) countByGroup.set(animal.currentGroup.id, (countByGroup.get(animal.currentGroup.id) ?? 0) + 1);
+  }
+  const unassigned = data?.filter((animal) => ALIVE_STATUSES.has(animal.status) && !animal.currentGroup) ?? [];
+
   return <div className="page">
-    <PageHeader icon={CowHead} title="Rebanho" subtitle="Ciclo produtivo, lote de ordenha e histórico de cada vaca" action={<Link className="button button-primary" to="/rebanho/novo"><Plus size={18} aria-hidden />Cadastrar</Link>} />
+    <PageHeader icon={CowHead} title="Rebanho" subtitle="Os lotes do sítio; entre num lote para ver cada vaca" action={<Link className="button button-primary" to="/rebanho/novo"><Plus size={18} aria-hidden />Cadastrar</Link>} />
     <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4"><StatCard label="Total cadastrado" value={data?.length ?? 0} /><StatCard label="Em lactação" value={lactating} /><StatCard label="Secas" value={dry} /><StatCard label="Novilhas" value={heifers} /></div>
-    <FilterControls
-      search={{ value: search, onChange: setSearch, placeholder: 'Nome, brinco ou alias' }}
-      selects={[
-        { label: 'Situação', value: status, onChange: setStatus, options: [{ value: 'ALL', label: 'Todas' }, ...Object.entries(animalStatusLabels).map(([value, label]) => ({ value, label }))] },
-        { label: 'Lote', value: groupId, onChange: setGroupId, options: [{ value: 'ALL', label: 'Todos' }, ...(groups?.filter((group) => group.active).map((group) => ({ value: group.id, label: group.name })) ?? [])] },
-        { label: 'Atenção', value: attention, onChange: setAttention, options: [{ value: 'ALL', label: 'Todos os registros' }, { value: 'NO_GROUP', label: 'Em lactação sem lote' }, { value: 'NO_WEIGHT', label: 'Sem pesagem' }, { value: 'NO_PRODUCTION', label: 'Sem controle individual' }] },
-      ]}
-    />
-    <div className="mt-5">{loading ? <SkeletonList rows={6} /> : error ? <ErrorState message={error} retry={reload} /> : !filtered.length ? <EmptyState title="Nenhum animal encontrado" description="Ajuste a busca ou os filtros aplicados." /> : <SectionCard>
-      <ScrollArea label="Lista do rebanho" className="max-h-[42rem]">
-        <div className="hidden lg:block"><table className="data-table"><thead><tr><th>Animal</th><th>Ciclo</th><th>Lote de ordenha</th><th>Último controle</th><th>Último peso</th></tr></thead><tbody>{filtered.map((animal) => <tr key={animal.id}><td colSpan={5} className="p-0"><Link aria-label={`Abrir histórico de ${animalName(animal)}`} className="grid grid-cols-[1.35fr_1fr_1.2fr_1fr_1fr] items-center gap-3 border-b border-[var(--border)] px-3 py-3 text-[var(--text)] transition hover:bg-[var(--surface-strong)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--primary)]" to={`/rebanho/${animal.id}`}><span className="min-w-0"><strong className="text-[var(--primary)]">{animalName(animal)}</strong>{animal.name && animal.tagNumber && <span className="block text-xs text-[var(--muted)]">Brinco {animal.tagNumber}</span>}</span><StatusBadge descriptor={animalStatusDescriptor(animal.status)} /><span className="text-sm">{animal.currentGroup?.name ?? '—'}{animal.currentGroup && <span className="block text-xs text-[var(--muted)]">{milkingRoutineLabels[animal.currentGroup.milkingRoutine]}</span>}</span><span className="text-sm">{animal.latestProduction ? <><strong>{formatLiters(animal.latestProduction.totalLiters)}</strong><span className="block text-xs text-[var(--muted)]">{formatDate(animal.latestProduction.sessionDate)}</span></> : '—'}</span><span className="text-sm">{animal.latestWeight ? <><strong>{formatWeight(animal.latestWeight.weightKg)}</strong><span className="block text-xs text-[var(--muted)]">{new Date(animal.latestWeight.measuredAt).toLocaleDateString('pt-BR')}</span></> : '—'}</span></Link></td></tr>)}</tbody></table></div>
-        <div className="lg:hidden">{filtered.map((animal) => <Link aria-label={`Abrir histórico de ${animalName(animal)}`} className="block border-b border-[var(--border)] px-1 py-4 text-[var(--text)] transition last:border-b-0 hover:bg-[var(--surface-strong)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--primary)]" to={`/rebanho/${animal.id}`} key={animal.id}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><strong className="block truncate text-[var(--primary)]">{animalName(animal)}</strong><span className="text-sm text-[var(--muted)]">{animal.currentGroup?.name ?? (animal.status === 'LACTATING' ? 'Sem lote' : 'Fora da ordenha')}{animal.name && animal.tagNumber ? ` · Brinco ${animal.tagNumber}` : ''}</span></div><StatusBadge descriptor={animalStatusDescriptor(animal.status)} /></div><div className="mt-3 grid grid-cols-2 gap-2 text-sm"><div><span className="block text-xs text-[var(--muted)]">Último controle</span><strong>{animal.latestProduction ? formatLiters(animal.latestProduction.totalLiters) : 'Sem medição'}</strong></div><div><span className="block text-xs text-[var(--muted)]">Último peso</span><strong>{animal.latestWeight ? formatWeight(animal.latestWeight.weightKg) : 'Sem pesagem'}</strong></div></div></Link>)}</div>
-      </ScrollArea>
-    </SectionCard>}</div>
+    <FilterControls search={{ value: search, onChange: setSearch, placeholder: 'Nome, brinco ou alias' }} />
+    <div className="mt-5">
+      {loading ? <SkeletonList rows={6} /> : error ? <ErrorState message={error} retry={reload} /> : searching
+        ? (!searchResults.length ? <EmptyState title="Nenhum animal encontrado" description="Ajuste a busca digitada." /> : <AnimalRows animals={searchResults} />)
+        : <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {activeGroups.map((group) => {
+            const pasture = pastureByGroup.get(group.id);
+            const count = countByGroup.get(group.id) ?? 0;
+            return <Link key={group.id} data-testid={`herd-group-card-${group.id}`} className="section-card block text-[var(--text)] transition hover:border-[var(--primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--primary)]" to={`/rebanho/lote/${group.id}`} aria-label={`Abrir lote ${group.name}`}>
+              <div className="flex items-start justify-between gap-2">
+                <strong className="text-lg text-[var(--primary)]">{group.name}</strong>
+                <span className="rounded-full bg-[var(--surface-strong)] px-3 py-1 text-sm font-bold" data-testid={`herd-group-count-${group.id}`}>{count} {count === 1 ? 'animal' : 'animais'}</span>
+              </div>
+              <span className="mt-1 block text-sm text-[var(--muted)]">{milkingRoutineLabels[group.milkingRoutine]}</span>
+              <span className="mt-3 flex items-center gap-1.5 text-sm" data-testid={`herd-group-pasture-${group.id}`}>
+                {pasture
+                  ? <><MapPin size={16} aria-hidden className="text-[var(--primary)]" />Pasto no mapa: <strong>{pasture.name}</strong></>
+                  : <><TriangleAlert size={16} aria-hidden className="text-[var(--warning,#b7791f)]" /><span className="text-[var(--muted)]">Sem pasto no mapa · <span className="underline">vincular no editor</span></span></>}
+              </span>
+            </Link>;
+          })}
+          {unassigned.length > 0 && <Link data-testid="herd-group-card-sem-lote" className="section-card block text-[var(--text)] transition hover:border-[var(--primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--primary)]" to="/rebanho/lote/sem-lote" aria-label="Abrir animais sem lote">
+            <div className="flex items-start justify-between gap-2">
+              <strong className="text-lg text-[var(--primary)]">Sem lote</strong>
+              <span className="rounded-full bg-[var(--surface-strong)] px-3 py-1 text-sm font-bold" data-testid="herd-group-count-sem-lote">{unassigned.length} {unassigned.length === 1 ? 'animal' : 'animais'}</span>
+            </div>
+            <span className="mt-1 block text-sm text-[var(--muted)]">Novilhas, secas e vacas ainda sem rotina de ordenha</span>
+          </Link>}
+          {!activeGroups.length && !unassigned.length && <div className="sm:col-span-2 lg:col-span-3"><EmptyState title="Nenhum lote cadastrado" description="Cadastre um animal para começar; o lote é criado no cadastro." /></div>}
+        </div>}
+    </div>
+  </div>;
+}
+
+/** Animais de um lote específico (ou "Sem lote"): drill-down da tela inicial. */
+export function HerdGroupAnimalsPage() {
+  const { groupId = '' } = useParams();
+  const isUnassigned = groupId === 'sem-lote';
+  const [search, setSearch] = useState('');
+  const { data, loading, error, reload } = useResource<Animal[]>('/api/animals');
+  const { data: groups } = useResource<HerdGroup[]>('/api/herd-groups');
+  const { data: gameMap } = useResource<GameMapSummary>('/api/game/map');
+  const group = groups?.find((item) => item.id === groupId) ?? null;
+  const pasture = (gameMap?.zones ?? []).find((zone) => zone.kind === 'PASTURE' && zone.herdGroupId === groupId) ?? null;
+  const normalizedSearch = search.trim().toLocaleLowerCase('pt-BR');
+  const members = data?.filter((animal) => (isUnassigned
+    ? ALIVE_STATUSES.has(animal.status) && !animal.currentGroup
+    : animal.currentGroup?.id === groupId)) ?? [];
+  const filtered = normalizedSearch ? members.filter((animal) => matchesAnimalSearch(animal, normalizedSearch)) : members;
+  const title = isUnassigned ? 'Sem lote' : group?.name ?? 'Lote';
+  const subtitle = isUnassigned
+    ? 'Animais vivos sem lote de ordenha no momento'
+    : group ? `${milkingRoutineLabels[group.milkingRoutine]}${pasture ? ` · Pasto no mapa: ${pasture.name}` : ' · Sem pasto no mapa'}` : 'Animais deste lote';
+
+  if (!loading && !isUnassigned && groups && !group) return <div className="page"><ErrorState message="Lote não encontrado." /><Link className="button button-secondary mt-4" to="/rebanho"><ArrowLeft size={17} aria-hidden />Voltar para Rebanho</Link></div>;
+
+  return <div className="page">
+    <PageHeader icon={CowHead} title={title} subtitle={subtitle} action={<Link className="button button-secondary" to="/rebanho"><ArrowLeft size={17} aria-hidden />Todos os lotes</Link>} />
+    {!isUnassigned && !pasture && !loading && <div className="notice notice-warning mb-4 flex items-center gap-2" data-testid="group-no-pasture-warning"><TriangleAlert size={17} aria-hidden /><span>Este lote ainda não tem pasto no mapa do jogo. <Link className="underline" to="/jogo/mapa/editor">Vincular no editor</Link>.</span></div>}
+    <FilterControls search={{ value: search, onChange: setSearch, placeholder: 'Nome, brinco ou alias' }} />
+    <div className="mt-5" data-testid="herd-group-animals">
+      {loading ? <SkeletonList rows={6} /> : error ? <ErrorState message={error} retry={reload} /> : !filtered.length
+        ? <EmptyState title="Nenhum animal neste lote" description={normalizedSearch ? 'Ajuste a busca digitada.' : 'Mova animais para este lote pela ficha de cada um.'} />
+        : <AnimalRows animals={filtered} />}
+    </div>
   </div>;
 }
 

@@ -7,7 +7,9 @@ import { animalRoutes } from './routes/animals.routes.js';
 import { attachmentRoutes } from './routes/attachments.routes.js';
 import { captureRoutes } from './routes/captures.routes.js';
 import { dashboardRoutes } from './routes/dashboard.routes.js';
+import { gameRoutes } from './routes/game.routes.js';
 import { dailyMilkRoutes } from './routes/daily-milk.routes.js';
+import { feedingRoutes } from './routes/feeding.routes.js';
 import { herdGroupRoutes } from './routes/herd-groups.routes.js';
 import { milkRoutes } from './routes/milk.routes.js';
 import { milkCollectionRoutes } from './routes/milk-collections.routes.js';
@@ -52,6 +54,8 @@ export function createApp() {
   app.route('/api', dashboardRoutes);
   app.route('/api', weightRoutes);
   app.route('/api', captureRoutes);
+  app.route('/api', gameRoutes);
+  app.route('/api', feedingRoutes);
 
   app.onError((error, c) => {
     const known = error instanceof ApiError;

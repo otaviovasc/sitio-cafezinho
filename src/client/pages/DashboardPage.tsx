@@ -1,4 +1,4 @@
-import { Activity, AlertTriangle, BadgeDollarSign, Banknote, CalendarClock, CheckCircle2, Download, FileText, Home, Milk, Scale, Search, ShoppingCart, Store, Truck, Upload, WalletCards } from 'lucide-react';
+import { Activity, AlertTriangle, BadgeDollarSign, Banknote, CalendarClock, CheckCircle2, Download, FileText, Home, Milk, Scale, Search, ShoppingCart, Store, Truck, Upload, WalletCards, Wheat } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { formatDate, formatLiters, formatMoney } from '../../domain/format';
 import { CowHead } from '../components/icons';
@@ -11,6 +11,7 @@ type Dashboard = {
   today: {
     production: null | { productionDate: string; totalLiters: number; basis: 'HERD_TOTAL' | 'GROUP_SUM'; groupCount: number };
     collectionCount: number;
+    feedingCount: number;
     milk: { productionLiters: number | null; collectedLiters: number; differenceLiters: number | null };
     activeTreatmentCount: number;
     activeCaseCount: number;
@@ -18,7 +19,7 @@ type Dashboard = {
     overdueActions: number;
     withdrawals: Array<{ caseId: string; animalId: string; animalName: string | null; tagNumber: string | null; withdrawalEndsAt: string; days: number; state: string }>;
   };
-  attention: { productionMissing: boolean; productionGroupsMissing: number; collectionMissing: boolean; mastitisActionsToday: number; overdueMastitisActions: number; withdrawals: number; purchasesDueTomorrow: number; overduePurchases: number; overdueTotal: number; milkReview: number; weightReview: number; standaloneDocuments: number; lactatingWithoutGroup: number };
+  attention: { productionMissing: boolean; productionGroupsMissing: number; collectionMissing: boolean; feedingMissing: boolean; mastitisActionsToday: number; overdueMastitisActions: number; withdrawals: number; purchasesDueTomorrow: number; overduePurchases: number; overdueTotal: number; milkReview: number; weightReview: number; standaloneDocuments: number; lactatingWithoutGroup: number };
   month: { productionLiters: number; productionDays: number; collectionLiters: number; milkPricePerLiter: number | null; estimatedMilkValue: number | null; revenuesReceived: number; revenuesExpected: number; expensesPaid: number; purchasesOpen: number; cashResult: number; mastitisCases: number };
   herd: { total: number; lactating: number; dry: number; heifers: number; groups: Array<{ id: string; name: string; milkingRoutine: string; animalCount: number }> };
   latestIndividualControl: null | { id: string; sessionDate: string; confirmedTotal: number; reviewCount: number };
@@ -66,8 +67,8 @@ export function DashboardPage() {
     <div className="grid gap-5">
       <CaptureCard />
       <SectionCard icon={CalendarClock} title="Fechamento do dia">
-        <p className="mb-4 text-sm text-[var(--muted)]">Registre os dois fatos medidos durante o dia. Um não substitui o outro.</p>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <p className="mb-4 text-sm text-[var(--muted)]">Registre os fatos medidos durante o dia. Um não substitui o outro.</p>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Link className={`daily-task ${productionComplete ? 'daily-task-complete' : 'daily-task-pending'}`} to="/producao/total/novo">
             <span className="daily-task-icon">{productionComplete ? <CheckCircle2 size={22} aria-hidden /> : <Milk size={22} aria-hidden />}</span>
             <span className="min-w-0 flex-1"><strong>Produção do dia</strong><small>{data.attention.productionMissing ? 'Registrar rebanho todo ou por lote' : data.attention.productionGroupsMissing > 0 ? `${data.attention.productionGroupsMissing} lote(s) ainda sem registro` : `${formatLiters(data.today.milk.productionLiters ?? 0)} registrado`}</small></span>
@@ -77,6 +78,11 @@ export function DashboardPage() {
             <span className="daily-task-icon">{data.attention.collectionMissing ? <Truck size={22} aria-hidden /> : <CheckCircle2 size={22} aria-hidden />}</span>
             <span className="min-w-0 flex-1"><strong>Coleta do leiteiro</strong><small>{data.attention.collectionMissing ? 'Registrar o volume retirado' : `${formatLiters(data.today.milk.collectedLiters)} em ${data.today.collectionCount} coleta(s)`}</small></span>
             <Badge tone={data.attention.collectionMissing ? 'warning' : 'success'}>{data.attention.collectionMissing ? 'Pendente' : 'Feito'}</Badge>
+          </Link>
+          <Link className={`daily-task ${data.attention.feedingMissing ? 'daily-task-pending' : 'daily-task-complete'}`} to="/alimentacao/trato/novo" data-testid="daily-task-feeding">
+            <span className="daily-task-icon">{data.attention.feedingMissing ? <Wheat size={22} aria-hidden /> : <CheckCircle2 size={22} aria-hidden />}</span>
+            <span className="min-w-0 flex-1"><strong>Trato do dia</strong><small>{data.attention.feedingMissing ? 'Registrar a alimentação dada hoje' : `${data.today.feedingCount} trato(s) registrado(s)`}</small></span>
+            <Badge tone={data.attention.feedingMissing ? 'warning' : 'success'}>{data.attention.feedingMissing ? 'Pendente' : 'Feito'}</Badge>
           </Link>
         </div>
       </SectionCard>

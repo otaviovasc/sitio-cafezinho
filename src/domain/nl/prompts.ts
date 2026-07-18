@@ -46,7 +46,13 @@ const ACTIONS = `Tipos de ação suportados:
 6) "mastitis_case" — caso de mastite. Registre apenas o fato observado; nunca diagnostique nem prescreva.
    Campos: type, date, animalLabel, quarterLabel ("posterior direito", "anterior esquerdo", etc. ou null), detectionLabel ("visual", "caneca de fundo preto", "CMT" ou null), observedSigns, confidence, notes.
 
-7) "unknown" — a fala não corresponde a nenhuma ação acima. Campos: type, reason.`;
+7) "feed_purchase" — compra de ALIMENTO com quantidade dita (ração, silagem, mineral, farelo…). Use este tipo em vez de "purchase" quando a fala disser o item e a quantidade comprada; a compra financeira é criada junto e o estoque é creditado.
+   Campos: type, date, itemLabel (o alimento como falado: "ração", "silagem de milho"), quantity (número dito), unitLabel (a unidade como falada: "sacos", "toneladas", "quilos", "litros" ou null), amount (valor total em reais ou null), supplierLabel, paid (true se já paga), rawValueText, confidence, notes.
+
+8) "feeding_event" — trato dado ao rebanho (alimentação consumida, não comprada).
+   Campos: type, date, contextLabel (onde foi dado, como falado: "na ordenha", "na estação", "no cocho", "no pasto" ou null), scopeLabel (rótulo do lote como falado ou null), lines[] com { itemLabel, quantity, unitLabel, rawValueText } — uma linha por alimento citado —, confidence, notes.
+
+9) "unknown" — a fala não corresponde a nenhuma ação acima. Campos: type, reason.`;
 
 const EXAMPLES = `Exemplos:
 
@@ -62,18 +68,35 @@ JSON: { "intents": [
     { "animalLabel": "Mimosa", "morningLiters": 7, "afternoonLiters": null, "totalLiters": 7, "rawValueText": "7 litros", "confidence": "HIGH", "notes": null },
     { "animalLabel": "Cocada", "morningLiters": 9.5, "afternoonLiters": null, "totalLiters": 9.5, "rawValueText": "9 litros e meio", "confidence": "HIGH", "notes": null }
   ] }
+] }
+
+Fala: "Comprei 40 sacos de ração por 3.200 reais."
+JSON: { "intents": [
+  { "type": "feed_purchase", "date": { "relative": null, "iso": null, "rawText": "" }, "itemLabel": "ração", "quantity": 40, "unitLabel": "sacos", "amount": 3200, "supplierLabel": null, "paid": false, "rawValueText": "40 sacos de ração por 3.200 reais", "confidence": "HIGH", "notes": null }
+] }
+
+Fala: "Dei 3 toneladas de silagem e 2 quilos de mineral pro lote 1 na ordenha."
+JSON: { "intents": [
+  { "type": "feeding_event", "date": { "relative": null, "iso": null, "rawText": "" }, "contextLabel": "na ordenha", "scopeLabel": "lote 1", "lines": [
+    { "itemLabel": "silagem", "quantity": 3, "unitLabel": "toneladas", "rawValueText": "3 toneladas de silagem" },
+    { "itemLabel": "mineral", "quantity": 2, "unitLabel": "quilos", "rawValueText": "2 quilos de mineral" }
+  ], "confidence": "HIGH", "notes": null }
 ] }`;
 
 export type InterpretContext = {
   now?: Date;
   lotNames?: string[];
+  feedItemNames?: string[];
 };
 
-/** Monta o prompt de sistema para a interpretação, injetando a data de hoje e os lotes conhecidos como referência. */
+/** Monta o prompt de sistema para a interpretação, injetando a data de hoje e os lotes/itens conhecidos como referência. */
 export function buildInterpretSystemPrompt(context: InterpretContext = {}): string {
   const today = dateKeyInSaoPaulo(context.now ?? new Date());
   const lots = context.lotNames?.length
     ? `\n\nLotes conhecidos (apenas referência para reconhecer os rótulos; ainda assim devolva o rótulo como falado): ${context.lotNames.join(', ')}.`
     : '';
-  return `${CONSTITUTION}\n\nHoje é ${today} (fuso de São Paulo).${lots}\n\n${ACTIONS}\n\n${EXAMPLES}\n\n${OUTPUT_CONTRACT}`;
+  const feedItems = context.feedItemNames?.length
+    ? `\n\nItens de alimentação conhecidos (mesma regra: devolva o rótulo como falado): ${context.feedItemNames.join(', ')}.`
+    : '';
+  return `${CONSTITUTION}\n\nHoje é ${today} (fuso de São Paulo).${lots}${feedItems}\n\n${ACTIONS}\n\n${EXAMPLES}\n\n${OUTPUT_CONTRACT}`;
 }

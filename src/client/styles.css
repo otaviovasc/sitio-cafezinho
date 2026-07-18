@@ -175,6 +175,98 @@ a { color: inherit; text-decoration: none; }
   .toast-close { color: var(--muted); @apply -m-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition hover:bg-[var(--background)] hover:text-[var(--text)]; }
 }
 
+/* ── Jogo "Tabuleiro do Sítio" — tudo escopado em .game-* (ver docs/game-design.md) ── */
+@layer components {
+  .game-root {
+    --game-paper: #f5f0e4;
+    --game-ink: #3a3d35;
+    --game-ink-soft: #6b6e60;
+    --game-wood: #8a6f4d;
+    --game-roof: #d98e73;
+    --game-font: 'Nunito Variable', var(--font);
+    background: var(--game-paper);
+    color: var(--game-ink);
+    font-family: var(--game-font);
+    height: calc(100dvh - 3.5rem - 4.2rem - env(safe-area-inset-bottom));
+    @apply relative w-full select-none overflow-hidden;
+  }
+  .game-center { @apply absolute inset-0 flex items-center justify-center p-6 text-sm font-semibold; color: var(--game-ink-soft); }
+  .game-invite { @apply absolute inset-0 mx-auto flex w-full max-w-sm flex-col items-center justify-center gap-2 px-6 text-center; }
+  .game-invite h1 { @apply text-2xl font-extrabold tracking-tight; }
+  .game-invite p { color: var(--game-ink-soft); @apply text-sm leading-5; }
+  .game-invite svg { @apply mb-2; }
+  .game-cta { background: var(--primary); color: white; min-height: 48px; @apply mt-3 inline-flex items-center justify-center rounded-full px-6 text-sm font-extrabold transition; }
+  .game-cta:hover { background: var(--primary-strong); }
+  .game-cta:focus-visible { @apply outline-none ring-2 ring-[var(--primary)] ring-offset-2 ring-offset-[var(--game-paper)]; }
+  .game-map { @apply h-full w-full touch-none; animation: game-settle 400ms ease-out; transform-origin: center; }
+  .game-hud { @apply pointer-events-none absolute inset-0; }
+  .game-hud-chip { background: #fffef9; color: var(--game-ink); box-shadow: 0 4px 16px rgb(58 61 53 / 14%); font-family: var(--game-font); min-height: 2.5rem; @apply pointer-events-auto inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-extrabold; }
+  a.game-hud-chip { min-height: 2.75rem; }
+  a.game-hud-chip:focus-visible { @apply outline-none ring-2 ring-[var(--primary)] ring-offset-2 ring-offset-[var(--game-paper)]; }
+  .game-hud-chip small { color: var(--game-ink-soft); @apply text-[0.65rem] font-bold uppercase tracking-wide; }
+  /* O mic-fab do app vive no canto inferior direito: o HUD do jogo respeita esse espaço. */
+  .game-zoom-controls { bottom: calc(10rem + env(safe-area-inset-bottom)); @apply pointer-events-auto absolute right-3 z-10 flex flex-col gap-1.5 lg:bottom-28; }
+  .game-hud-top-left { @apply absolute left-3 top-3; }
+  .game-hud-top-right { @apply absolute right-3 top-3; }
+  .game-hud-bottom-left { @apply absolute bottom-3 left-3; }
+  .game-hud-bottom-left-raised { @apply absolute bottom-16 left-3; }
+  .game-zone-label { fill: var(--game-ink); font-family: var(--game-font); font-size: 17px; font-weight: 800; text-anchor: middle; opacity: 0.82; paint-order: stroke; stroke: #fffef9; stroke-width: 3px; stroke-linejoin: round; }
+  .game-badge-text { fill: var(--game-ink); font-family: var(--game-font); font-size: 13px; font-weight: 800; text-anchor: middle; dominant-baseline: middle; }
+  .game-zoom-button { background: #fffef9; color: var(--game-ink); box-shadow: 0 4px 16px rgb(58 61 53 / 14%); @apply flex h-11 w-11 items-center justify-center rounded-full text-lg font-extrabold transition; }
+  .game-zoom-button:hover { background: var(--primary-soft); }
+  .game-zoom-button:focus-visible { @apply outline-none ring-2 ring-[var(--primary)] ring-offset-2 ring-offset-[var(--game-paper)]; }
+  .game-installation { cursor: pointer; outline: none; }
+  .game-installation:focus-visible > circle { stroke: var(--primary); stroke-width: 3px; }
+  .game-tank-milk { transform-box: fill-box; transform-origin: center bottom; transition: transform 600ms ease-out; }
+  .game-truck-driving { animation: game-truck-drive 2400ms linear 1 forwards; }
+  .game-sheet-backdrop { background: rgb(16 24 18 / 42%); @apply fixed inset-0 z-50 flex items-end justify-center sm:p-5; }
+  .game-sheet { background: var(--game-paper, #f5f0e4); font-family: 'Nunito Variable', var(--font); box-shadow: 0 -12px 48px rgb(16 24 18 / 22%); max-height: min(88dvh, 42rem); animation: game-sheet-in 220ms ease-out; @apply w-full overflow-y-auto rounded-t-3xl outline-none sm:max-w-lg sm:rounded-3xl; }
+  .game-sheet-header { border-color: rgb(58 61 53 / 12%); @apply flex items-center gap-3 border-b px-4 py-4 sm:px-5; }
+  .game-sheet-header h2 { @apply text-xl font-extrabold tracking-tight; }
+  .game-sheet-header p { color: #6b6e60; @apply mt-0.5 text-sm leading-5; }
+  .game-sheet-close { color: #6b6e60; @apply ml-auto flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition hover:bg-[rgb(58_61_53_/_8%)]; }
+  .game-sheet-close:focus-visible { @apply outline-none ring-2 ring-[var(--primary)]; }
+  .game-sheet-body { @apply px-4 py-4 sm:px-5; }
+  .game-sheet-action { background: #fffef9; box-shadow: 0 2px 10px rgb(58 61 53 / 8%); min-height: 64px; text-align: left; @apply flex w-full items-center gap-3 rounded-2xl px-4 py-3 transition; }
+  .game-sheet-action:hover { box-shadow: 0 4px 16px rgb(58 61 53 / 14%); transform: translateY(-1px); }
+  .game-sheet-action:focus-visible { @apply outline-none ring-2 ring-[var(--primary)]; }
+  .game-sheet-action > svg { color: var(--primary); @apply shrink-0; }
+  .game-sheet-action strong, .game-sheet-action small { @apply block; }
+  .game-sheet-action small { color: #6b6e60; @apply mt-0.5 text-xs leading-4; }
+  .game-sheet-back { color: #6b6e60; min-height: 40px; @apply mb-3 inline-flex items-center gap-1.5 rounded-full text-sm font-bold; }
+  .game-sheet-back:focus-visible { @apply outline-none ring-2 ring-[var(--primary)]; }
+  .game-editor-layout { @apply grid gap-4 lg:grid-cols-[3fr_2fr]; }
+  /* isolation cria stacking context: os panes internos do Leaflet (z-index 400+) não passam por cima de modais/toasts do app. */
+  .game-editor-map { border-radius: var(--radius); box-shadow: var(--shadow); background: #d7d2c4; height: min(52dvh, 30rem); isolation: isolate; z-index: 0; @apply w-full overflow-hidden lg:h-[calc(100dvh-16rem)] lg:max-h-none; }
+  .game-editor-map-drawing { cursor: crosshair; }
+  .game-editor-map-drawing .leaflet-container, .game-editor-map-drawing .leaflet-interactive { cursor: crosshair !important; }
+  .editor-vertex-new { animation: editor-pulse 360ms ease-out 1; transform-origin: center; transform-box: fill-box; }
+}
+
+@keyframes editor-pulse {
+  from { transform: scale(1.8); opacity: 0.4; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+@keyframes game-truck-drive {
+  from { transform: translateX(-150px); }
+  to { transform: translateX(var(--game-truck-distance, 1300px)); }
+}
+
+@keyframes game-sheet-in {
+  from { opacity: 0.4; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes game-settle {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@media (min-width: 1024px) {
+  .game-root { height: calc(100dvh - 4rem); }
+}
+
 @keyframes toast-in {
   from { opacity: 0; transform: translateY(8px) scale(0.98); }
   to { opacity: 1; transform: translateY(0) scale(1); }

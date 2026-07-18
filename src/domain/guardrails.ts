@@ -11,6 +11,9 @@ export const GUARDRAILS = {
   collectionLiters: { min: 0, max: 30000 },
   weightKg: { min: 20, max: 1500 },
   amount: { min: 0, max: 10_000_000 },
+  // Quantidade de alimento por linha (na unidade canônica): cobre desde 0,5 kg
+  // de mineral até dezenas de toneladas de silagem compradas de uma vez.
+  feedQuantity: { min: 0, max: 100_000 },
 } as const satisfies Record<string, Range>;
 
 export function rangeError(value: number, range: Range, unit = ''): string | undefined {
