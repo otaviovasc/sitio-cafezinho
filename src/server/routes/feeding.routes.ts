@@ -1,11 +1,12 @@
-import { asc, desc, eq, inArray, ne } from 'drizzle-orm';
+import { asc, desc, eq, inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb } from '../../db/client.js';
 import { feedItems, feedPurchaseEntries, feedingEventItems, feedingEvents, herdGroups, purchases } from '../../db/schema.js';
-import { computeFeedInventory, linesBeyondBalance, type FeedInventoryLine } from '../../domain/feeding.js';
+import { linesBeyondBalance } from '../../domain/feeding.js';
 import { GUARDRAILS } from '../../domain/guardrails.js';
 import { fail } from '../http/api-error.js';
+import { loadFeedInventory } from '../services/feed-inventory.js';
 import { optionalText, readJson, validate } from '../http/validation.js';
 
 const unitSchema = z.enum(['KG', 'LITER', 'UNIT']);
@@ -44,22 +45,6 @@ const feedingEventSchema = z.object({
   }
 });
 
-/**
- * Saldo derivado por item: entries de compras não canceladas − consumos.
- * Nunca é armazenado (docs/domain-rules.md); recalculado a cada consulta.
- */
-async function loadInventory(): Promise<FeedInventoryLine[]> {
-  const db = getDb();
-  const [entryRows, consumptionRows] = await Promise.all([
-    db.select({ feedItemId: feedPurchaseEntries.feedItemId, quantity: feedPurchaseEntries.quantity })
-      .from(feedPurchaseEntries)
-      .innerJoin(purchases, eq(feedPurchaseEntries.purchaseId, purchases.id))
-      .where(ne(purchases.status, 'CANCELLED')),
-    db.select({ feedItemId: feedingEventItems.feedItemId, quantity: feedingEventItems.quantity }).from(feedingEventItems),
-  ]);
-  return computeFeedInventory(entryRows, consumptionRows);
-}
-
 export const feedingRoutes = new Hono()
   .get('/feed-items', async (c) => {
     const rows = await getDb().select().from(feedItems).orderBy(asc(feedItems.name));
@@ -89,7 +74,7 @@ export const feedingRoutes = new Hono()
   .get('/feed-inventory', async (c) => {
     const [items, inventory] = await Promise.all([
       getDb().select().from(feedItems).orderBy(asc(feedItems.name)),
-      loadInventory(),
+      loadFeedInventory(),
     ]);
     const byItem = new Map(inventory.map((line) => [line.feedItemId, line]));
     return c.json(items.map((item) => {
@@ -208,7 +193,7 @@ export const feedingRoutes = new Hono()
     // Consumo acima do saldo derivado: avisa e pede confirmação explícita —
     // não bloqueia, porque o histórico de compras pode estar incompleto.
     if (!body.confirmBeyondBalance) {
-      const inventory = await loadInventory();
+      const inventory = await loadFeedInventory();
       const beyond = linesBeyondBalance(body.items, inventory);
       if (beyond.length) {
         const detail = beyond

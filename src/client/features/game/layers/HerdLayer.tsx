@@ -1,6 +1,6 @@
-import { useMemo, type KeyboardEvent } from 'react';
+import { useMemo, type CSSProperties, type KeyboardEvent } from 'react';
 import { centroid, boundingBox } from '../../../../domain/game/geometry';
-import { herdClusterLayout } from '../../../../domain/game/herd-layout';
+import { herdClusterLayout, herdGrazeMotion } from '../../../../domain/game/herd-layout';
 import type { GameProjection } from '../../../../domain/game/projection';
 import type { GameHerdGroup, GameMapZone } from '../../../../domain/game/state';
 import { CowSprite } from '../sprites/CowSprite';
@@ -19,7 +19,7 @@ export function HerdLayer({ herd, zones, projection, onSelect }: {
   projection: GameProjection;
   onSelect?: (group: GameHerdGroup) => void;
 }) {
-  const { colors, herdClusterCap } = gameTokens;
+  const { colors, herdClusterCap, motion } = gameTokens;
   const clusters = useMemo(() => {
     const zoneById = new Map(zones.map((zone) => [zone.id, zone]));
     return herd
@@ -29,6 +29,7 @@ export function HerdLayer({ herd, zones, projection, onSelect }: {
         if (!zone) return [];
         const projected = zone.ring.map(projection.toLocal);
         const positions = herdClusterLayout(projected, entry.animalCount, entry.groupId, herdClusterCap);
+        const graze = herdGrazeMotion(entry.groupId, positions.length, 12, motion.grazeMinMs, motion.grazeMaxMs);
         const box = boundingBox(projected);
         const badgeAnchor = { x: centroid(projected).x, y: box.minY + 14 };
         // Hit-area só sobre o miolo do rebanho (não o pasto todo): o clique nos
@@ -41,9 +42,9 @@ export function HerdLayer({ herd, zones, projection, onSelect }: {
           width: herdBox.maxX - herdBox.minX + 36,
           height: herdBox.maxY - herdBox.minY + 36,
         };
-        return [{ entry, positions, badgeAnchor, hitArea }];
+        return [{ entry, positions, graze, badgeAnchor, hitArea }];
       });
-  }, [herd, zones, projection, herdClusterCap]);
+  }, [herd, zones, projection, herdClusterCap, motion]);
 
   function activate(event: KeyboardEvent, entry: GameHerdGroup) {
     if (event.key === 'Enter' || event.key === ' ') {
@@ -53,7 +54,7 @@ export function HerdLayer({ herd, zones, projection, onSelect }: {
   }
 
   return <g>
-    {clusters.map(({ entry, positions, badgeAnchor, hitArea }) => <g
+    {clusters.map(({ entry, positions, graze, badgeAnchor, hitArea }) => <g
       key={entry.groupId}
       data-testid={`herd-cluster-${entry.groupId}`}
       role="button"
@@ -65,7 +66,22 @@ export function HerdLayer({ herd, zones, projection, onSelect }: {
       onPointerDown={(event) => event.stopPropagation()}
     >
       <rect x={hitArea.x} y={hitArea.y} width={hitArea.width} height={hitArea.height} rx="18" fill="transparent" />
-      {positions.map((point, index) => <CowSprite key={index} x={point.x} y={point.y} size={24} flip={index % 2 === 1} />)}
+      {positions.map((point, index) => {
+        const motionVars = graze[index];
+        return <g
+          key={index}
+          className="game-cow"
+          data-grazing
+          style={{
+            '--cow-dx': `${motionVars.dx}px`,
+            '--cow-dy': `${motionVars.dy}px`,
+            '--cow-dur': `${motionVars.durationMs}ms`,
+            '--cow-delay': `${motionVars.delayMs}ms`,
+          } as CSSProperties}
+        >
+          <CowSprite x={point.x} y={point.y} size={24} flip={index % 2 === 1} />
+        </g>;
+      })}
       <g data-testid={`herd-count-${entry.groupId}`} transform={`translate(${badgeAnchor.x} ${badgeAnchor.y})`}>
         <rect x="-26" y="-12" width="52" height="24" rx="12" fill="#fffef9" stroke={colors.meadowEdge} strokeWidth="1" />
         <text className="game-badge-text" y="1">{entry.animalCount} 🐄</text>

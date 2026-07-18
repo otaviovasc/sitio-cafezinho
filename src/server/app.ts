@@ -14,6 +14,7 @@ import { herdGroupRoutes } from './routes/herd-groups.routes.js';
 import { milkRoutes } from './routes/milk.routes.js';
 import { milkCollectionRoutes } from './routes/milk-collections.routes.js';
 import { milkPriceRoutes } from './routes/milk-prices.routes.js';
+import { plantingRoutes } from './routes/plantings.routes.js';
 import { mastitisRoutes } from './routes/mastitis.routes.js';
 import { revenueRoutes } from './routes/revenues.routes.js';
 import { dataExportRoutes } from './routes/data-exports.routes.js';
@@ -56,6 +57,7 @@ export function createApp() {
   app.route('/api', captureRoutes);
   app.route('/api', gameRoutes);
   app.route('/api', feedingRoutes);
+  app.route('/api', plantingRoutes);
 
   app.onError((error, c) => {
     const known = error instanceof ApiError;
@@ -72,6 +74,8 @@ export function createApp() {
   });
 
   app.use('/assets/*', serveStatic({ root: './dist/client' }));
+  // Áudio do jogo (public/audio → dist/client/audio no build do Vite).
+  app.use('/audio/*', serveStatic({ root: './dist/client' }));
   app.get('*', serveStatic({ path: './dist/client/index.html' }));
   return app;
 }

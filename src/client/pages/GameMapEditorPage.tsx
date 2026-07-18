@@ -14,12 +14,13 @@ import { useResource } from '../hooks/useResource';
 import { useSubmit } from '../hooks/useSubmit';
 import { api, json } from '../lib/api';
 
-type PlaceableKind = 'MANGUEIRA' | 'DEPOSITO' | 'ESTACAO_ALIMENTACAO' | 'GARAGEM';
+type PlaceableKind = 'MANGUEIRA' | 'DEPOSITO' | 'ESTACAO_ALIMENTACAO' | 'PLANTACAO' | 'GARAGEM';
 
 const INSTALLATION_LABELS: Record<PlaceableKind, { name: string; hint: string }> = {
   MANGUEIRA: { name: 'Mangueira', hint: 'O coração do jogo: ordenha e coleta acontecem aqui.' },
   DEPOSITO: { name: 'Depósito', hint: 'Estoque de alimentação: compras e saldo por item.' },
   ESTACAO_ALIMENTACAO: { name: 'Estação de alimentação', hint: 'O cocho: registrar o trato dado ao rebanho.' },
+  PLANTACAO: { name: 'Plantação', hint: 'O talhão: plantio com insumos, crescimento e colheita.' },
   GARAGEM: { name: 'Garagem', hint: 'Decorativa — só aparece no tabuleiro.' },
 };
 
@@ -212,9 +213,9 @@ export function GameMapEditorPage() {
               <li className="guide-step">
                 <Warehouse size={20} aria-hidden />
                 <strong>4. Outras instalações</strong>
-                <p>Depósito e estação registram alimentação; a garagem é decorativa.</p>
+                <p>Depósito e estação registram alimentação; a plantação planta e colhe; a garagem é decorativa.</p>
                 <div className="mt-2 grid gap-2">
-                  {(['DEPOSITO', 'ESTACAO_ALIMENTACAO', 'GARAGEM'] as const).map((kind) => {
+                  {(['DEPOSITO', 'ESTACAO_ALIMENTACAO', 'PLANTACAO', 'GARAGEM'] as const).map((kind) => {
                     const existing = installations.find((installation) => installation.kind === kind) ?? null;
                     return <div key={kind} className="flex items-center justify-between gap-2 text-sm">
                       <span>{INSTALLATION_LABELS[kind].name} {existing && <Check className="inline text-[var(--success)]" size={15} aria-hidden />}</span>

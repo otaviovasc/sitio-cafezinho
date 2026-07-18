@@ -42,6 +42,9 @@ export const gameTokens = {
     /** Vacas (corpo claro + manchas). */
     cow: '#F7F2E9',
     cowSpot: '#4A443C',
+    /** Plantação: pé da cultura crescendo e o tom dourado de "pronto". */
+    crop: '#7DA854',
+    cropRipe: '#E4C465',
   },
   motion: {
     /** Diorama "assenta" na mesa ao carregar. */
@@ -52,6 +55,9 @@ export const gameTokens = {
     truckMs: 2400,
     /** Folha de ações deslizando (HUD fluido, ambientado no jogo). */
     sheetMs: 220,
+    /** Pastar: faixa de duração do vagar lento das vacas (por vaca, semeado). */
+    grazeMinMs: 9000,
+    grazeMaxMs: 17000,
   },
   sprite: {
     /** Grid local dos sprites: viewBox 0 0 64 64. */

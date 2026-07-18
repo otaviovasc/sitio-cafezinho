@@ -208,8 +208,21 @@ a { color: inherit; text-decoration: none; }
   .game-zoom-controls { bottom: calc(10rem + env(safe-area-inset-bottom)); @apply pointer-events-auto absolute right-3 z-10 flex flex-col gap-1.5 lg:bottom-28; }
   .game-hud-top-left { @apply absolute left-3 top-3; }
   .game-hud-top-right { @apply absolute right-3 top-3; }
+  /* Botão de som: abaixo do streak (topo direito), redondo como os de zoom.
+   * pointer-events-auto porque o .game-hud inteiro é pointer-events-none. */
+  .game-hud-audio { @apply pointer-events-auto absolute right-3 top-16; }
   .game-hud-bottom-left { @apply absolute bottom-3 left-3; }
   .game-hud-bottom-left-raised { @apply absolute bottom-16 left-3; }
+  .game-hud-bottom-left-raised-2 { @apply absolute bottom-28 left-3; }
+  /* Loja: fileira de categorias + cartões de item com preço sugerido editável. */
+  .game-loja-cats { @apply -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1; }
+  .game-loja-cat { background: #fffef9; color: var(--game-ink); min-height: 2.25rem; white-space: nowrap; @apply inline-flex items-center gap-1.5 rounded-full px-3.5 text-sm font-extrabold transition; }
+  .game-loja-cat[data-active='true'] { background: var(--primary); color: white; }
+  .game-loja-cat:focus-visible { @apply outline-none ring-2 ring-[var(--primary)]; }
+  .game-loja-card { background: #fffef9; box-shadow: 0 2px 10px rgb(58 61 53 / 8%); text-align: left; @apply w-full rounded-2xl px-3.5 py-3 transition; }
+  .game-loja-card[data-open='true'] { box-shadow: 0 0 0 2px var(--primary), 0 4px 16px rgb(58 61 53 / 14%); }
+  .game-loja-emoji { background: var(--primary-soft, #eef4ea); font-size: 1.35rem; @apply flex h-11 w-11 shrink-0 items-center justify-center rounded-xl; }
+  .game-loja-price { color: var(--primary-strong, var(--primary)); @apply text-sm font-extrabold tabular-nums; }
   .game-zone-label { fill: var(--game-ink); font-family: var(--game-font); font-size: 17px; font-weight: 800; text-anchor: middle; opacity: 0.82; paint-order: stroke; stroke: #fffef9; stroke-width: 3px; stroke-linejoin: round; }
   .game-badge-text { fill: var(--game-ink); font-family: var(--game-font); font-size: 13px; font-weight: 800; text-anchor: middle; dominant-baseline: middle; }
   .game-zoom-button { background: #fffef9; color: var(--game-ink); box-shadow: 0 4px 16px rgb(58 61 53 / 14%); @apply flex h-11 w-11 items-center justify-center rounded-full text-lg font-extrabold transition; }
@@ -219,6 +232,15 @@ a { color: inherit; text-decoration: none; }
   .game-installation:focus-visible > circle { stroke: var(--primary); stroke-width: 3px; }
   .game-tank-milk { transform-box: fill-box; transform-origin: center bottom; transition: transform 600ms ease-out; }
   .game-truck-driving { animation: game-truck-drive 2400ms linear 1 forwards; }
+  /* Vacas pastando: vagar lento entre dois pontos, semeado por vaca
+   * (--cow-dx/--cow-dy/--cow-dur/--cow-delay vêm do HerdLayer). Exceção
+   * deliberada à regra "sem idle em loop" (pedido do usuário, 2026-07-18);
+   * prefers-reduced-motion desliga pelo bloco global. */
+  .game-cow { animation: game-cow-graze var(--cow-dur, 12s) ease-in-out var(--cow-delay, 0s) infinite alternate; }
+  /* Selo "Colher!" pulsando de leve quando a plantação está pronta. */
+  .game-ready-badge { animation: game-ready-pulse 2000ms ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+  .game-progress { background: rgb(58 61 53 / 10%); @apply h-3 w-full overflow-hidden rounded-full; }
+  .game-progress-fill { background: var(--primary); transition: width 600ms ease-out; @apply h-full rounded-full; }
   .game-sheet-backdrop { background: rgb(16 24 18 / 42%); @apply fixed inset-0 z-50 flex items-end justify-center sm:p-5; }
   .game-sheet { background: var(--game-paper, #f5f0e4); font-family: 'Nunito Variable', var(--font); box-shadow: 0 -12px 48px rgb(16 24 18 / 22%); max-height: min(88dvh, 42rem); animation: game-sheet-in 220ms ease-out; @apply w-full overflow-y-auto rounded-t-3xl outline-none sm:max-w-lg sm:rounded-3xl; }
   .game-sheet-header { border-color: rgb(58 61 53 / 12%); @apply flex items-center gap-3 border-b px-4 py-4 sm:px-5; }
@@ -256,6 +278,17 @@ a { color: inherit; text-decoration: none; }
 @keyframes game-sheet-in {
   from { opacity: 0.4; transform: translateY(24px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes game-cow-graze {
+  from { transform: translate(0, 0); }
+  45% { transform: translate(calc(var(--cow-dx, 8px) * 0.4), var(--cow-dy, 6px)); }
+  to { transform: translate(var(--cow-dx, 8px), calc(var(--cow-dy, 6px) * 0.3)); }
+}
+
+@keyframes game-ready-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.07); }
 }
 
 @keyframes game-settle {

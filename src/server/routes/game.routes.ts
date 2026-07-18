@@ -2,11 +2,12 @@ import { and, asc, eq, isNull, ne } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb } from '../../db/client.js';
-import { animalGroupAssignments, animals, dailyMilkTotals, mapInstallations, mapZones, herdGroups, milkCollections, monthlyMilkPrices, purchases, type MapZone, type MapInstallation } from '../../db/schema.js';
+import { animalGroupAssignments, animals, dailyMilkTotals, mapInstallations, mapZones, herdGroups, milkCollections, monthlyMilkPrices, plantingInputs, plantings, purchases, type MapZone, type MapInstallation } from '../../db/schema.js';
 import { resolveDailyMilkDay } from '../../domain/daily-milk.js';
 import { summarizeGameEconomy } from '../../domain/game/economy.js';
 import { pointInPolygon, ringError } from '../../domain/game/geometry.js';
-import { buildHerdState, type GameMapInstallation, type GameMapState, type GameMapZone, type GameState, type MapPoint } from '../../domain/game/state.js';
+import { growthProgress, growthStage, plantingReadyAt } from '../../domain/game/planting.js';
+import { buildHerdState, type GameMapInstallation, type GameMapState, type GameMapZone, type GamePlanting, type GameState, type MapPoint } from '../../domain/game/state.js';
 import { computeStreak } from '../../domain/game/streaks.js';
 import { tankLevel } from '../../domain/game/tank.js';
 import { dateKeyInSaoPaulo } from '../../domain/purchases.js';
@@ -39,7 +40,7 @@ const zonePatchSchema = z.object({
 });
 
 const installationSchema = z.object({
-  kind: z.enum(['MANGUEIRA', 'DEPOSITO', 'GARAGEM', 'CASA', 'ESTACAO_ALIMENTACAO']),
+  kind: z.enum(['MANGUEIRA', 'DEPOSITO', 'GARAGEM', 'CASA', 'ESTACAO_ALIMENTACAO', 'PLANTACAO']),
   name: z.string().trim().min(1).max(120),
   position: pointSchema,
 });
@@ -88,6 +89,27 @@ function ringInsidePerimeter(perimeterRing: MapPoint[], ring: MapPoint[]): boole
   return ring.every((point) => insidePerimeter(perimeterRing, point));
 }
 
+/** Plantio GROWING no talhão, com insumos e progresso derivado do relógio. */
+async function loadActivePlanting(now: Date): Promise<GamePlanting | null> {
+  const db = getDb();
+  const [row] = await db.select().from(plantings).where(eq(plantings.status, 'GROWING')).limit(1);
+  if (!row) return null;
+  const inputRows = await db.select().from(plantingInputs).where(eq(plantingInputs.plantingId, row.id));
+  const durationHours = Number(row.durationHours);
+  const progress = growthProgress(row.plantedAt, durationHours, now);
+  return {
+    id: row.id,
+    installationId: row.installationId,
+    cropName: row.cropName,
+    plantedAt: row.plantedAt.toISOString(),
+    durationHours,
+    readyAt: plantingReadyAt(row.plantedAt, durationHours).toISOString(),
+    progress,
+    stage: growthStage(progress),
+    inputs: inputRows.map((input) => ({ name: input.name, quantity: Number(input.quantity), unit: input.unit })),
+  };
+}
+
 async function assertGroupLinkable(herdGroupId: string, exceptZoneId?: string) {
   const db = getDb();
   const [group] = await db.select({ id: herdGroups.id }).from(herdGroups).where(eq(herdGroups.id, herdGroupId)).limit(1);
@@ -102,8 +124,9 @@ export const gameRoutes = new Hono()
   .get('/game/state', async (c) => {
     c.header('cache-control', 'no-store');
     const db = getDb();
-    const [map, animalRows, assignmentRows, groupRows, dailyRows, collectionRows, priceRows, purchaseRows] = await Promise.all([
+    const [map, planting, animalRows, assignmentRows, groupRows, dailyRows, collectionRows, priceRows, purchaseRows] = await Promise.all([
       loadMapState(),
+      loadActivePlanting(new Date()),
       db.select({ id: animals.id, status: animals.status }).from(animals),
       db.select({ animalId: animalGroupAssignments.animalId, groupId: animalGroupAssignments.groupId })
         .from(animalGroupAssignments).where(isNull(animalGroupAssignments.endedOn)),
@@ -144,6 +167,7 @@ export const gameRoutes = new Hono()
       },
       economy,
       streaks,
+      planting,
     };
     return c.json(state);
   })

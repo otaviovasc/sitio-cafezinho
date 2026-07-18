@@ -5,13 +5,15 @@ import { DepositoSprite } from '../sprites/DepositoSprite';
 import { EstacaoAlimentacaoSprite } from '../sprites/EstacaoAlimentacaoSprite';
 import { GaragemSprite } from '../sprites/GaragemSprite';
 import { MangueiraSprite } from '../sprites/MangueiraSprite';
+import { PlantacaoSprite, type PlantacaoStage } from '../sprites/PlantacaoSprite';
 import { TankGauge } from '../sprites/TankGauge';
 import { TruckSprite } from '../sprites/TruckSprite';
+import { gameTokens } from '../tokens';
 
 export type TruckState = 'idle' | 'driving';
 
 /** Instalações com folha de ações; GARAGEM e CASA são decorativas. */
-const ACTIONABLE_KINDS = new Set(['MANGUEIRA', 'DEPOSITO', 'ESTACAO_ALIMENTACAO']);
+const ACTIONABLE_KINDS = new Set(['MANGUEIRA', 'DEPOSITO', 'ESTACAO_ALIMENTACAO', 'PLANTACAO']);
 
 /**
  * Instalações do tabuleiro. As que têm ações são botões SVG de verdade
@@ -19,11 +21,13 @@ const ACTIONABLE_KINDS = new Set(['MANGUEIRA', 'DEPOSITO', 'ESTACAO_ALIMENTACAO'
  * sprite. O caminhão do laticínio atravessa a base do mapa quando
  * `truckState` vira "driving".
  */
-export function InstallationLayer({ installations, projection, tankLevel, truckState, onTruckDone, onSelect }: {
+export function InstallationLayer({ installations, projection, tankLevel, truckState, plantingStage = 'EMPTY', onTruckDone, onSelect }: {
   installations: GameMapInstallation[];
   projection: GameProjection;
   tankLevel: number;
   truckState: TruckState;
+  /** Estágio do talhão da Plantação (EMPTY = sem plantio ativo). */
+  plantingStage?: PlantacaoStage;
   onTruckDone: () => void;
   onSelect: (installation: GameMapInstallation) => void;
 }) {
@@ -45,6 +49,14 @@ export function InstallationLayer({ installations, projection, tankLevel, truckS
         return <DepositoSprite x={point.x} y={point.y} size={84} />;
       case 'ESTACAO_ALIMENTACAO':
         return <EstacaoAlimentacaoSprite x={point.x} y={point.y} size={84} />;
+      case 'PLANTACAO':
+        return <>
+          <PlantacaoSprite x={point.x} y={point.y} size={92} stage={plantingStage} />
+          {plantingStage === 'READY' && <g className="game-ready-badge" transform={`translate(${point.x} ${point.y - 58})`}>
+            <rect x="-32" y="-13" width="64" height="26" rx="13" fill="#fffef9" stroke={gameTokens.colors.cropRipe} strokeWidth="1.5" />
+            <text className="game-badge-text" y="1">Colher! 🌾</text>
+          </g>}
+        </>;
       case 'GARAGEM':
         return <GaragemSprite x={point.x} y={point.y} size={80} />;
       default:

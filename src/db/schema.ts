@@ -69,7 +69,12 @@ export const proposedActionStatus = pgEnum('proposed_action_status', ['NEEDS_REV
 // lat/lng traçados uma vez sobre satélite. Não é fato de fazenda; o vínculo
 // zona↔lote apenas diz ONDE desenhar o lote no tabuleiro.
 export const mapZoneKind = pgEnum('map_zone_kind', ['PERIMETER', 'PASTURE']);
-export const mapInstallationKind = pgEnum('map_installation_kind', ['MANGUEIRA', 'DEPOSITO', 'GARAGEM', 'CASA', 'ESTACAO_ALIMENTACAO']);
+export const mapInstallationKind = pgEnum('map_installation_kind', ['MANGUEIRA', 'DEPOSITO', 'GARAGEM', 'CASA', 'ESTACAO_ALIMENTACAO', 'PLANTACAO']);
+
+// Plantação: ciclo real de roça (plantio com insumos → crescimento por relógio
+// → colheita). O progresso nunca é armazenado — deriva de planted_at +
+// duration_hours (src/domain/game/planting.ts).
+export const plantingStatus = pgEnum('planting_status', ['GROWING', 'HARVESTED', 'CANCELLED']);
 
 // Inventário de alimentação: um item só entra no estoque por compra registrada
 // (feed_purchase_entries credita; feeding_event_items debita). O saldo é
@@ -557,6 +562,42 @@ export const feedingEventItems = pgTable('feeding_event_items', {
   check('feeding_event_items_positive', sql`${table.quantity} > 0`),
 ]);
 
+// Um ciclo de plantio no talhão da Plantação. Só um GROWING por instalação;
+// a colheita registra o que saiu (quantidade + unidade livres).
+export const plantings = pgTable('plantings', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  installationId: uuid('installation_id').notNull().references(() => mapInstallations.id, { onDelete: 'cascade' }),
+  cropName: text('crop_name').notNull(),
+  plantedAt: timestamp('planted_at', { withTimezone: true }).notNull().defaultNow(),
+  durationHours: numeric('duration_hours', { precision: 10, scale: 3 }).notNull(),
+  status: plantingStatus('status').notNull().default('GROWING'),
+  harvestedAt: timestamp('harvested_at', { withTimezone: true }),
+  harvestQuantity: numeric('harvest_quantity', { precision: 14, scale: 3 }),
+  harvestUnit: text('harvest_unit'),
+  notes: text('notes'),
+  ...auditColumns,
+}, (table) => [
+  uniqueIndex('plantings_growing_unique').on(table.installationId).where(sql`${table.status} = 'GROWING'`),
+  index('plantings_installation_idx').on(table.installationId),
+  check('plantings_duration_positive', sql`${table.durationHours} > 0`),
+]);
+
+// Insumos gastos no plantio: itens do Depósito (feed_item_id debita o saldo
+// derivado, como um trato). Nome/unidade ficam como snapshot para o "recibo"
+// da colheita sobreviver a renomes do catálogo.
+export const plantingInputs = pgTable('planting_inputs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  plantingId: uuid('planting_id').notNull().references(() => plantings.id, { onDelete: 'cascade' }),
+  feedItemId: uuid('feed_item_id').references(() => feedItems.id, { onDelete: 'restrict' }),
+  name: text('name').notNull(),
+  quantity: numeric('quantity', { precision: 14, scale: 3 }).notNull(),
+  unit: text('unit').notNull(),
+}, (table) => [
+  index('planting_inputs_planting_idx').on(table.plantingId),
+  index('planting_inputs_feed_item_idx').on(table.feedItemId),
+  check('planting_inputs_positive', sql`${table.quantity} > 0`),
+]);
+
 export type Animal = typeof animals.$inferSelect;
 export type HerdGroup = typeof herdGroups.$inferSelect;
 export type WeightSession = typeof weightSessions.$inferSelect;
@@ -574,4 +615,6 @@ export type MapInstallation = typeof mapInstallations.$inferSelect;
 export type FeedItem = typeof feedItems.$inferSelect;
 export type FeedPurchaseEntry = typeof feedPurchaseEntries.$inferSelect;
 export type FeedingEvent = typeof feedingEvents.$inferSelect;
+export type Planting = typeof plantings.$inferSelect;
+export type PlantingInput = typeof plantingInputs.$inferSelect;
 export type FeedingEventItem = typeof feedingEventItems.$inferSelect;

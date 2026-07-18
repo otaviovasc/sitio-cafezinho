@@ -61,6 +61,7 @@ economia são sempre derivados, nunca armazenados.
 | `ink` | `#3A3D35` | Rótulos e ícones no mapa |
 | `tree` / `treeShade` | `#6E8F57` / `#5A7A46` | Árvores |
 | `cow` / `cowSpot` | `#F7F2E9` / `#4A443C` | Vacas |
+| `crop` / `cropRipe` | `#7DA854` / `#E4C465` | Plantação: cultura crescendo / pronta (dourado) |
 
 ## Tipografia
 
@@ -105,8 +106,78 @@ Poucos momentos, orquestrados, todos em CSS e desligados por
 4. Editor: vértice pulsa 1x ao ser adicionado.
 5. Folha de ações desliza (220ms).
 
-Sem idle-animations em loop. Estados animados SEMPRE espelhados em atributos
-`data-*` para asserção sem pixels.
+Idle em loop era proibido; exceções deliberadas (pedido do usuário, 2026-07-18):
+
+6. **Vacas pastando**: cada sprite vagueia devagar (`.game-cow`,
+   `game-cow-graze`, alternate infinite). Deslocamento/duração/atraso são
+   determinísticos por vaca (`herdGrazeMotion` em `domain/game/herd-layout.ts`,
+   seed = groupId; amplitude ±12 unidades para não encostar na cerca) e entram
+   como CSS custom props `--cow-*`. `prefers-reduced-motion` desliga tudo.
+7. **Selo "Colher!"** da Plantação pulsa suave (`game-ready-pulse`) enquanto
+   `stage = READY`.
+
+Fora isso, sem idle-animations. Estados animados SEMPRE espelhados em
+atributos `data-*` para asserção sem pixels.
+
+## Áudio (trilha + efeitos)
+
+- Gerente único em `src/client/features/game/audio.ts`; hook `useGameAudio`
+  liga tudo enquanto `/jogo` está montada. Nada de `new Audio` solto em
+  componente.
+- **Arquivos reais em `public/audio/game/`** (nomes fixos em
+  `GAME_AUDIO_FILES`; tabela no README da pasta). Arquivo ausente → placeholder
+  sintetizado via WebAudio toca no lugar — o repo não versiona binários.
+- Autoplay: nada toca antes do primeiro gesto; a trilha (volume 0.32, loop)
+  começa no primeiro toque e pausa quando a aba perde o foco.
+- Mudo global persistido em `localStorage['game-audio-muted']`; botão redondo
+  `game-audio-toggle` (`data-muted`) no HUD, topo direito abaixo do streak.
+- Mapa evento → som: rebanho `moo`; abrir instalação `click`; produção `pour`;
+  coleta `truck`; trato (ordenha/estação) `feed`; plantio `plant`; colheita
+  `harvest`; compra na Loja `buy`; confirmações genéricas `success`.
+- Em produção o servidor serve `/audio/*` de `dist/client` (Vite copia
+  `public/` no build).
+
+## Loja do sítio
+
+A porta de entrada de compras do jogo (chip "Loja" no HUD, botão no Depósito e
+atalho na Plantação): vitrine por categoria (sementes, fertilizantes, ração e
+sal, saúde, ordenha, combustível, manutenção) com itens populares e **preço e
+quantidade SUGERIDOS como placeholder editável** (`loja-catalog.ts` — nada ali
+é fato). Comprar grava a compra REAL em `/api/purchases` (categoria financeira
+correta por item) e, para itens `stockable` (sementes, adubo, ração, sal),
+garante o item no catálogo (`/api/feed-items`, match por nome) e credita o
+Depósito via `/api/feed-purchase-entries` — a economia do HUD reflete na hora
+porque a compra é real. Itens não estocáveis (remédio, diesel, manutenção) só
+geram o fato financeiro. Folha `game-loja-sheet`; som `buy` na compra.
+
+## Plantação (PLANTACAO)
+
+O talhão de roça: **plantar gasta insumos DO DEPÓSITO** (linhas
+`feedItemId + quantidade` com o mesmo `FeedLinesEditor` do trato e saldo por
+linha; ao menos uma — ex.: sementes; o consumo DEBITA o saldo derivado, e uso
+além do saldo pede confirmação — 409 `BEYOND_BALANCE`, padrão do trato), o
+**ciclo corre no relógio** (duração configurável em minutos/horas/dias, salva
+como `duration_hours`) e a **colheita registra o que saiu**, mostrando de
+volta o que foi investido ("você gastou X → colheu Y"). Sem estoque, a folha
+aponta para a Loja (`planting-no-stock`). `planting_inputs.feed_item_id`
+referencia o catálogo; nome/unidade ficam como snapshot para o recibo.
+
+- Dados: `plantings` + `planting_inputs` (migração `0016_plantings.sql`); só
+  um plantio `GROWING` por instalação (índice parcial). Progresso NUNCA é
+  armazenado — deriva de `planted_at + duration_hours`
+  (`src/domain/game/planting.ts`, compartilhado servidor/cliente; limiares
+  SPROUT < 0.25 ≤ GROWING < 0.6 ≤ MATURE < 1 ≤ READY).
+- Endpoints: `GET/POST /api/plantings`, `POST /api/plantings/:id/harvest`
+  (servidor recusa antes de READY — `PLANTING_NOT_READY`),
+  `POST /api/plantings/:id/cancel`. O plantio ativo viaja em
+  `/api/game/state.planting`.
+- Tabuleiro: `PlantacaoSprite` desenha o talhão por estágio (`data-stage`);
+  READY fica dourado (`cropRipe`) com o selo "Colher! 🌾". O cliente re-deriva
+  o estágio num tick local (5s no mapa, 1s na folha) sem bater no servidor.
+- Folha (`game-plantacao-sheet`): formulário de plantio (cultura, duração,
+  insumos), acompanhamento (barra `planting-progress` + tempo restante +
+  insumos investidos + cancelar) e colheita (`planting-harvest-form`) com o
+  "recibo" (`planting-harvest-result`).
 
 ## Sprites
 
@@ -147,6 +218,16 @@ Sem idle-animations em loop. Estados animados SEMPRE espelhados em atributos
 | `feeding-confirm-beyond` | Botão de confirmação de uso além do saldo | — |
 | `game-tank` | Medidor do tanque | `data-level` (0–1) |
 | `game-truck` | Caminhão do laticínio | `data-state` (`idle`/`driving`) |
+| `game-audio-toggle` | Botão de mudo do jogo | `data-muted` |
+| `game-plantacao-sheet` | Folha da Plantação | — |
+| `planting-form` / `planting-input-line-{n}` | Formulário de plantio e linhas de insumo | — |
+| `planting-growing` / `planting-progress` | Acompanhamento do ciclo | `aria-valuenow` (%) |
+| `planting-harvest-form` / `planting-harvest-result` | Colheita e recibo (gasto → colhido) | — |
+| `planting-inputs` | Lista de insumos investidos | — |
+| `planting-no-stock` / `planting-confirm-beyond` | Aviso de depósito vazio / confirmação além do saldo | — |
+| `game-loja-chip` | Chip da Loja no HUD | — |
+| `game-loja-sheet` / `loja-items` / `loja-item-{id}` / `loja-buy-{id}` | Folha da Loja, vitrine e compra | — |
+| `deposito-open-loja` | Ação "Comprar na Loja" no Depósito | — |
 | `hud-economy` | Chip de economia | — |
 | `hud-streak` | Chip de streak | — |
 | `editor-map` | Container do Leaflet | — |
@@ -184,9 +265,11 @@ Sem idle-animations em loop. Estados animados SEMPRE espelhados em atributos
    fixture e2e ficam em `createGameMapFixture` (helpers.ts).
 
 Instalações atuais: MANGUEIRA (produção/coleta/trato da ordenha), DEPOSITO
-(inventário de alimentação: compra real credita, trato debita, saldo sempre
-derivado), ESTACAO_ALIMENTACAO (trato STATION com saldo por linha), GARAGEM
-(decorativa), CASA (enum reservado, ainda sem sprite).
+(inventário de insumos: compra real pela Loja credita, trato E plantio
+debitam, saldo sempre derivado), ESTACAO_ALIMENTACAO (trato STATION com saldo
+por linha), PLANTACAO
+(plantio com insumos → crescimento por relógio → colheita; seção "Plantação"),
+GARAGEM (decorativa), CASA (enum reservado, ainda sem sprite).
 
 ## Testes
 

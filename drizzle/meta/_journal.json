@@ -113,6 +113,20 @@
       "when": 1784340100000,
       "tag": "0015_feeding_nl_actions",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1784340200000,
+      "tag": "0016_plantings",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1784340300000,
+      "tag": "0017_planting_inputs_from_deposito",
+      "breakpoints": true
     }
   ]
 }

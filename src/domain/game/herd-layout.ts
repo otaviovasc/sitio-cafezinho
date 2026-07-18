@@ -28,6 +28,29 @@ function mulberry32(state: number): () => number {
   };
 }
 
+/** Parâmetros do vagar de uma vaca no pasto (CSS custom props, sem Math.random). */
+export type GrazeMotion = { dx: number; dy: number; durationMs: number; delayMs: number };
+
+/**
+ * Movimento de pastar determinístico por vaca: deslocamento pequeno (a vaca
+ * fica no miolo do rebanho, longe da cerca) e duração/atraso variados para o
+ * rebanho não se mover em bloco. Mesmo seed → mesmo movimento (testes visuais
+ * desligam animações; o layout continua estável).
+ */
+export function herdGrazeMotion(seed: string, count: number, amplitude = 12, minMs = 9000, maxMs = 17000): GrazeMotion[] {
+  const random = mulberry32(hashSeed(`${seed}:graze`));
+  const motions: GrazeMotion[] = [];
+  for (let index = 0; index < count; index += 1) {
+    motions.push({
+      dx: Math.round((random() * 2 - 1) * amplitude * 10) / 10,
+      dy: Math.round((random() * 2 - 1) * amplitude * 10) / 10,
+      durationMs: Math.round(minMs + random() * (maxMs - minMs)),
+      delayMs: -Math.round(random() * maxMs),
+    });
+  }
+  return motions;
+}
+
 /**
  * Distribui até `cap` pontos dentro do polígono (projetado). Amostra a caixa
  * envolvente e aceita só pontos internos; se o polígono for fino demais,

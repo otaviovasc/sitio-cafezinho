@@ -1,4 +1,5 @@
 import type { GameEconomy } from './economy.js';
+import type { PlantingGrowthStage } from './planting.js';
 
 /**
  * Contrato do estado do jogo, compartilhado entre servidor e cliente. O
@@ -9,7 +10,7 @@ import type { GameEconomy } from './economy.js';
 export type MapPoint = { lat: number; lng: number };
 
 export type MapZoneKind = 'PERIMETER' | 'PASTURE';
-export type MapInstallationKind = 'MANGUEIRA' | 'DEPOSITO' | 'GARAGEM' | 'CASA' | 'ESTACAO_ALIMENTACAO';
+export type MapInstallationKind = 'MANGUEIRA' | 'DEPOSITO' | 'GARAGEM' | 'CASA' | 'ESTACAO_ALIMENTACAO' | 'PLANTACAO';
 
 export type GameMapZone = {
   id: string;
@@ -54,6 +55,22 @@ export type GameToday = {
   tankLevel: number;
 };
 
+export type GamePlantingInput = { name: string; quantity: number; unit: string };
+
+/** Ciclo ativo da Plantação: o progresso vem do relógio, nunca do banco. */
+export type GamePlanting = {
+  id: string;
+  installationId: string;
+  cropName: string;
+  plantedAt: string;
+  durationHours: number;
+  readyAt: string;
+  /** Snapshot 0–1 no momento da resposta; o cliente re-deriva a cada tick. */
+  progress: number;
+  stage: PlantingGrowthStage;
+  inputs: GamePlantingInput[];
+};
+
 export type GameStreaks = {
   dailyMilk: { current: number; best: number };
   collections: { current: number; best: number };
@@ -67,6 +84,8 @@ export type GameState = {
   today: GameToday;
   economy: GameEconomy;
   streaks: GameStreaks;
+  /** Plantio em andamento na Plantação; null = talhão vazio ou sem instalação. */
+  planting: GamePlanting | null;
 };
 
 /** Monta o resumo do rebanho a partir das linhas cruas (função pura, testável). */
