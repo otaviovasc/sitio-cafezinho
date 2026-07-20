@@ -117,3 +117,11 @@ export function purchaseStatusDescriptor(status: string, isOverdue: boolean, ope
 export function animalStatusDescriptor(status: AnimalStatus): StatusDescriptor {
   return { label: animalStatusLabels[status], tone: animalStatusTone(status) };
 }
+
+// Lotação: vaca em lactação sem lote é um problema a resolver; qualquer outra
+// situação viva sem lote é neutra (o lote passou a ser unidade de manejo).
+export function missingGroupDescriptor(status: AnimalStatus): StatusDescriptor {
+  return status === 'LACTATING'
+    ? { label: 'Sem lote', tone: 'warning' }
+    : { label: 'Sem lote', tone: 'neutral' };
+}

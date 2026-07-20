@@ -1,5 +1,5 @@
 import { useEffect, type ComponentType, type ReactNode } from 'react';
-import { Files, Gamepad2, Home, LogOut, Milk, Scale, WalletCards, type LucideProps } from 'lucide-react';
+import { Files, Gamepad2, Home, LogOut, Milk, Scale, Trees, WalletCards, type LucideProps } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { CowHead } from './icons';
 import { MicFab } from './capture';
@@ -10,6 +10,7 @@ const nav: Array<{ to: string; label: string; icon: ComponentType<LucideProps> }
   { to: '/jogo', label: 'Jogo', icon: Gamepad2 },
   { to: '/producao', label: 'Produção', icon: Milk },
   { to: '/rebanho', label: 'Rebanho', icon: CowHead },
+  { to: '/pastos', label: 'Pastos', icon: Trees },
   { to: '/pesos', label: 'Peso', icon: Scale },
   { to: '/financeiro', label: 'Financeiro', icon: WalletCards },
   { to: '/documentos', label: 'Documentos', icon: Files },
@@ -58,7 +59,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     </header>
     <main>{children}</main>
     <MicFab />
-    <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-7 border-t border-[var(--border)] bg-[var(--surface)] px-1 pb-[max(0.35rem,env(safe-area-inset-bottom))] pt-1 lg:hidden">
+    <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-8 border-t border-[var(--border)] bg-[var(--surface)] px-1 pb-[max(0.35rem,env(safe-area-inset-bottom))] pt-1 lg:hidden">
       {nav.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} end={to === '/'} className={({ isActive }) => `flex min-h-14 min-w-0 flex-col items-center justify-center gap-0.5 overflow-hidden rounded-lg px-0.5 text-center text-[9px] font-bold ${isActive ? 'bg-[var(--primary-soft)] text-[var(--primary)]' : 'text-[var(--muted)]'}`}><Icon className="shrink-0" size={20} aria-hidden /><span className="block max-w-full truncate">{label}</span></NavLink>)}
     </nav>
   </div>;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Pencil, Plus, X } from 'lucide-react';
 import { Button, ErrorState, Field, Input, Select } from '../../components/ui';
 import { useResource } from '../../hooks/useResource';
@@ -20,23 +20,30 @@ type Props = {
   label?: string;
   required?: boolean;
   fieldError?: string;
+  /** Rotinas aceitas neste contexto; por padrão todas (o lote é unidade de manejo). */
+  routines?: readonly MilkingRoutine[];
 };
 
-export function GroupPicker({ value, onChange, label = 'Lote de ordenha', required = true, fieldError }: Props) {
+export function GroupPicker({ value, onChange, label = 'Lote', required = true, fieldError, routines }: Props) {
   const { data: groups = [], loading, error, reload } = useResource<HerdGroup[]>('/api/herd-groups');
+  const options = useMemo(
+    () => (groups ?? []).filter((group) => group.active && (!routines || routines.includes(group.milkingRoutine))),
+    [groups, routines],
+  );
   const selected = groups?.find((group) => group.id === value) ?? null;
   const [mode, setMode] = useState<'closed' | 'create' | 'edit'>('closed');
   const [name, setName] = useState('');
   const [routine, setRoutine] = useState<HerdGroup['milkingRoutine']>('MORNING_AND_AFTERNOON');
   const [actionError, setActionError] = useState('');
   const [busy, setBusy] = useState(false);
+  const routineChoices = routines ?? (Object.keys(milkingRoutineLabels) as MilkingRoutine[]);
 
   useEffect(() => {
-    if (!value && groups?.length) onChange(groups.find((group) => group.active)?.id ?? '');
-  }, [groups, onChange, value]);
+    if (required && !value && options.length) onChange(options[0].id);
+  }, [options, onChange, required, value]);
 
   function openCreate() {
-    setMode('create'); setName(''); setRoutine('MORNING_AND_AFTERNOON'); setActionError('');
+    setMode('create'); setName(''); setRoutine(routineChoices[0]); setActionError('');
   }
 
   function openEdit() {
@@ -50,7 +57,7 @@ export function GroupPicker({ value, onChange, label = 'Lote de ordenha', requir
     try {
       const saved = await api<HerdGroup>(mode === 'edit' && selected ? `/api/herd-groups/${selected.id}` : '/api/herd-groups', json(mode === 'edit' ? 'PATCH' : 'POST', { name, milkingRoutine: routine, active: true }));
       onChange(saved.id); setMode('closed'); await reload();
-    } catch (cause) { setActionError(cause instanceof Error ? cause.message : 'Não foi possível salvar o grupo.'); }
+    } catch (cause) { setActionError(cause instanceof Error ? cause.message : 'Não foi possível salvar o lote.'); }
     finally { setBusy(false); }
   }
 
@@ -58,12 +65,12 @@ export function GroupPicker({ value, onChange, label = 'Lote de ordenha', requir
     <Field label={label} hint={selected ? milkingRoutineLabels[selected.milkingRoutine] : undefined} error={fieldError}>
       <Select value={value} onChange={(event) => { onChange(event.target.value); setMode('closed'); }} required={required} disabled={loading}>
         <option value="">Selecione</option>
-        {groups?.filter((group) => group.active).map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+        {options.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
       </Select>
     </Field>
     <div className="flex flex-wrap gap-2">
       <Button type="button" variant="secondary" onClick={openCreate}><Plus size={17} aria-hidden />Criar lote</Button>
-      {selected && <Button type="button" variant="secondary" onClick={openEdit}><Pencil size={17} aria-hidden />Editar regra</Button>}
+      {selected && <Button type="button" variant="secondary" onClick={openEdit}><Pencil size={17} aria-hidden />Editar lote</Button>}
     </div>
     {error && <ErrorState message={error} retry={reload} />}
     {mode !== 'closed' && <div className="notice notice-info grid gap-3">
@@ -71,9 +78,9 @@ export function GroupPicker({ value, onChange, label = 'Lote de ordenha', requir
       {actionError && <div className="notice notice-error">{actionError}</div>}
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Nome do lote"><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Ex.: Lote 2" required /></Field>
-        <Field label="Rotina de ordenha"><Select value={routine} onChange={(event) => setRoutine(event.target.value as HerdGroup['milkingRoutine'])}>{Object.entries(milkingRoutineLabels).filter(([key]) => key !== 'NOT_MILKED').map(([key, text]) => <option key={key} value={key}>{text}</option>)}</Select></Field>
+        <Field label="Rotina"><Select value={routine} onChange={(event) => setRoutine(event.target.value as HerdGroup['milkingRoutine'])}>{routineChoices.map((key) => <option key={key} value={key}>{milkingRoutineLabels[key]}</option>)}</Select></Field>
       </div>
-      <Button type="button" disabled={busy} onClick={() => void save()}>{busy ? 'Salvando…' : mode === 'create' ? 'Criar e selecionar' : 'Salvar regra'}</Button>
+      <Button type="button" disabled={busy} onClick={() => void save()}>{busy ? 'Salvando…' : mode === 'create' ? 'Criar e selecionar' : 'Salvar lote'}</Button>
     </div>}
   </div>;
 }

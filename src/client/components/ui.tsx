@@ -4,7 +4,7 @@ import { ArrowLeft } from 'lucide-react';
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactElement, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 
-const topLevelRoutes = new Set(['/', '/jogo', '/rebanho', '/producao', '/pesos', '/financeiro', '/documentos']);
+const topLevelRoutes = new Set(['/', '/jogo', '/rebanho', '/pastos', '/producao', '/pesos', '/financeiro', '/documentos']);
 
 function backDestination(pathname: string): { to: string; label: string } | null {
   if (topLevelRoutes.has(pathname)) return null;

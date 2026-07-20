@@ -57,15 +57,16 @@ Com `SEED_DEMO_DATA=true`, a base limpa deve mostrar dados explicitamente fictí
 
 Use um animal criado apenas para o teste.
 
-- [ ] Cadastrar como Novilha e confirmar que não possui lote nem entra na ordenha.
+- [ ] Cadastrar como Novilha (fêmea) e confirmar que não entra na ordenha.
 - [ ] Registrar parto, escolher Lote 1 e confirmar mudança para Em lactação.
+- [ ] No mesmo parto, cadastrar o bezerro oferecido (sexo, brinco/nome, touro pai opcional) e conferir mãe/pai no detalhe da cria.
 - [ ] Confirmar o parto e o início da lactação na linha do tempo.
 - [ ] Registrar cio sem cobertura.
 - [ ] Registrar outro cio com cobertura, touro opcional e resultado aguardando confirmação.
 - [ ] Editar essa cobertura para Prenhez confirmada, com data da confirmação.
 - [ ] Confirmar que a prenhez não muda a situação Em lactação.
 - [ ] Excluir um cio após a confirmação destrutiva.
-- [ ] Iniciar período seco e confirmar encerramento do lote.
+- [ ] Iniciar período seco e confirmar encerramento do lote de ordenha, com oferta de lote sem ordenha.
 - [ ] Desfazer a última situação e confirmar restauração segura do lote e do status.
 - [ ] Iniciar período seco novamente; depois registrar novo parto e Lote 2.
 - [ ] Mudar de Lote 2 para Lote 1 e conferir todo o histórico de lotes.
@@ -75,10 +76,22 @@ Use um animal criado apenas para o teste.
 
 Regras que devem permanecer verdadeiras:
 
-- Novilha é antes da primeira lactação; Seca é entre lactações.
-- Somente Em lactação pertence a lote e recebe controle individual.
+- Cria (CALF) é até o desmame; Novilha é antes da primeira lactação; Seca é entre lactações; cria nunca entra direto em lactação.
+- Somente Em lactação pertence a lote com ordenha e recebe controle individual.
+- Demais situações vivas podem ocupar lotes sem ordenha; nunca lotes com ordenha.
 - Prenhez e situação produtiva são informações paralelas.
 - Venda e morte exigem motivo e encerram o ciclo; testem somente em um animal descartável.
+
+## 5.1. Lotes sem ordenha e pastos
+
+- [ ] Criar um lote "sem ordenha" pelo GroupPicker e confirmar que ele não aparece nos alertas de produção/ordenha.
+- [ ] Cadastrar um macho como Cria e movê-lo para Recria/Engorda; lotar no lote sem ordenha.
+- [ ] Cadastrar um touro (BULL, macho) e confirmar que fêmea não pode ser touro nem macho pode ser novilha.
+- [ ] Em `/pastos`, criar um pasto, mover o lote para ele e conferir dias de uso.
+- [ ] Tentar mover outro lote para o mesmo pasto e conferir o bloqueio de exclusividade.
+- [ ] Retirar o lote e confirmar dias de descanso contados a partir da saída.
+- [ ] Tentar desativar um pasto ocupado e confirmar o bloqueio; subdividir: retirar o lote, desativar, criar "Pasto 1.a" e "Pasto 1.b".
+- [ ] No mapa do jogo, confirmar que a zona de pasto mostra o lote que ocupa o pasto real.
 
 ## 6. Produção total diária
 

@@ -41,8 +41,8 @@ describe('herdClusterLayout', () => {
 
 describe('buildHerdState', () => {
   const zones: GameMapZone[] = [
-    { id: 'z-per', kind: 'PERIMETER', name: 'Sítio', herdGroupId: null, ring: [], styleVariant: 0 },
-    { id: 'z-1', kind: 'PASTURE', name: 'Pasto 1', herdGroupId: 'g-1', ring: [], styleVariant: 0 },
+    { id: 'z-per', kind: 'PERIMETER', name: 'Sítio', pastureId: null, herdGroupId: null, ring: [], styleVariant: 0 },
+    { id: 'z-1', kind: 'PASTURE', name: 'Pasto 1', pastureId: 'p-1', herdGroupId: 'g-1', ring: [], styleVariant: 0 },
   ];
   const groups = [
     { id: 'g-1', name: 'Lote 1', active: true },
@@ -82,5 +82,25 @@ describe('buildHerdState', () => {
       zones,
     );
     expect(unassignedCount).toBe(1);
+  });
+
+  it('crias, recria e touros contam como animais vivos', () => {
+    const { herd } = buildHerdState(
+      [
+        { id: 'a-1', status: 'CALF' },
+        { id: 'a-2', status: 'GROWING' },
+        { id: 'a-3', status: 'BULL' },
+        { id: 'a-4', status: 'DEAD' },
+      ],
+      [
+        { animalId: 'a-1', groupId: 'g-1' },
+        { animalId: 'a-2', groupId: 'g-1' },
+        { animalId: 'a-3', groupId: 'g-1' },
+        { animalId: 'a-4', groupId: 'g-1' },
+      ],
+      groups,
+      zones,
+    );
+    expect(herd.find((entry) => entry.groupId === 'g-1')?.animalCount).toBe(3);
   });
 });

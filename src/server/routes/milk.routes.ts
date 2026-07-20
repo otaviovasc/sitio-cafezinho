@@ -204,7 +204,7 @@ export const milkRoutes = new Hono()
         let created = false;
         if (!animal) {
           const identity = identityFromRawAnimalLabel(row.rawAnimalLabel);
-          [animal] = await tx.insert(animals).values({ ...identity, status: 'LACTATING', notes: `Cadastrado a partir do controle individual ${session.id}.` }).returning();
+          [animal] = await tx.insert(animals).values({ ...identity, sex: 'FEMALE', status: 'LACTATING', notes: `Cadastrado a partir do controle individual ${session.id}.` }).returning();
           await tx.insert(animalStatusEvents).values({ animalId: animal.id, previousStatus: null, status: 'LACTATING', changedOn: session.sessionDate, notes: `Situação definida a partir do controle individual ${session.id}.` });
           await tx.insert(animalGroupAssignments).values({ animalId: animal.id, groupId: group.id, startedOn: session.sessionDate, notes: `Lote definido a partir do controle individual ${session.id}.` });
           allAnimals.push(animal);

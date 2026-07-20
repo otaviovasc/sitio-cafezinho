@@ -14,6 +14,15 @@ pelos endpoints validados existentes** (`/api/daily-milk-totals`,
 simulação, zero endpoint de escrita próprio para fatos de fazenda. Streaks e
 economia são sempre derivados, nunca armazenados.
 
+Pasto e mapa são a mesma entidade (decisão 2026-07-20): toda zona PASTURE
+vincula um pasto real — sem vínculo escolhido, o editor cria o pasto pelo
+`POST /api/pastures` antes de salvar a zona, e `/pastos` oferece "Desenhar no
+mapa" (`/jogo/mapa/editor?pasto=<id>`) para pastos ainda não desenhados. A
+área do pasto (`area_ha`) é a **medição do traçado**: salvar/retraçar a zona
+grava os hectares calculados por `ringAreaHa()` via
+`syncPastureAreaFromRing()` no pasture.service — exceção deliberada e única à
+escrita de fato de fazenda a partir das rotas do jogo.
+
 ## Direção de arte
 
 - **Assinatura:** o traçado bruto do GPS vira brinquedo. O PERÍMETRO passa por

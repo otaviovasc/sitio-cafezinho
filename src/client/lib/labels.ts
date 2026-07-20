@@ -1,5 +1,10 @@
 export const animalStatusLabels: Record<string, string> = {
   HEIFER: 'Novilha', LACTATING: 'Em lactação', DRY: 'Seca', SOLD: 'Vendida', DEAD: 'Morta',
+  CALF: 'Cria', GROWING: 'Recria/Engorda', BULL: 'Touro',
+};
+
+export const animalSexLabels: Record<string, string> = {
+  FEMALE: 'Fêmea', MALE: 'Macho',
 };
 
 export const categoryLabels: Record<string, string> = {

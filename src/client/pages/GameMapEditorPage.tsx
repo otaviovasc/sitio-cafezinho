@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Check, Fence, Milk as MilkIcon, Trees, Undo2, Warehouse, X } from 'lucide-react';
-import { ringError } from '../../domain/game/geometry';
+import { ringAreaHa, ringError } from '../../domain/game/geometry';
 import type { GameMapState, MapPoint } from '../../domain/game/state';
 import { ConfirmButton } from '../components/feedback';
 import { useToast } from '../components/feedback-context';
@@ -9,7 +9,7 @@ import { Button, ErrorState, Field, Input, LoadingState, PageHeader, SectionCard
 import { LeafletCanvas } from '../features/game/editor/LeafletCanvas';
 import { LocationStep } from '../features/game/editor/LocationStep';
 import { useDrawing } from '../features/game/editor/useDrawing';
-import type { HerdGroup } from '../features/animals/GroupPicker';
+import type { PastureSummary } from '../features/pastures/types';
 import { useResource } from '../hooks/useResource';
 import { useSubmit } from '../hooks/useSubmit';
 import { api, json } from '../lib/api';
@@ -26,29 +26,46 @@ const INSTALLATION_LABELS: Record<PlaceableKind, { name: string; hint: string }>
 
 /**
  * Editor do mapa (setup único): localizar → traçar perímetro → traçar pastos
- * (vinculados a lotes) → posicionar a mangueira. Leaflet vive só neste chunk.
- * O traçado salvo em lat/lng é a fonte única; o jogo renderiza a versão
- * estilizada (Chaikin) em /jogo.
+ * (cada um desenha um PASTO real) → posicionar a mangueira. Leaflet vive só
+ * neste chunk. O traçado salvo em lat/lng é a fonte única; o jogo renderiza a
+ * versão estilizada (Chaikin) em /jogo e o lote exibido na zona é derivado da
+ * ocupação atual do pasto.
  */
 export function GameMapEditorPage() {
   const mapResource = useResource<GameMapState>('/api/game/map');
-  const { data: groups } = useResource<HerdGroup[]>('/api/herd-groups');
+  const pasturesResource = useResource<PastureSummary[]>('/api/pastures');
+  const pastures = pasturesResource.data;
   const drawing = useDrawing();
   const toast = useToast();
   const { busy, error, run, setError } = useSubmit();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [center, setCenter] = useState<MapPoint | null>(null);
   const [placingKind, setPlacingKind] = useState<PlaceableKind>('MANGUEIRA');
   const [pendingPasture, setPendingPasture] = useState<MapPoint[] | null>(null);
   const [pastureName, setPastureName] = useState('');
-  const [pastureGroupId, setPastureGroupId] = useState('');
+  const [pastureId, setPastureId] = useState('');
 
   const zones = useMemo(() => mapResource.data?.zones ?? [], [mapResource.data]);
   const installations = useMemo(() => mapResource.data?.installations ?? [], [mapResource.data]);
   const perimeter = zones.find((zone) => zone.kind === 'PERIMETER') ?? null;
-  const pastures = zones.filter((zone) => zone.kind === 'PASTURE');
+  const pastureZones = zones.filter((zone) => zone.kind === 'PASTURE');
   const mangueira = installations.find((installation) => installation.kind === 'MANGUEIRA') ?? null;
-  const linkedGroupIds = new Set(pastures.map((pasture) => pasture.herdGroupId).filter(Boolean));
+  const pastureById = new Map((pastures ?? []).map((pasture) => [pasture.id, pasture]));
+  const linkedPastureIds = new Set(pastureZones.map((zone) => zone.pastureId).filter(Boolean));
+  const linkablePastures = (pastures ?? []).filter((pasture) => pasture.active && (!linkedPastureIds.has(pasture.id) || pasture.id === pastureId));
   const needsLocation = !perimeter && !center;
+
+  // Deep-link vindo de /pastos (?pasto=<id>): abre o traçado já com o pasto
+  // escolhido para vínculo. Dispara uma única vez por navegação.
+  const requestedPastureId = searchParams.get('pasto');
+  const autoStartRef = useRef(false);
+  useEffect(() => {
+    if (autoStartRef.current || !requestedPastureId || mapResource.loading || !perimeter) return;
+    if (linkedPastureIds.has(requestedPastureId)) return;
+    autoStartRef.current = true;
+    drawing.start('pasture');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedPastureId, mapResource.loading, perimeter]);
 
   function handleMapClick(point: MapPoint) {
     if (drawing.mode === 'perimeter' || drawing.mode === 'pasture') {
@@ -87,9 +104,13 @@ export function GameMapEditorPage() {
       return;
     }
     setPendingPasture(drawing.draft);
-    setPastureName(`Pasto ${pastures.length + 1}`);
-    setPastureGroupId('');
+    const requested = requestedPastureId && !linkedPastureIds.has(requestedPastureId) ? requestedPastureId : '';
+    setPastureId(requested);
+    setPastureName(requested ? pastureById.get(requested)?.name ?? '' : `Pasto ${pastureZones.length + 1}`);
     drawing.cancel();
+    // Recarrega os pastos: um cadastro feito depois da abertura do editor
+    // (outra aba, ou a página /pastos) precisa aparecer no vínculo.
+    void pasturesResource.reload(false);
   }
 
   function savePasture() {
@@ -99,14 +120,22 @@ export function GameMapEditorPage() {
       return;
     }
     void run(async () => {
+      // Sem vínculo escolhido, a área desenhada cria o pasto real pelo
+      // endpoint validado — o desenho e o cadastro nunca divergem.
+      let linkedId = pastureId || null;
+      if (!linkedId) {
+        const created = await api<{ id: string }>('/api/pastures', json('POST', { name: pastureName.trim(), areaHa: null }));
+        linkedId = created.id;
+      }
       await api('/api/game/map/zones', json('POST', {
         kind: 'PASTURE',
         name: pastureName.trim(),
-        herdGroupId: pastureGroupId || null,
+        pastureId: linkedId,
         ring: pendingPasture,
       }));
       setPendingPasture(null);
-      await mapResource.reload(false);
+      if (requestedPastureId) setSearchParams({}, { replace: true });
+      await Promise.all([mapResource.reload(false), pasturesResource.reload(false)]);
       toast('Pasto salvo');
     });
   }
@@ -168,16 +197,19 @@ export function GameMapEditorPage() {
 
           {pendingPasture && <SectionCard title="Novo pasto">
             <div className="grid gap-3">
+              <p className="text-sm text-[var(--muted)]">
+                Área medida pelo traçado: <strong>{ringAreaHa(pendingPasture).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} ha</strong> — gravada no pasto ao salvar.
+              </p>
               <Field label="Nome do pasto"><Input value={pastureName} onChange={(event) => setPastureName(event.target.value)} required /></Field>
-              <Field label="Lote que fica neste pasto" hint="Opcional: o lote aparece pastando aqui no jogo.">
-                <Select value={pastureGroupId} onChange={(event) => setPastureGroupId(event.target.value)}>
-                  <option value="">Sem lote por enquanto</option>
-                  {groups?.filter((group) => group.active && (!linkedGroupIds.has(group.id) || group.id === pastureGroupId)).map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+              <Field label="Pasto que esta área desenha" hint="Sem vínculo, um pasto novo é criado com o nome acima. O lote que ocupar o pasto aparece pastando aqui no jogo.">
+                <Select value={pastureId} onChange={(event) => setPastureId(event.target.value)}>
+                  <option value="">Criar pasto novo com este nome</option>
+                  {linkablePastures.map((pasture) => <option key={pasture.id} value={pasture.id}>{pasture.name}</option>)}
                 </Select>
               </Field>
               <div className="flex flex-wrap gap-2">
                 <Button onClick={savePasture} disabled={busy}>Salvar pasto</Button>
-                <Button variant="secondary" onClick={() => { setPendingPasture(null); setError(''); }}>Descartar</Button>
+                <Button variant="secondary" onClick={() => { setPendingPasture(null); setError(''); if (requestedPastureId) setSearchParams({}, { replace: true }); }}>Descartar</Button>
               </div>
             </div>
           </SectionCard>}
@@ -193,15 +225,19 @@ export function GameMapEditorPage() {
               </li>
               <li className="guide-step">
                 <Trees size={20} aria-hidden />
-                <strong>2. Pastos {pastures.length > 0 && <span className="text-sm font-semibold text-[var(--muted)]">({pastures.length})</span>}</strong>
-                {pastures.length > 0 && <ul className="grid gap-1 text-sm">
-                  {pastures.map((pasture) => <li key={pasture.id} className="flex items-center justify-between gap-2">
-                    <span>{pasture.name}{pasture.herdGroupId && groups ? ` — ${groups.find((group) => group.id === pasture.herdGroupId)?.name ?? 'lote'}` : ''}</span>
-                    <ConfirmButton variant="danger" question={`O pasto “${pasture.name}” será apagado do mapa.`} onClick={() => void removeZone(pasture.id)}>Excluir</ConfirmButton>
-                  </li>)}
+                <strong>2. Pastos {pastureZones.length > 0 && <span className="text-sm font-semibold text-[var(--muted)]">({pastureZones.length})</span>}</strong>
+                {pastureZones.length > 0 && <ul className="grid gap-1 text-sm">
+                  {pastureZones.map((zone) => {
+                    const linked = zone.pastureId ? pastureById.get(zone.pastureId) : null;
+                    const occupant = linked?.currentOccupancy?.herdGroupName;
+                    return <li key={zone.id} className="flex items-center justify-between gap-2">
+                      <span>{zone.name}{linked ? ` — ${linked.name}` : ''}{linked?.areaHa ? ` · ${Number(linked.areaHa).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} ha` : ''}{occupant ? ` · ${occupant}` : ''}</span>
+                      <ConfirmButton variant="danger" question={`O pasto “${zone.name}” será apagado do mapa.`} onClick={() => void removeZone(zone.id)}>Excluir</ConfirmButton>
+                    </li>;
+                  })}
                 </ul>}
-                <p>Cada pasto pode receber um lote do rebanho.</p>
-                <Button className="mt-2" variant={pastures.length ? 'secondary' : 'primary'} onClick={() => drawing.start('pasture')} disabled={!perimeter}>Adicionar pasto</Button>
+                <p>Cada área desenha um pasto real; o lote exibido é o que ocupa o pasto no momento.</p>
+                <Button className="mt-2" variant={pastureZones.length ? 'secondary' : 'primary'} onClick={() => drawing.start('pasture')} disabled={!perimeter}>Adicionar pasto</Button>
               </li>
               <li className="guide-step">
                 <MilkIcon size={20} aria-hidden />

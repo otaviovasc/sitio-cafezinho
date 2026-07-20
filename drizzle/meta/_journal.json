@@ -127,6 +127,20 @@
       "when": 1784340300000,
       "tag": "0017_planting_inputs_from_deposito",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1784560445768,
+      "tag": "0018_management_lots_pastures",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1784565451860,
+      "tag": "0019_reproductive_bull_fk",
+      "breakpoints": true
     }
   ]
 }

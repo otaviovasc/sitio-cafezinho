@@ -58,16 +58,20 @@ test.describe('jogo — editor de mapa', () => {
     await page.getByTestId('editor-finish').click();
     await expect(page.getByText('“Sítio” traçado.')).toBeVisible();
 
-    // Pasto vinculado ao Lote 1.
+    // Pasto vinculado a um pasto real (criado via API para o fluxo ser determinístico).
+    const pastureName = `Pasto editor ${Date.now()}`;
+    await page.evaluate(async (name) => {
+      await fetch('/api/pastures', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) });
+    }, pastureName);
     await page.getByRole('button', { name: 'Adicionar pasto' }).click();
     await map.click({ position: { x: 140, y: 140 } });
     await map.click({ position: { x: 280, y: 140 } });
     await map.click({ position: { x: 280, y: 260 } });
     await page.getByTestId('editor-finish').click();
     await expect(page.getByLabel('Nome do pasto')).toHaveValue('Pasto 1');
-    await page.getByLabel('Lote que fica neste pasto').selectOption({ label: 'Lote 1' });
+    await page.getByLabel('Pasto que esta área desenha').selectOption({ label: pastureName });
     await page.getByRole('button', { name: 'Salvar pasto' }).click();
-    await expect(page.getByText('Pasto 1 — Lote 1')).toBeVisible();
+    await expect(page.getByText(`Pasto 1 — ${pastureName}`)).toBeVisible();
 
     // Mangueira com um clique.
     await page.getByRole('button', { name: 'Posicionar mangueira' }).click();
@@ -93,6 +97,91 @@ test.describe('jogo — editor de mapa', () => {
     expect(duplicateStatus.status).toBe(409);
     expect(duplicateStatus.code).toBe('PERIMETER_EXISTS');
   });
+
+  test('deep-link de /pastos vincula o pasto ao desenho e grava a área medida', async ({ page }) => {
+    await login(page);
+    await clearGameMap(page);
+
+    // Pasto real sem desenho: a página /pastos oferece "Desenhar no mapa".
+    const pastureName = `Pasto mapa ${Date.now()}`;
+    const pastureId = await page.evaluate(async (name) => {
+      const response = await fetch('/api/pastures', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) });
+      return ((await response.json()) as { id: string }).id;
+    }, pastureName);
+    await page.goto('/pastos');
+    await page.getByRole('button', { name: `Desenhar ${pastureName} no mapa` }).click();
+    await expect(page).toHaveURL(new RegExp(`/jogo/mapa/editor\\?pasto=${pastureId}`));
+
+    // O traçado de pasto só abre depois do perímetro (contenção).
+    await page.getByLabel('Coordenadas ou link do Maps').fill('-21.122000, -45.648000');
+    await page.getByRole('button', { name: 'Centralizar mapa' }).click();
+    await page.getByRole('button', { name: 'Traçar perímetro' }).click();
+    const map = page.getByTestId('editor-map');
+    await map.click({ position: { x: 100, y: 100 } });
+    await map.click({ position: { x: 320, y: 100 } });
+    await map.click({ position: { x: 320, y: 300 } });
+    await map.click({ position: { x: 100, y: 300 } });
+    await page.getByTestId('editor-finish').click();
+
+    // Deep-link: ao fechar o perímetro, o modo de traçado de pasto abre sozinho.
+    await expect(page.getByText('Traçando um pasto')).toBeVisible();
+    await map.click({ position: { x: 140, y: 140 } });
+    await map.click({ position: { x: 280, y: 140 } });
+    await map.click({ position: { x: 280, y: 260 } });
+    await page.getByTestId('editor-finish').click();
+
+    // Nome e vínculo vêm preenchidos; a área medida aparece antes de salvar.
+    await expect(page.getByLabel('Nome do pasto')).toHaveValue(pastureName);
+    await expect(page.getByLabel('Pasto que esta área desenha')).toHaveValue(pastureId);
+    await expect(page.getByText(/Área medida pelo traçado:/)).toBeVisible();
+    await page.getByRole('button', { name: 'Salvar pasto' }).click();
+    await expect(page.getByText(`${pastureName} — ${pastureName}`)).toBeVisible();
+
+    // O traçado gravou a área (ha) no pasto real e /pastos não oferece mais o desenho.
+    const saved = await page.evaluate(async (id) => {
+      const pastures = await fetch('/api/pastures').then((response) => response.json()) as Array<{ id: string; areaHa: string | null }>;
+      return pastures.find((pasture) => pasture.id === id)?.areaHa ?? null;
+    }, pastureId);
+    expect(saved).not.toBeNull();
+    expect(Number(saved)).toBeGreaterThan(0);
+    await page.goto('/pastos');
+    await expect(page.getByRole('button', { name: `Desenhar ${pastureName} no mapa` })).toHaveCount(0);
+  });
+
+  test('desenho sem vínculo cria o pasto real já com a área medida', async ({ page }) => {
+    await login(page);
+    await clearGameMap(page);
+    await page.goto('/jogo/mapa/editor');
+    await page.getByLabel('Coordenadas ou link do Maps').fill('-21.122000, -45.648000');
+    await page.getByRole('button', { name: 'Centralizar mapa' }).click();
+    await page.getByRole('button', { name: 'Traçar perímetro' }).click();
+    const map = page.getByTestId('editor-map');
+    await map.click({ position: { x: 100, y: 100 } });
+    await map.click({ position: { x: 320, y: 100 } });
+    await map.click({ position: { x: 320, y: 300 } });
+    await map.click({ position: { x: 100, y: 300 } });
+    await page.getByTestId('editor-finish').click();
+    await expect(page.getByText('“Sítio” traçado.')).toBeVisible();
+
+    await page.getByRole('button', { name: 'Adicionar pasto' }).click();
+    await map.click({ position: { x: 140, y: 140 } });
+    await map.click({ position: { x: 280, y: 140 } });
+    await map.click({ position: { x: 280, y: 260 } });
+    await page.getByTestId('editor-finish').click();
+
+    const pastureName = `Pasto desenho ${Date.now()}`;
+    await page.getByLabel('Nome do pasto').fill(pastureName);
+    await expect(page.getByLabel('Pasto que esta área desenha')).toHaveValue('');
+    await page.getByRole('button', { name: 'Salvar pasto' }).click();
+    await expect(page.getByText(`${pastureName} — ${pastureName}`)).toBeVisible();
+
+    const saved = await page.evaluate(async (name) => {
+      const pastures = await fetch('/api/pastures').then((response) => response.json()) as Array<{ name: string; areaHa: string | null }>;
+      return pastures.find((pasture) => pasture.name === name)?.areaHa ?? null;
+    }, pastureName);
+    expect(saved).not.toBeNull();
+    expect(Number(saved)).toBeGreaterThan(0);
+  });
 });
 
 test.describe('jogo — tabuleiro', () => {
@@ -110,7 +199,7 @@ test.describe('jogo — tabuleiro', () => {
       // Contagem esperada calculada de forma independente via /api/animals.
       const expected = await page.evaluate(async (id) => {
         const rows = await fetch('/api/animals').then((response) => response.json()) as Array<{ status: string; currentGroup: { id: string } | null }>;
-        return rows.filter((row) => ['HEIFER', 'LACTATING', 'DRY'].includes(row.status) && row.currentGroup?.id === id).length;
+        return rows.filter((row) => ['HEIFER', 'LACTATING', 'DRY', 'CALF', 'GROWING', 'BULL'].includes(row.status) && row.currentGroup?.id === id).length;
       }, groupId);
       if (expected > 0) {
         await expect(page.getByTestId(`herd-cluster-${groupId}`)).toBeVisible();
@@ -279,7 +368,7 @@ test.describe('jogo — folha do lote', () => {
     // Contagem esperada derivada de forma independente via /api/animals.
     const expected = await page.evaluate(async (id) => {
       const rows = await fetch('/api/animals').then((response) => response.json()) as Array<{ id: string; name: string | null; tagNumber: string | null; status: string; currentGroup: { id: string } | null }>;
-      const members = rows.filter((row) => ['HEIFER', 'LACTATING', 'DRY'].includes(row.status) && row.currentGroup?.id === id);
+      const members = rows.filter((row) => ['HEIFER', 'LACTATING', 'DRY', 'CALF', 'GROWING', 'BULL'].includes(row.status) && row.currentGroup?.id === id);
       return { count: members.length, first: members[0] ?? null };
     }, groupId);
     test.skip(expected.count === 0, 'lote sem animais no seed');
@@ -362,7 +451,7 @@ test.describe('jogo — alimentação (Depósito e Estação)', () => {
     await expect(deposito.getByTestId(`feed-inventory-balance-${silageId}`)).toContainText('0 kg');
 
     // Compra de 3 t (vira 3.000 kg) por R$ 3.200 — compra REAL + entry.
-    await deposito.getByRole('button', { name: /Registrar compra de alimento/ }).click();
+    await deposito.getByRole('button', { name: /Vincular compra já registrada/ }).click();
     await deposito.getByLabel('Item do catálogo').selectOption({ label: silageName });
     await deposito.getByLabel('Quantidade comprada').fill('3');
     await deposito.getByLabel('Unidade digitada').selectOption('TONS');
@@ -602,7 +691,7 @@ test.describe('jogo — cercas dos pastos e contenção no perímetro', () => {
     await expect(sheet).toBeVisible();
     const order = await sheet.evaluate((element) => {
       const body = element.querySelector('.game-sheet-body')!;
-      const action = [...body.querySelectorAll('button.game-sheet-action')].find((node) => node.textContent?.includes('Registrar compra de alimento'))!;
+      const action = [...body.querySelectorAll('button.game-sheet-action')].find((node) => node.textContent?.includes('Vincular compra já registrada'))!;
       const list = body.querySelector('[data-testid="feed-inventory-list"]')!;
       return Boolean(action.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING);
     });

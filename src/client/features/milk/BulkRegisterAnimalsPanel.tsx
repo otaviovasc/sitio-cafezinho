@@ -5,6 +5,7 @@ import { confidenceLabel } from '../../lib/status';
 import { useToast } from '../../components/feedback-context';
 import { api, json } from '../../lib/api';
 import { GroupPicker } from '../animals/GroupPicker';
+import { milkingGroupRoutines } from '../animals/group-routines';
 
 export type UnmatchedMeasurement = {
   id: string;
@@ -65,7 +66,7 @@ export function BulkRegisterAnimalsPanel({ sessionId, sessionDate, rows, onDone,
     {error && <ErrorState message={error} />}
     <FormErrorSummary errors={Object.values(fieldErrors)} />
     <div><h3 className="font-bold">Cadastrar animais sem vínculo</h3><p className="mt-1 text-sm text-[var(--muted)]">Os selecionados serão cadastrados como <strong>em lactação</strong> em {sessionDate.split('-').reverse().join('/')} e ligados às medições. O rótulo original será usado sem correção automática.</p></div>
-    <GroupPicker label="Lote inicial dos animais selecionados" value={groupId} fieldError={fieldErrors.group} onChange={(value) => { setGroupId(value); setFieldErrors((current) => ({ ...current, group: undefined })); }} />
+    <GroupPicker label="Lote inicial dos animais selecionados" routines={milkingGroupRoutines} value={groupId} fieldError={fieldErrors.group} onChange={(value) => { setGroupId(value); setFieldErrors((current) => ({ ...current, group: undefined })); }} />
     <div>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2"><strong className="text-sm">Linhas para cadastrar ({selectedIds.size}/{candidates.length})</strong><div className="flex flex-wrap gap-2"><Button type="button" variant="secondary" onClick={() => setSelectedIds(new Set(candidates.map((row) => row.id)))}>Selecionar todas</Button><Button type="button" variant="secondary" onClick={() => setSelectedIds(new Set())}>Limpar</Button></div></div>
       {fieldErrors.selection && <p className="field-error mb-2">{fieldErrors.selection}</p>}

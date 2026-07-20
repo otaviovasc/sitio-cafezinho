@@ -1,8 +1,8 @@
 import { FormEvent, useState } from 'react';
-import { Activity, ArrowLeft, ArrowRightLeft, Banknote, ChartLine, HeartPulse, MapPin, Pencil, Plus, Scale, Tags, Trash2, TriangleAlert, Upload } from 'lucide-react';
+import { Activity, ArrowLeft, ArrowRightLeft, Banknote, ChartLine, HeartPulse, MapPin, Pencil, Plus, Scale, Tags, Trash2, Upload } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import type { AnimalStatus } from '../../domain/animal-lifecycle';
-import { allowedNextStatuses, statusRequiresMilkingGroup } from '../../domain/animal-lifecycle';
+import type { AnimalSex, AnimalStatus } from '../../domain/animal-lifecycle';
+import { allowedNextStatuses, animalStatuses, isLiveStatus, statusAllowedForSex, statusRequiresMilkingGroup } from '../../domain/animal-lifecycle';
 import { filterByPeriod, type PeriodDays } from '../../domain/analytics';
 import { formatDate, formatLiters } from '../../domain/format';
 import { formatWeight } from '../../domain/weight';
@@ -12,21 +12,27 @@ import { TimeSeriesChart } from '../components/TimeSeriesChart';
 import { type Attachment } from '../components/AttachmentPanel';
 import { useToast } from '../components/feedback-context';
 import { ConfirmButton, Modal } from '../components/feedback';
-import { Button, EmptyState, ErrorState, Field, FormErrorSummary, InlineEmpty, Input, PageHeader, ScrollArea, SectionCard, Select, SkeletonList, StatCard, StatusBadge, Textarea } from '../components/ui';
+import { Badge, Button, EmptyState, ErrorState, Field, FormErrorSummary, InlineEmpty, Input, PageHeader, ScrollArea, SectionCard, Select, SkeletonList, StatCard, StatusBadge, SubmitBar, Textarea } from '../components/ui';
 import { FilterControls } from '../components/FilterControls';
-import { animalStatusDescriptor, milkMeasurementStatusDescriptor } from '../lib/status';
+import { animalStatusDescriptor, milkMeasurementStatusDescriptor, missingGroupDescriptor } from '../lib/status';
 import { AnimalGroupChangeForm } from '../features/animals/AnimalGroupChangeForm';
 import { AnimalStatusChangeForm } from '../features/animals/AnimalStatusChangeForm';
 import { AnimalWeightPanel, type AnimalWeight } from '../features/animals/AnimalWeightPanel';
 import { BulkAnimalForm } from '../features/animals/BulkAnimalForm';
 import { GroupPicker, type HerdGroup } from '../features/animals/GroupPicker';
+import { milkingGroupRoutines, nonMilkingGroupRoutines } from '../features/animals/group-routines';
 import { ReproductiveEventForm, type ReproductiveEvent } from '../features/animals/ReproductiveEventForm';
 import { AnimalCycleSection } from '../features/animals/detail/AnimalCycleSection';
 import { AnimalMastitisSection } from '../features/animals/detail/AnimalMastitisSection';
 import { AnimalExitsSection } from '../features/animals/detail/AnimalExitsSection';
+import { MovePastureForm } from '../features/pastures/MovePastureForm';
+import type { PastureSummary } from '../features/pastures/types';
+import { useForm } from '../hooks/useForm';
 import { useResource } from '../hooks/useResource';
+import { useSubmit } from '../hooks/useSubmit';
+import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import { api, json } from '../lib/api';
-import { animalStatusLabels, milkingRoutineLabels, today } from '../lib/labels';
+import { animalSexLabels, animalStatusLabels, milkingRoutineLabels, today } from '../lib/labels';
 
 type Alias = { id: string; alias: string };
 type CurrentGroup = Pick<HerdGroup, 'id' | 'name' | 'milkingRoutine'>;
@@ -34,7 +40,10 @@ type Animal = {
   id: string;
   name: string | null;
   tagNumber: string | null;
+  sex: AnimalSex;
   status: AnimalStatus;
+  damId: string | null;
+  sireId: string | null;
   notes: string | null;
   aliases: Alias[];
   currentGroup: CurrentGroup | null;
@@ -60,17 +69,15 @@ export type AnimalDetail = Omit<Animal, 'latestWeight' | 'latestProduction'> & {
 
 function animalName(animal: Pick<Animal, 'name' | 'tagNumber'>) { return animal.name || `Brinco ${animal.tagNumber}`; }
 
-type MapZoneSummary = { id: string; kind: string; name: string; herdGroupId: string | null };
-type GameMapSummary = { zones: MapZoneSummary[] };
-
-const ALIVE_STATUSES = new Set<AnimalStatus>(['HEIFER', 'LACTATING', 'DRY']);
-
 /** Linhas reutilizáveis da lista de animais (tabela no desktop, cartões no mobile). */
 function AnimalRows({ animals: rows }: { animals: Animal[] }) {
+  const groupCell = (animal: Animal) => animal.currentGroup
+    ? <span className="text-sm">{animal.currentGroup.name}<span className="block text-xs text-[var(--muted)]">{milkingRoutineLabels[animal.currentGroup.milkingRoutine]}</span></span>
+    : <StatusBadge descriptor={missingGroupDescriptor(animal.status)} />;
   return <SectionCard>
     <ScrollArea label="Lista do rebanho" className="max-h-[42rem]">
-      <div className="hidden lg:block"><table className="data-table"><thead><tr><th>Animal</th><th>Ciclo</th><th>Lote de ordenha</th><th>Último controle</th><th>Último peso</th></tr></thead><tbody>{rows.map((animal) => <tr key={animal.id}><td colSpan={5} className="p-0"><Link aria-label={`Abrir histórico de ${animalName(animal)}`} className="grid grid-cols-[1.35fr_1fr_1.2fr_1fr_1fr] items-center gap-3 border-b border-[var(--border)] px-3 py-3 text-[var(--text)] transition hover:bg-[var(--surface-strong)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--primary)]" to={`/rebanho/${animal.id}`}><span className="min-w-0"><strong className="text-[var(--primary)]">{animalName(animal)}</strong>{animal.name && animal.tagNumber && <span className="block text-xs text-[var(--muted)]">Brinco {animal.tagNumber}</span>}</span><StatusBadge descriptor={animalStatusDescriptor(animal.status)} /><span className="text-sm">{animal.currentGroup?.name ?? '—'}{animal.currentGroup && <span className="block text-xs text-[var(--muted)]">{milkingRoutineLabels[animal.currentGroup.milkingRoutine]}</span>}</span><span className="text-sm">{animal.latestProduction ? <><strong>{formatLiters(animal.latestProduction.totalLiters)}</strong><span className="block text-xs text-[var(--muted)]">{formatDate(animal.latestProduction.sessionDate)}</span></> : '—'}</span><span className="text-sm">{animal.latestWeight ? <><strong>{formatWeight(animal.latestWeight.weightKg)}</strong><span className="block text-xs text-[var(--muted)]">{new Date(animal.latestWeight.measuredAt).toLocaleDateString('pt-BR')}</span></> : '—'}</span></Link></td></tr>)}</tbody></table></div>
-      <div className="lg:hidden">{rows.map((animal) => <Link aria-label={`Abrir histórico de ${animalName(animal)}`} className="block border-b border-[var(--border)] px-1 py-4 text-[var(--text)] transition last:border-b-0 hover:bg-[var(--surface-strong)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--primary)]" to={`/rebanho/${animal.id}`} key={animal.id}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><strong className="block truncate text-[var(--primary)]">{animalName(animal)}</strong><span className="text-sm text-[var(--muted)]">{animal.currentGroup?.name ?? (animal.status === 'LACTATING' ? 'Sem lote' : 'Fora da ordenha')}{animal.name && animal.tagNumber ? ` · Brinco ${animal.tagNumber}` : ''}</span></div><StatusBadge descriptor={animalStatusDescriptor(animal.status)} /></div><div className="mt-3 grid grid-cols-2 gap-2 text-sm"><div><span className="block text-xs text-[var(--muted)]">Último controle</span><strong>{animal.latestProduction ? formatLiters(animal.latestProduction.totalLiters) : 'Sem medição'}</strong></div><div><span className="block text-xs text-[var(--muted)]">Último peso</span><strong>{animal.latestWeight ? formatWeight(animal.latestWeight.weightKg) : 'Sem pesagem'}</strong></div></div></Link>)}</div>
+      <div className="hidden lg:block"><table className="data-table"><thead><tr><th>Animal</th><th>Ciclo</th><th>Lote</th><th>Último controle</th><th>Último peso</th></tr></thead><tbody>{rows.map((animal) => <tr key={animal.id}><td colSpan={5} className="p-0"><Link aria-label={`Abrir histórico de ${animalName(animal)}`} className="grid grid-cols-[1.35fr_1fr_1.2fr_1fr_1fr] items-center gap-3 border-b border-[var(--border)] px-3 py-3 text-[var(--text)] transition hover:bg-[var(--surface-strong)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--primary)]" to={`/rebanho/${animal.id}`}><span className="min-w-0"><strong className="text-[var(--primary)]">{animalName(animal)}</strong>{animal.name && animal.tagNumber && <span className="block text-xs text-[var(--muted)]">Brinco {animal.tagNumber}</span>}</span><StatusBadge descriptor={animalStatusDescriptor(animal.status)} />{groupCell(animal)}<span className="text-sm">{animal.latestProduction ? <><strong>{formatLiters(animal.latestProduction.totalLiters)}</strong><span className="block text-xs text-[var(--muted)]">{formatDate(animal.latestProduction.sessionDate)}</span></> : '—'}</span><span className="text-sm">{animal.latestWeight ? <><strong>{formatWeight(animal.latestWeight.weightKg)}</strong><span className="block text-xs text-[var(--muted)]">{new Date(animal.latestWeight.measuredAt).toLocaleDateString('pt-BR')}</span></> : '—'}</span></Link></td></tr>)}</tbody></table></div>
+      <div className="lg:hidden">{rows.map((animal) => <Link aria-label={`Abrir histórico de ${animalName(animal)}`} className="block border-b border-[var(--border)] px-1 py-4 text-[var(--text)] transition last:border-b-0 hover:bg-[var(--surface-strong)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--primary)]" to={`/rebanho/${animal.id}`} key={animal.id}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><strong className="block truncate text-[var(--primary)]">{animalName(animal)}</strong><span className="text-sm text-[var(--muted)]">{animal.currentGroup?.name ?? ''}{animal.name && animal.tagNumber ? `${animal.currentGroup ? ' · ' : ''}Brinco ${animal.tagNumber}` : ''}</span>{!animal.currentGroup && <span className="mt-1 block"><StatusBadge descriptor={missingGroupDescriptor(animal.status)} /></span>}</div><StatusBadge descriptor={animalStatusDescriptor(animal.status)} /></div><div className="mt-3 grid grid-cols-2 gap-2 text-sm"><div><span className="block text-xs text-[var(--muted)]">Último controle</span><strong>{animal.latestProduction ? formatLiters(animal.latestProduction.totalLiters) : 'Sem medição'}</strong></div><div><span className="block text-xs text-[var(--muted)]">Último peso</span><strong>{animal.latestWeight ? formatWeight(animal.latestWeight.weightKg) : 'Sem pesagem'}</strong></div></div></Link>)}</div>
     </ScrollArea>
   </SectionCard>;
 }
@@ -81,30 +88,32 @@ function matchesAnimalSearch(animal: Animal, normalizedSearch: string) {
 
 /**
  * Tela inicial do rebanho: a porta de entrada é o LOTE, não o animal. Cada
- * cartão traz contagem real (assignments abertos) e o pasto vinculado no mapa
- * do jogo; a busca continua genuína — digitar revela os animais direto.
+ * cartão traz contagem real (assignments abertos), a rotina do lote e o pasto
+ * real que ele ocupa; a busca continua genuína — digitar revela os animais
+ * direto.
  */
 export function AnimalsPage() {
   const [search, setSearch] = useState('');
   const { data, loading, error, reload } = useResource<Animal[]>('/api/animals');
   const { data: groups } = useResource<HerdGroup[]>('/api/herd-groups');
-  const { data: gameMap } = useResource<GameMapSummary>('/api/game/map');
+  const { data: pastures } = useResource<PastureSummary[]>('/api/pastures');
   const normalizedSearch = search.trim().toLocaleLowerCase('pt-BR');
   const searching = normalizedSearch.length > 0;
   const searchResults = searching ? data?.filter((animal) => matchesAnimalSearch(animal, normalizedSearch)) ?? [] : [];
   const lactating = data?.filter((animal) => animal.status === 'LACTATING').length ?? 0;
   const dry = data?.filter((animal) => animal.status === 'DRY').length ?? 0;
   const heifers = data?.filter((animal) => animal.status === 'HEIFER').length ?? 0;
-  const pastureByGroup = new Map((gameMap?.zones ?? []).filter((zone) => zone.kind === 'PASTURE' && zone.herdGroupId).map((zone) => [zone.herdGroupId!, zone]));
+  const pastureByGroup = new Map((pastures ?? []).filter((pasture) => pasture.currentOccupancy).map((pasture) => [pasture.currentOccupancy!.herdGroupId, pasture]));
   const activeGroups = groups?.filter((group) => group.active) ?? [];
   const countByGroup = new Map<string, number>();
   for (const animal of data ?? []) {
     if (animal.currentGroup) countByGroup.set(animal.currentGroup.id, (countByGroup.get(animal.currentGroup.id) ?? 0) + 1);
   }
-  const unassigned = data?.filter((animal) => ALIVE_STATUSES.has(animal.status) && !animal.currentGroup) ?? [];
+  const unassigned = data?.filter((animal) => isLiveStatus(animal.status) && !animal.currentGroup) ?? [];
+  const lactatingUnassigned = unassigned.filter((animal) => animal.status === 'LACTATING').length;
 
   return <div className="page">
-    <PageHeader icon={CowHead} title="Rebanho" subtitle="Os lotes do sítio; entre num lote para ver cada vaca" action={<Link className="button button-primary" to="/rebanho/novo"><Plus size={18} aria-hidden />Cadastrar</Link>} />
+    <PageHeader icon={CowHead} title="Rebanho" subtitle="Os lotes do sítio; entre num lote para ver cada animal" action={<Link className="button button-primary" to="/rebanho/novo"><Plus size={18} aria-hidden />Cadastrar</Link>} />
     <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4"><StatCard label="Total cadastrado" value={data?.length ?? 0} /><StatCard label="Em lactação" value={lactating} /><StatCard label="Secas" value={dry} /><StatCard label="Novilhas" value={heifers} /></div>
     <FilterControls search={{ value: search, onChange: setSearch, placeholder: 'Nome, brinco ou alias' }} />
     <div className="mt-5">
@@ -122,8 +131,8 @@ export function AnimalsPage() {
               <span className="mt-1 block text-sm text-[var(--muted)]">{milkingRoutineLabels[group.milkingRoutine]}</span>
               <span className="mt-3 flex items-center gap-1.5 text-sm" data-testid={`herd-group-pasture-${group.id}`}>
                 {pasture
-                  ? <><MapPin size={16} aria-hidden className="text-[var(--primary)]" />Pasto no mapa: <strong>{pasture.name}</strong></>
-                  : <><TriangleAlert size={16} aria-hidden className="text-[var(--warning,#b7791f)]" /><span className="text-[var(--muted)]">Sem pasto no mapa · <span className="underline">vincular no editor</span></span></>}
+                  ? <><MapPin size={16} aria-hidden className="text-[var(--primary)]" />Pasto: <strong>{pasture.name}</strong></>
+                  : <span className="text-[var(--muted)]">Sem pasto</span>}
               </span>
             </Link>;
           })}
@@ -132,7 +141,8 @@ export function AnimalsPage() {
               <strong className="text-lg text-[var(--primary)]">Sem lote</strong>
               <span className="rounded-full bg-[var(--surface-strong)] px-3 py-1 text-sm font-bold" data-testid="herd-group-count-sem-lote">{unassigned.length} {unassigned.length === 1 ? 'animal' : 'animais'}</span>
             </div>
-            <span className="mt-1 block text-sm text-[var(--muted)]">Novilhas, secas e vacas ainda sem rotina de ordenha</span>
+            <span className="mt-1 block text-sm text-[var(--muted)]">Animais vivos sem lote no momento</span>
+            {lactatingUnassigned > 0 && <span className="mt-2 block"><Badge tone="warning">{lactatingUnassigned} em lactação precisa{lactatingUnassigned === 1 ? '' : 'm'} de lote</Badge></span>}
           </Link>}
           {!activeGroups.length && !unassigned.length && <div className="sm:col-span-2 lg:col-span-3"><EmptyState title="Nenhum lote cadastrado" description="Cadastre um animal para começar; o lote é criado no cadastro." /></div>}
         </div>}
@@ -145,26 +155,32 @@ export function HerdGroupAnimalsPage() {
   const { groupId = '' } = useParams();
   const isUnassigned = groupId === 'sem-lote';
   const [search, setSearch] = useState('');
+  const [showPastureForm, setShowPastureForm] = useState(false);
   const { data, loading, error, reload } = useResource<Animal[]>('/api/animals');
   const { data: groups } = useResource<HerdGroup[]>('/api/herd-groups');
-  const { data: gameMap } = useResource<GameMapSummary>('/api/game/map');
+  const { data: pastures = [], reload: reloadPastures } = useResource<PastureSummary[]>('/api/pastures');
   const group = groups?.find((item) => item.id === groupId) ?? null;
-  const pasture = (gameMap?.zones ?? []).find((zone) => zone.kind === 'PASTURE' && zone.herdGroupId === groupId) ?? null;
+  const pasture = (pastures ?? []).find((item) => item.currentOccupancy?.herdGroupId === groupId) ?? null;
   const normalizedSearch = search.trim().toLocaleLowerCase('pt-BR');
   const members = data?.filter((animal) => (isUnassigned
-    ? ALIVE_STATUSES.has(animal.status) && !animal.currentGroup
+    ? isLiveStatus(animal.status) && !animal.currentGroup
     : animal.currentGroup?.id === groupId)) ?? [];
   const filtered = normalizedSearch ? members.filter((animal) => matchesAnimalSearch(animal, normalizedSearch)) : members;
   const title = isUnassigned ? 'Sem lote' : group?.name ?? 'Lote';
   const subtitle = isUnassigned
-    ? 'Animais vivos sem lote de ordenha no momento'
-    : group ? `${milkingRoutineLabels[group.milkingRoutine]}${pasture ? ` · Pasto no mapa: ${pasture.name}` : ' · Sem pasto no mapa'}` : 'Animais deste lote';
+    ? 'Animais vivos sem lote no momento'
+    : group ? `${milkingRoutineLabels[group.milkingRoutine]}${pasture ? ` · Pasto: ${pasture.name}` : ' · Sem pasto'}` : 'Animais deste lote';
 
   if (!loading && !isUnassigned && groups && !group) return <div className="page"><ErrorState message="Lote não encontrado." /><Link className="button button-secondary mt-4" to="/rebanho"><ArrowLeft size={17} aria-hidden />Voltar para Rebanho</Link></div>;
 
   return <div className="page">
-    <PageHeader icon={CowHead} title={title} subtitle={subtitle} action={<Link className="button button-secondary" to="/rebanho"><ArrowLeft size={17} aria-hidden />Todos os lotes</Link>} />
-    {!isUnassigned && !pasture && !loading && <div className="notice notice-warning mb-4 flex items-center gap-2" data-testid="group-no-pasture-warning"><TriangleAlert size={17} aria-hidden /><span>Este lote ainda não tem pasto no mapa do jogo. <Link className="underline" to="/jogo/mapa/editor">Vincular no editor</Link>.</span></div>}
+    <PageHeader icon={CowHead} title={title} subtitle={subtitle} action={<div className="flex flex-wrap gap-2">
+      {!isUnassigned && group && <Button variant="secondary" onClick={() => setShowPastureForm(true)}><MapPin size={17} aria-hidden />Mover pasto</Button>}
+      <Link className="button button-secondary" to="/rebanho"><ArrowLeft size={17} aria-hidden />Todos os lotes</Link>
+    </div>} />
+    <Modal open={showPastureForm} title={`Pasto de ${group?.name ?? 'lote'}`} onClose={() => setShowPastureForm(false)}>
+      {group && <MovePastureForm group={group} pastures={pastures ?? []} onCancel={() => setShowPastureForm(false)} onSaved={async () => { await reloadPastures(); setShowPastureForm(false); }} />}
+    </Modal>
     <FilterControls search={{ value: search, onChange: setSearch, placeholder: 'Nome, brinco ou alias' }} />
     <div className="mt-5" data-testid="herd-group-animals">
       {loading ? <SkeletonList rows={6} /> : error ? <ErrorState message={error} retry={reload} /> : !filtered.length
@@ -176,41 +192,87 @@ export function HerdGroupAnimalsPage() {
 
 function AnimalForm({ initial, onSaved }: { initial?: AnimalDetail; onSaved?: () => void | Promise<void> }) {
   const toast = useToast();
-  const [name, setName] = useState(initial?.name || '');
-  const [tagNumber, setTagNumber] = useState(initial?.tagNumber || '');
-  const [status, setStatus] = useState<AnimalStatus>(initial?.status || 'LACTATING');
-  const [notes, setNotes] = useState(initial?.notes || '');
-  const [groupId, setGroupId] = useState(initial?.currentGroup?.id || '');
-  const [changedOn, setChangedOn] = useState(today());
-  const [error, setError] = useState('');
-  const [fieldErrors, setFieldErrors] = useState<{ identity?: string; group?: string; date?: string }>({});
-  const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
-  async function submit(event: FormEvent) {
-    event.preventDefault(); setError('');
-    const nextErrors = {
-      identity: !name.trim() && !tagNumber.trim() ? 'Informe o nome ou o número do brinco.' : undefined,
-      group: !initial && statusRequiresMilkingGroup(status) && !groupId ? 'Selecione o lote de ordenha.' : undefined,
-      date: !initial && !changedOn ? 'Informe a data inicial.' : undefined,
-    };
-    setFieldErrors(nextErrors);
-    if (nextErrors.identity || nextErrors.group || nextErrors.date) return;
-    setBusy(true);
-    try {
-      const body = { name: name.trim() || null, tagNumber: tagNumber.trim() || null, notes: notes.trim() || null, ...(!initial ? { status, groupId: statusRequiresMilkingGroup(status) ? groupId : null, changedOn } : {}) };
-      const saved = await api<{ id: string }>(initial ? `/api/animals/${initial.id}` : '/api/animals', json(initial ? 'PATCH' : 'POST', body));
-      toast(initial ? 'Identificação atualizada' : 'Animal cadastrado');
-      if (initial && onSaved) await onSaved(); else navigate(`/rebanho/${saved.id}`);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível salvar.'); }
-    finally { setBusy(false); }
+  const { busy, error, run } = useSubmit();
+  const { data: herd = [] } = useResource<Animal[]>('/api/animals');
+  const form = useForm(
+    {
+      name: initial?.name ?? '',
+      tagNumber: initial?.tagNumber ?? '',
+      sex: 'FEMALE' as AnimalSex,
+      status: (initial?.status ?? 'LACTATING') as AnimalStatus,
+      groupId: '',
+      changedOn: today(),
+      damId: '',
+      sireId: '',
+      notes: initial?.notes ?? '',
+    },
+    {
+      name: (value, all) => (!value.trim() && !all.tagNumber.trim() ? 'Informe o nome ou o número do brinco.' : undefined),
+      groupId: (value, all) => (!initial && statusRequiresMilkingGroup(all.status) && !value ? 'Selecione o lote de ordenha.' : undefined),
+      changedOn: (value) => (!initial && !value ? 'Informe a data inicial.' : undefined),
+    },
+  );
+  useUnsavedGuard(form.dirty);
+  const { sex, status } = form.values;
+  const statusOptions = animalStatuses.filter((candidate) => isLiveStatus(candidate) && statusAllowedForSex(candidate, sex));
+  const dams = (herd ?? []).filter((animal) => animal.sex === 'FEMALE' && isLiveStatus(animal.status));
+  const sires = (herd ?? []).filter((animal) => animal.status === 'BULL');
+
+  function changeSex(next: AnimalSex) {
+    form.set('sex', next);
+    if (!statusAllowedForSex(form.values.status, next)) {
+      const fallback = animalStatuses.find((candidate) => isLiveStatus(candidate) && statusAllowedForSex(candidate, next));
+      if (fallback) changeStatus(fallback);
+    }
   }
-  return <form className="page-narrow grid gap-5" noValidate onSubmit={submit}>{error && <ErrorState message={error} />}<FormErrorSummary errors={Object.values(fieldErrors)} /><SectionCard><div className="grid gap-4"><Field label="Nome" hint="Informe o nome ou o brinco." error={fieldErrors.identity}><Input value={name} onChange={(event) => { setName(event.target.value); setFieldErrors((current) => ({ ...current, identity: undefined })); }} /></Field><Field label="Número do brinco" hint="Pode ser usado no lugar do nome."><Input inputMode="numeric" value={tagNumber} onChange={(event) => { setTagNumber(event.target.value); setFieldErrors((current) => ({ ...current, identity: undefined })); }} /></Field>{!initial && <><div className="grid gap-3 sm:grid-cols-2"><Field label="Situação inicial"><Select value={status} onChange={(event) => setStatus(event.target.value as AnimalStatus)}>{Object.entries(animalStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></Field><Field label="Data inicial" error={fieldErrors.date}><Input type="date" value={changedOn} max={today()} onChange={(event) => { setChangedOn(event.target.value); setFieldErrors((current) => ({ ...current, date: undefined })); }} required /></Field></div>{statusRequiresMilkingGroup(status) && <GroupPicker label="Lote de ordenha" value={groupId} fieldError={fieldErrors.group} onChange={(value) => { setGroupId(value); setFieldErrors((current) => ({ ...current, group: undefined })); }} />}</>}<Field label="Observações"><Textarea value={notes} onChange={(event) => setNotes(event.target.value)} /></Field></div></SectionCard><Button type="submit" disabled={busy}>{busy ? 'Salvando…' : 'Salvar animal'}</Button></form>;
+
+  function changeStatus(next: AnimalStatus) {
+    form.set('status', next);
+    // Lote escolhido para outra rotina não é reaproveitado (ordenha × sem ordenha).
+    form.set('groupId', '');
+  }
+
+  async function persist() {
+    const { name, tagNumber, sex: animalSexValue, status: statusValue, groupId, changedOn, damId, sireId, notes } = form.values;
+    const body = initial
+      ? { name: name.trim() || null, tagNumber: tagNumber.trim() || null, notes: notes.trim() || null }
+      : { name: name.trim() || null, tagNumber: tagNumber.trim() || null, sex: animalSexValue, status: statusValue, groupId: groupId || null, damId: damId || null, sireId: sireId || null, changedOn, notes: notes.trim() || null };
+    const saved = await api<{ id: string }>(initial ? `/api/animals/${initial.id}` : '/api/animals', json(initial ? 'PATCH' : 'POST', body));
+    toast(initial ? 'Identificação atualizada' : 'Animal cadastrado');
+    if (initial && onSaved) await onSaved(); else navigate(`/rebanho/${saved.id}`);
+  }
+
+  return <form className="page-narrow grid gap-5" noValidate onSubmit={(event) => { event.preventDefault(); if (form.validate()) void run(persist); }}>
+    {error && <ErrorState message={error} />}
+    <FormErrorSummary errors={form.visibleErrors} />
+    <SectionCard><div className="grid gap-4">
+      <Field label="Nome" hint="Informe o nome ou o brinco." error={form.error('name')}><Input value={form.values.name} onChange={(event) => form.set('name', event.target.value)} onBlur={() => form.blur('name')} autoFocus /></Field>
+      <Field label="Número do brinco" hint="Pode ser usado no lugar do nome."><Input inputMode="numeric" value={form.values.tagNumber} onChange={(event) => { form.set('tagNumber', event.target.value); form.blur('name'); }} /></Field>
+      {!initial && <>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Sexo"><Select value={sex} onChange={(event) => changeSex(event.target.value as AnimalSex)} required>{Object.entries(animalSexLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></Field>
+          <Field label="Situação inicial"><Select value={status} onChange={(event) => changeStatus(event.target.value as AnimalStatus)}>{statusOptions.map((value) => <option key={value} value={value}>{animalStatusLabels[value]}</option>)}</Select></Field>
+        </div>
+        <Field label="Data inicial" error={form.error('changedOn')}><Input type="date" value={form.values.changedOn} max={today()} onChange={(event) => form.set('changedOn', event.target.value)} onBlur={() => form.blur('changedOn')} required /></Field>
+        {statusRequiresMilkingGroup(status)
+          ? <GroupPicker label="Lote de ordenha" routines={milkingGroupRoutines} value={form.values.groupId} fieldError={form.error('groupId')} onChange={(value) => form.set('groupId', value)} />
+          : <GroupPicker label="Lote (sem ordenha)" routines={nonMilkingGroupRoutines} required={false} value={form.values.groupId} fieldError={form.error('groupId')} onChange={(value) => form.set('groupId', value)} />}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Mãe (opcional)" hint="Somente fêmeas vivas do rebanho."><Select value={form.values.damId} onChange={(event) => form.set('damId', event.target.value)}><option value="">Não informada</option>{dams.map((animal) => <option key={animal.id} value={animal.id}>{animalName(animal)}</option>)}</Select></Field>
+          <Field label="Pai (opcional)" hint="Somente touros vivos do rebanho."><Select value={form.values.sireId} onChange={(event) => form.set('sireId', event.target.value)}><option value="">Não informado</option>{sires.map((animal) => <option key={animal.id} value={animal.id}>{animalName(animal)}</option>)}</Select></Field>
+        </div>
+      </>}
+      <Field label="Observações"><Textarea value={form.values.notes} onChange={(event) => form.set('notes', event.target.value)} /></Field>
+    </div></SectionCard>
+    <SubmitBar label={initial ? 'Salvar alterações' : 'Salvar animal'} busy={busy} />
+  </form>;
 }
 
 export function NewAnimalPage() {
   const [mode, setMode] = useState<'ONE' | 'MANY'>('ONE');
   const navigate = useNavigate();
-  return <div className="page"><PageHeader icon={CowHead} title="Cadastrar rebanho" subtitle="Cadastre uma vaca ou uma lista com situação e lote em comum" /><div className="mb-5 flex gap-2"><Button variant={mode === 'ONE' ? 'primary' : 'secondary'} onClick={() => setMode('ONE')}>Um animal</Button><Button variant={mode === 'MANY' ? 'primary' : 'secondary'} onClick={() => setMode('MANY')}>Vários animais</Button></div>{mode === 'ONE' ? <AnimalForm /> : <BulkAnimalForm onSaved={(firstId) => navigate(firstId ? `/rebanho/${firstId}` : '/rebanho')} />}</div>;
+  return <div className="page"><PageHeader icon={CowHead} title="Cadastrar rebanho" subtitle="Cadastre um animal ou uma lista com sexo, situação e lote em comum" /><div className="mb-5 flex gap-2"><Button variant={mode === 'ONE' ? 'primary' : 'secondary'} onClick={() => setMode('ONE')}>Um animal</Button><Button variant={mode === 'MANY' ? 'primary' : 'secondary'} onClick={() => setMode('MANY')}>Vários animais</Button></div>{mode === 'ONE' ? <AnimalForm /> : <BulkAnimalForm onSaved={(firstId) => navigate(firstId ? `/rebanho/${firstId}` : '/rebanho')} />}</div>;
 }
 
 export function AnimalDetailPage() {
@@ -218,6 +280,7 @@ export function AnimalDetailPage() {
   const navigate = useNavigate();
   const toast = useToast();
   const { data, loading, error, reload } = useResource<AnimalDetail>(`/api/animals/${id}`);
+  const { data: herd = [] } = useResource<Animal[]>('/api/animals');
   const [editing, setEditing] = useState(false);
   const [alias, setAlias] = useState('');
   const [actionError, setActionError] = useState('');
@@ -248,6 +311,10 @@ export function AnimalDetailPage() {
   if (loading) return <div className="page"><SkeletonList rows={5} /></div>;
   if (error || !data) return <div className="page"><ErrorState message={error || 'Animal não encontrado.'} retry={reload} /></div>;
   if (editing) return <div className="page"><PageHeader title="Editar identificação" subtitle="A situação e o lote possuem fluxos próprios para preservar o histórico" action={<Button variant="secondary" onClick={() => setEditing(false)}>Cancelar</Button>} /><AnimalForm initial={data} onSaved={async () => { await reload(); setEditing(false); }} /></div>;
+  const herdById = new Map((herd ?? []).map((animal) => [animal.id, animal]));
+  const offspring = (herd ?? []).filter((animal) => animal.damId === id || animal.sireId === id);
+  const dam = data.damId ? herdById.get(data.damId) ?? null : null;
+  const sire = data.sireId ? herdById.get(data.sireId) ?? null : null;
   const confirmedHistory = data.history.filter((row) => row.status === 'CONFIRMED');
   const productionRows = filterByPeriod(confirmedHistory.map((row) => ({ date: row.sessionDate, morning: row.morningLiters, afternoon: row.afternoonLiters, total: row.totalLiters })).sort((a, b) => a.date.localeCompare(b.date)), productionPeriod, today());
   const confirmedWeights = data.weights.filter((row) => row.status === 'CONFIRMED' && row.weightKg !== null);
@@ -267,8 +334,8 @@ export function AnimalDetailPage() {
     <Modal open={showStatusForm} title="Alterar situação" onClose={() => setShowStatusForm(false)}>
       <AnimalStatusChangeForm animalId={id} currentStatus={data.status} initialStatus={statusFormTarget} onCancel={() => setShowStatusForm(false)} onSaved={async () => { await reload(); setShowStatusForm(false); }} />
     </Modal>
-    <Modal open={showGroupForm} title="Mudar lote de ordenha" onClose={() => setShowGroupForm(false)}>
-      <AnimalGroupChangeForm animalId={id} currentGroupId={data.currentGroup?.id} onCancel={() => setShowGroupForm(false)} onSaved={async () => { await reload(); setShowGroupForm(false); }} />
+    <Modal open={showGroupForm} title="Mudar lote" onClose={() => setShowGroupForm(false)}>
+      <AnimalGroupChangeForm animalId={id} status={data.status} currentGroupId={data.currentGroup?.id} onCancel={() => setShowGroupForm(false)} onSaved={async () => { await reload(); setShowGroupForm(false); }} />
     </Modal>
     <Modal open={showReproductiveForm} title={editingReproductiveEvent ? 'Editar cio/cobertura' : 'Registrar cio/cobertura'} onClose={() => { setShowReproductiveForm(false); setEditingReproductiveEvent(undefined); }}>
       <ReproductiveEventForm animalId={id} initial={editingReproductiveEvent} onCancel={() => { setShowReproductiveForm(false); setEditingReproductiveEvent(undefined); }} onSaved={async () => { await reload(); setShowReproductiveForm(false); setEditingReproductiveEvent(undefined); }} />
@@ -279,16 +346,17 @@ export function AnimalDetailPage() {
         <form className="flex items-end gap-2" onSubmit={addAlias}><Field label="Novo alias"><Input value={alias} onChange={(event) => setAlias(event.target.value)} required /></Field><Button type="submit">Adicionar</Button></form>
       </div>
     </Modal>
-    <SectionCard title="Ações do animal" className="mb-5"><div className="flex flex-wrap gap-2"><Link className="button button-primary" to={`/mastite/nova?animalId=${id}`}><Activity size={17} aria-hidden />Registrar mastite</Link><Link className="button button-secondary" to="/pesos/novo"><Scale size={17} aria-hidden />Registrar peso</Link><Button variant="secondary" onClick={() => { setEditingReproductiveEvent(undefined); setShowReproductiveForm(true); }}><HeartPulse size={17} aria-hidden />Registrar cio/cobertura</Button>{allowedNextStatuses(data.status).length > 0 && <Button variant="secondary" onClick={() => { setStatusFormTarget(undefined); setShowStatusForm(true); }}>Alterar situação</Button>}{data.status === 'LACTATING' && <Button variant="secondary" onClick={() => setShowGroupForm(true)}><ArrowRightLeft size={17} aria-hidden />Mudar lote</Button>}{allowedNextStatuses(data.status).includes('SOLD') && <Button variant="secondary" onClick={() => { setStatusFormTarget('SOLD'); setShowStatusForm(true); }}><Banknote size={17} aria-hidden />Registrar saída</Button>}</div></SectionCard>
-    <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-5"><StatCard label="Situação atual" value={<StatusBadge descriptor={animalStatusDescriptor(data.status)} />} detail={latestStatus ? `Desde ${formatDate(latestStatus.changedOn)}` : undefined} /><StatCard label="Reprodução" value={reproductiveState} detail={data.reproductiveSummary.lastHeatOn ? `Último cio em ${formatDate(data.reproductiveSummary.lastHeatOn)}` : 'Registre somente fatos observados'} /><StatCard label="Lote de ordenha" value={data.currentGroup?.name ?? (data.status === 'LACTATING' ? 'Sem lote' : 'Não se aplica')} detail={data.currentGroup ? milkingRoutineLabels[data.currentGroup.milkingRoutine] : data.status === 'LACTATING' ? 'Precisa de atenção' : 'Fora da lactação'} /><StatCard label="Último controle" value={latestProduction ? formatLiters(latestProduction.totalLiters) : '—'} detail={latestProduction ? formatDate(latestProduction.sessionDate) : 'Sem medição individual'} /><StatCard label="Último peso" value={latestWeight?.weightKg ? formatWeight(latestWeight.weightKg) : '—'} detail={latestWeight ? new Date(latestWeight.measuredAt).toLocaleDateString('pt-BR') : 'Sem pesagem'} /></div>
+    <SectionCard title="Ações do animal" className="mb-5"><div className="flex flex-wrap gap-2"><Link className="button button-primary" to={`/mastite/nova?animalId=${id}`}><Activity size={17} aria-hidden />Registrar mastite</Link><Link className="button button-secondary" to="/pesos/novo"><Scale size={17} aria-hidden />Registrar peso</Link><Button variant="secondary" onClick={() => { setEditingReproductiveEvent(undefined); setShowReproductiveForm(true); }}><HeartPulse size={17} aria-hidden />Registrar cio/cobertura</Button>{allowedNextStatuses(data.status).length > 0 && <Button variant="secondary" onClick={() => { setStatusFormTarget(undefined); setShowStatusForm(true); }}>Alterar situação</Button>}{isLiveStatus(data.status) && <Button variant="secondary" onClick={() => setShowGroupForm(true)}><ArrowRightLeft size={17} aria-hidden />Mudar lote</Button>}{allowedNextStatuses(data.status).includes('SOLD') && <Button variant="secondary" onClick={() => { setStatusFormTarget('SOLD'); setShowStatusForm(true); }}><Banknote size={17} aria-hidden />Registrar saída</Button>}</div></SectionCard>
+    <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-5"><StatCard label="Situação atual" value={<StatusBadge descriptor={animalStatusDescriptor(data.status)} />} detail={latestStatus ? `Desde ${formatDate(latestStatus.changedOn)}` : undefined} /><StatCard label="Reprodução" value={reproductiveState} detail={data.reproductiveSummary.lastHeatOn ? `Último cio em ${formatDate(data.reproductiveSummary.lastHeatOn)}` : 'Registre somente fatos observados'} /><StatCard label="Lote" value={data.currentGroup?.name ?? 'Sem lote'} detail={data.currentGroup ? milkingRoutineLabels[data.currentGroup.milkingRoutine] : data.status === 'LACTATING' ? 'Precisa de atenção' : 'Fora da lactação'} /><StatCard label="Último controle" value={latestProduction ? formatLiters(latestProduction.totalLiters) : '—'} detail={latestProduction ? formatDate(latestProduction.sessionDate) : 'Sem medição individual'} /><StatCard label="Último peso" value={latestWeight?.weightKg ? formatWeight(latestWeight.weightKg) : '—'} detail={latestWeight ? new Date(latestWeight.measuredAt).toLocaleDateString('pt-BR') : 'Sem pesagem'} /></div>
     <div className="grid gap-5 lg:grid-cols-2">
-      <AnimalCycleSection data={data} onChangeStatus={() => { setStatusFormTarget(undefined); setShowStatusForm(true); }} onRegisterReproductiveEvent={() => { setEditingReproductiveEvent(undefined); setShowReproductiveForm(true); }} onEditReproductiveEvent={(event) => { setEditingReproductiveEvent(event); setShowReproductiveForm(true); }} onUndoStatus={(eventId) => void undoStatus(eventId)} onRemoveReproductiveEvent={(eventId) => void removeReproductiveEvent(eventId)} />
-      <SectionCard title="Lote de ordenha" icon={Tags}><p className="text-sm">{data.status !== 'LACTATING' ? 'Fora da lactação, a vaca não pertence a um lote de ordenha.' : <>Atual: <strong>{data.currentGroup?.name ?? 'Sem lote'}</strong>{data.currentGroup && <span className="block text-[var(--muted)]">{milkingRoutineLabels[data.currentGroup.milkingRoutine]}</span>}</>}</p>{data.status === 'LACTATING' && <Button className="mt-4" variant="secondary" onClick={() => setShowGroupForm(true)}><ArrowRightLeft size={17} aria-hidden />Mudar lote</Button>}<h3 className="mt-5 text-sm font-bold">Histórico de lotes</h3>{!data.groupHistory.length ? <InlineEmpty className="mt-2">Nenhum lote registrado.</InlineEmpty> :<ScrollArea label="Histórico de lotes de ordenha" className="mt-2 max-h-64">{data.groupHistory.map((row) => <div className="mobile-item" key={row.id}><span><strong>{row.groupName}</strong><span className="block text-xs text-[var(--muted)]">{formatDate(row.startedOn)}{row.endedOn ? ` até ${formatDate(row.endedOn)}` : ' até hoje'}</span>{row.notes && <span className="block text-xs text-[var(--muted)]">{row.notes}</span>}</span></div>)}</ScrollArea>}</SectionCard>
+      <AnimalCycleSection data={data} resolveAnimalName={(animalId) => { const found = herdById.get(animalId); return found ? animalName(found) : undefined; }} onChangeStatus={() => { setStatusFormTarget(undefined); setShowStatusForm(true); }} onRegisterReproductiveEvent={() => { setEditingReproductiveEvent(undefined); setShowReproductiveForm(true); }} onEditReproductiveEvent={(event) => { setEditingReproductiveEvent(event); setShowReproductiveForm(true); }} onUndoStatus={(eventId) => void undoStatus(eventId)} onRemoveReproductiveEvent={(eventId) => void removeReproductiveEvent(eventId)} />
+      <SectionCard title="Lote" icon={Tags}><p className="text-sm">{data.currentGroup ? <>Atual: <strong>{data.currentGroup.name}</strong><span className="block text-[var(--muted)]">{milkingRoutineLabels[data.currentGroup.milkingRoutine]}</span></> : data.status === 'LACTATING' ? 'Sem lote — vaca em lactação precisa de um lote com ordenha.' : 'Fora da lactação, a vaca pode ocupar um lote sem ordenha.'}</p>{isLiveStatus(data.status) && <Button className="mt-4" variant="secondary" onClick={() => setShowGroupForm(true)}><ArrowRightLeft size={17} aria-hidden />Mudar lote</Button>}<h3 className="mt-5 text-sm font-bold">Histórico de lotes</h3>{!data.groupHistory.length ? <InlineEmpty className="mt-2">Nenhum lote registrado.</InlineEmpty> :<ScrollArea label="Histórico de lotes do animal" className="mt-2 max-h-64">{data.groupHistory.map((row) => <div className="mobile-item" key={row.id}><span><strong>{row.groupName}</strong><span className="block text-xs text-[var(--muted)]">{formatDate(row.startedOn)}{row.endedOn ? ` até ${formatDate(row.endedOn)}` : ' até hoje'}</span>{row.notes && <span className="block text-xs text-[var(--muted)]">{row.notes}</span>}</span></div>)}</ScrollArea>}</SectionCard>
       <AnimalMastitisSection data={data} animalId={id} />
       <SectionCard title="Evolução da produção" icon={ChartLine} className="lg:col-span-2"><PeriodSelector value={productionPeriod} onChange={setProductionPeriod} /><p className="mb-3 mt-3 text-xs text-[var(--muted)]">Somente medições reais confirmadas. Controles antigos sem separação aparecem apenas no total.</p><TimeSeriesChart data={productionRows} series={[{ key: 'total', label: 'Total', color: '#315c3b', area: true }, { key: 'morning', label: 'Manhã', color: '#b7791f' }, { key: 'afternoon', label: 'Tarde', color: '#3f6f9d', dashed: true }]} label={`Evolução da produção de ${animalName(data)}`} /></SectionCard>
       <SectionCard title="Evolução do peso" icon={Scale} className="lg:col-span-2"><p className="mb-3 text-xs text-[var(--muted)]">Pesagens reais confirmadas; sessões parciais não criam valores nos dias ausentes.</p><TimeSeriesChart data={weightRows} series={[{ key: 'weight', label: 'Peso', color: '#8a5a0a', area: true }]} valueSuffix="kg" startAtZero={false} label={`Evolução do peso de ${animalName(data)}`} /><Link className="button button-secondary mt-3" to="/pesos/novo"><Upload size={17} aria-hidden />Registrar nova pesagem</Link></SectionCard>
       {(data.exits.length > 0 || data.revenues.length > 0) && <AnimalExitsSection data={data} onChange={reload} />}
-      <SectionCard title="Identificação e aliases" action={<Button variant="secondary" onClick={() => setShowAliasModal(true)}><Pencil size={16} aria-hidden />Gerenciar aliases</Button>}><p><strong>Nome:</strong> {data.name ?? 'Não informado'}<br /><strong>Brinco:</strong> {data.tagNumber ?? 'Não informado'}</p>{data.notes && <p className="mt-3 text-sm">{data.notes}</p>}<h3 className="mt-5 text-sm font-bold">Aliases do caderno</h3>{!data.aliases.length ? <InlineEmpty className="mt-1">Nenhum alias cadastrado.</InlineEmpty> : <p className="mt-1 text-sm text-[var(--muted)]">{data.aliases.map((item) => item.alias).join(', ')}</p>}</SectionCard>
+      <SectionCard title="Identificação e aliases" action={<Button variant="secondary" onClick={() => setShowAliasModal(true)}><Pencil size={16} aria-hidden />Gerenciar aliases</Button>}><p><strong>Nome:</strong> {data.name ?? 'Não informado'}<br /><strong>Brinco:</strong> {data.tagNumber ?? 'Não informado'}<br /><strong>Sexo:</strong> {animalSexLabels[data.sex] ?? data.sex}<br /><strong>Mãe:</strong> {dam ? <Link className="text-[var(--primary)] underline" to={`/rebanho/${dam.id}`}>{animalName(dam)}</Link> : data.damId ? '…' : 'Não informada'}<br /><strong>Pai:</strong> {sire ? <Link className="text-[var(--primary)] underline" to={`/rebanho/${sire.id}`}>{animalName(sire)}</Link> : data.sireId ? '…' : 'Não informado'}</p>{data.notes && <p className="mt-3 text-sm">{data.notes}</p>}<h3 className="mt-5 text-sm font-bold">Aliases do caderno</h3>{!data.aliases.length ? <InlineEmpty className="mt-1">Nenhum alias cadastrado.</InlineEmpty> : <p className="mt-1 text-sm text-[var(--muted)]">{data.aliases.map((item) => item.alias).join(', ')}</p>}</SectionCard>
+      {offspring.length > 0 && <SectionCard title={`Crias de ${animalName(data)}`}>{offspring.map((calf) => <Link key={calf.id} className="mobile-item text-[var(--text)]" to={`/rebanho/${calf.id}`}><span className="min-w-0"><strong className="block truncate text-[var(--primary)]">{animalName(calf)}</strong><span className="block text-xs text-[var(--muted)]">{animalSexLabels[calf.sex] ?? calf.sex}{calf.damId === id && calf.sireId === id ? ' · mãe e pai declarados' : calf.damId === id ? ' · mãe declarada' : ' · pai declarado'}</span></span><StatusBadge descriptor={animalStatusDescriptor(calf.status)} /></Link>)}</SectionCard>}
       <SectionCard title="Histórico de controles"><ScrollArea label="Histórico de produção do animal">{!data.history.length ? <InlineEmpty>Ainda não há medições vinculadas.</InlineEmpty> : data.history.map((row) => <div className="mobile-item" key={row.id}><span><strong>{formatDate(row.sessionDate)}</strong><span className="block text-xs text-[var(--muted)]">{milkMeasurementStatusDescriptor[row.status].label}</span></span><strong>{formatLiters(row.totalLiters)}</strong></div>)}</ScrollArea></SectionCard>
       <AnimalWeightPanel weights={data.weights} />
     </div>

@@ -16,6 +16,13 @@ export type GameMapZone = {
   id: string;
   kind: MapZoneKind;
   name: string;
+  /** Pasto real que a zona desenha (tabela pastures). */
+  pastureId: string | null;
+  /**
+   * Lote exibido dentro da zona — DERIVADO da ocupação atual do pasto
+   * (pasture_occupancies aberta), nunca de vínculo próprio da zona.
+   * null = pasto sem lote no momento.
+   */
   herdGroupId: string | null;
   ring: MapPoint[];
   styleVariant: number;
@@ -37,7 +44,7 @@ export type GameMapState = {
 export type GameHerdGroup = {
   groupId: string;
   groupName: string;
-  /** Zona (pasto) vinculada ao lote; null = lote ainda sem pasto no mapa. */
+  /** Zona que desenha o pasto onde o lote está (ocupação atual); null = lote fora de pasto no mapa. */
   zoneId: string | null;
   animalCount: number;
   lactatingCount: number;
@@ -95,7 +102,7 @@ export function buildHerdState(
   groups: Array<{ id: string; name: string; active: boolean }>,
   zones: GameMapZone[],
 ): { herd: GameHerdGroup[]; unassignedCount: number } {
-  const aliveStatuses = new Set(['HEIFER', 'LACTATING', 'DRY']);
+  const aliveStatuses = new Set(['HEIFER', 'LACTATING', 'DRY', 'CALF', 'GROWING', 'BULL']);
   const alive = animals.filter((animal) => aliveStatuses.has(animal.status));
   const aliveIds = new Set(alive.map((animal) => animal.id));
   const lactatingIds = new Set(alive.filter((animal) => animal.status === 'LACTATING').map((animal) => animal.id));

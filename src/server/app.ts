@@ -11,6 +11,7 @@ import { gameRoutes } from './routes/game.routes.js';
 import { dailyMilkRoutes } from './routes/daily-milk.routes.js';
 import { feedingRoutes } from './routes/feeding.routes.js';
 import { herdGroupRoutes } from './routes/herd-groups.routes.js';
+import { pastureRoutes } from './routes/pastures.routes.js';
 import { milkRoutes } from './routes/milk.routes.js';
 import { milkCollectionRoutes } from './routes/milk-collections.routes.js';
 import { milkPriceRoutes } from './routes/milk-prices.routes.js';
@@ -42,6 +43,7 @@ export function createApp() {
   app.use('/api/*', requireSession);
   app.route('/api', animalRoutes);
   app.route('/api', herdGroupRoutes);
+  app.route('/api', pastureRoutes);
   app.route('/api', milkRoutes);
   app.route('/api', dailyMilkRoutes);
   app.route('/api', milkCollectionRoutes);

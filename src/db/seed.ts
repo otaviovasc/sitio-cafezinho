@@ -18,6 +18,8 @@ import {
   milkSessions,
   mastitisActions,
   mastitisCases,
+  pastures,
+  pastureOccupancies,
   purchaseItems,
   purchases,
   revenues,
@@ -92,7 +94,7 @@ async function runSeed() {
         ? candidate.tagNumber === label.trim()
         : candidate.name !== null && normalizeLabel(candidate.name) === normalized);
       if (!animal) {
-        [animal] = await tx.insert(animals).values({ name: numeric ? null : label.trim(), tagNumber: numeric ? label.trim() : null, status: 'LACTATING' }).returning();
+        [animal] = await tx.insert(animals).values({ name: numeric ? null : label.trim(), tagNumber: numeric ? label.trim() : null, sex: 'FEMALE', status: 'LACTATING' }).returning();
         currentAnimals.push(animal);
       }
       animalByLabel.set(normalized, animal);
@@ -130,7 +132,7 @@ async function runSeed() {
       const normalized = normalizeLabel(seed.name);
       let animal = currentAnimals.find((candidate) => candidate.tagNumber === seed.tagNumber || (candidate.name && normalizeLabel(candidate.name) === normalized));
       if (!animal) {
-        [animal] = await tx.insert(animals).values({ name: seed.name, tagNumber: seed.tagNumber, status: 'HEIFER', notes: 'Novilha fictícia para demonstrar o acompanhamento antes da primeira lactação.' }).returning();
+        [animal] = await tx.insert(animals).values({ name: seed.name, tagNumber: seed.tagNumber, sex: 'FEMALE', status: 'HEIFER', notes: 'Novilha fictícia para demonstrar o acompanhamento antes da primeira lactação.' }).returning();
         currentAnimals.push(animal);
       } else if (animal.status !== 'HEIFER' && !currentStatusEvents.some((event) => event.animalId === animal!.id && event.previousStatus !== null)) {
         [animal] = await tx.update(animals).set({ status: 'HEIFER', updatedAt: new Date() }).where(eq(animals.id, animal.id)).returning();
@@ -146,8 +148,75 @@ async function runSeed() {
       }
     }
 
+    // ----- Lote sem ordenha, touros e animais de corte (demonstrativo) -----
+    await tx.insert(herdGroups).values({ name: 'Lote de corte', milkingRoutine: 'NOT_MILKED' }).onConflictDoNothing();
+    const [loteCorte] = await tx.select().from(herdGroups).where(eq(herdGroups.name, 'Lote de corte')).limit(1);
+    if (!loteCorte) throw new Error('Não foi possível preparar o lote de corte demonstrativo.');
+
+    const bullSeeds = [
+      { name: 'Rufus', tagNumber: '801' },
+      { name: 'Trovão', tagNumber: '802' },
+    ];
+    const bullByTag = new Map<string, typeof animals.$inferSelect>();
+    for (const seed of bullSeeds) {
+      const normalized = normalizeLabel(seed.name);
+      let bull = currentAnimals.find((candidate) => candidate.tagNumber === seed.tagNumber || (candidate.name && normalizeLabel(candidate.name) === normalized));
+      if (!bull) {
+        [bull] = await tx.insert(animals).values({ name: seed.name, tagNumber: seed.tagNumber, sex: 'MALE', status: 'BULL', notes: 'Touro fictício para demonstrar coberturas vinculadas.' }).returning();
+        currentAnimals.push(bull);
+      }
+      bullByTag.set(seed.tagNumber, bull);
+      animalByLabel.set(normalized, bull);
+      if (!currentAliases.some((alias) => alias.animalId === bull!.id && alias.normalizedAlias === normalized)) {
+        const [createdAlias] = await tx.insert(animalAliases).values({ animalId: bull.id, alias: seed.name, normalizedAlias: normalized }).returning();
+        currentAliases.push(createdAlias);
+      }
+      if (!currentStatusEvents.some((event) => event.animalId === bull!.id)) {
+        const [createdEvent] = await tx.insert(animalStatusEvents).values({ animalId: bull.id, previousStatus: null, status: 'BULL', changedOn: initialDate, notes: 'Touro do rebanho — dado demonstrativo.' }).returning();
+        currentStatusEvents.push(createdEvent);
+      }
+    }
+
+    // Bezerros nascem nas datas de parto das vacas demonstrativas (Chocolate em
+    // 2026-07-10, Aninha em 2026-07-14); mãe e pai são vínculos declarados.
+    const beefSeeds: Array<{ name: string; tagNumber: string; sex: 'FEMALE' | 'MALE'; status: 'CALF' | 'GROWING'; damLabel?: string; sireTag?: string; startedOn: string }> = [
+      { name: 'Pingo', tagNumber: '901', sex: 'MALE', status: 'CALF', damLabel: 'Chocolate', sireTag: '801', startedOn: '2026-07-10' },
+      { name: 'Chiquinha', tagNumber: '902', sex: 'FEMALE', status: 'CALF', damLabel: 'Aninha', sireTag: '801', startedOn: '2026-07-14' },
+      { name: 'Juca', tagNumber: '903', sex: 'MALE', status: 'GROWING', sireTag: '802', startedOn: initialDate },
+      { name: 'Pretinha', tagNumber: '904', sex: 'FEMALE', status: 'GROWING', startedOn: initialDate },
+    ];
+    for (const seed of beefSeeds) {
+      const normalized = normalizeLabel(seed.name);
+      let animal = currentAnimals.find((candidate) => candidate.tagNumber === seed.tagNumber || (candidate.name && normalizeLabel(candidate.name) === normalized));
+      if (!animal) {
+        [animal] = await tx.insert(animals).values({
+          name: seed.name,
+          tagNumber: seed.tagNumber,
+          sex: seed.sex,
+          status: seed.status,
+          damId: seed.damLabel ? animalByLabel.get(normalizeLabel(seed.damLabel))?.id ?? null : null,
+          sireId: seed.sireTag ? bullByTag.get(seed.sireTag)?.id ?? null : null,
+          notes: 'Animal de corte fictício para demonstração local.',
+        }).returning();
+        currentAnimals.push(animal);
+      }
+      animalByLabel.set(normalized, animal);
+      if (!currentAliases.some((alias) => alias.animalId === animal!.id && alias.normalizedAlias === normalized)) {
+        const [createdAlias] = await tx.insert(animalAliases).values({ animalId: animal.id, alias: seed.name, normalizedAlias: normalized }).returning();
+        currentAliases.push(createdAlias);
+      }
+      if (!currentStatusEvents.some((event) => event.animalId === animal!.id)) {
+        const [createdEvent] = await tx.insert(animalStatusEvents).values({ animalId: animal.id, previousStatus: null, status: seed.status, changedOn: seed.startedOn, notes: seed.status === 'CALF' ? 'Nascimento — dado demonstrativo.' : 'Animal em recria — dado demonstrativo.' }).returning();
+        currentStatusEvents.push(createdEvent);
+      }
+      if (!currentAssignments.some((assignment) => assignment.animalId === animal!.id)) {
+        const [assignment] = await tx.insert(animalGroupAssignments).values({ animalId: animal.id, groupId: loteCorte.id, startedOn: seed.startedOn, notes: 'Lote sem ordenha — dado demonstrativo.' }).returning();
+        currentAssignments.push(assignment);
+      }
+    }
+
     const reproductiveEvents = await tx.select().from(animalReproductiveEvents);
-    async function addHeat(input: { label: string; occurredOn: string; hadBreeding: boolean; bullName?: string; outcome?: 'PENDING' | 'NOT_PREGNANT' | 'PREGNANT'; outcomeRecordedOn?: string; notes: string }) {
+    async function addHeat(input: { label: string; occurredOn: string; hadBreeding: boolean; bullId?: string | null; bullName?: string; outcome?: 'PENDING' | 'NOT_PREGNANT' | 'PREGNANT'; outcomeRecordedOn?: string; notes: string }) {
       const animal = animalByLabel.get(normalizeLabel(input.label));
       if (!animal || reproductiveEvents.some((event) => event.animalId === animal.id && event.type === 'HEAT' && event.occurredOn === input.occurredOn)) return;
       const [created] = await tx.insert(animalReproductiveEvents).values({
@@ -155,6 +224,7 @@ async function runSeed() {
         type: 'HEAT',
         occurredOn: input.occurredOn,
         hadBreeding: input.hadBreeding,
+        bullId: input.hadBreeding ? input.bullId ?? null : null,
         bullName: input.hadBreeding ? input.bullName ?? null : null,
         outcome: input.hadBreeding ? input.outcome ?? 'PENDING' : null,
         outcomeRecordedOn: input.hadBreeding && input.outcome && input.outcome !== 'PENDING' ? input.outcomeRecordedOn ?? null : null,
@@ -177,7 +247,37 @@ async function runSeed() {
     await addHeat({ label: 'Estrela', occurredOn: '2026-05-25', hadBreeding: true, bullName: 'Touro 22', outcome: 'NOT_PREGNANT', outcomeRecordedOn: '2026-06-18', notes: 'Primeira tentativa demonstrativa.' });
     await addHeat({ label: 'Estrela', occurredOn: '2026-06-20', hadBreeding: true, bullName: 'Touro 22', outcome: 'PREGNANT', outcomeRecordedOn: '2026-07-12', notes: 'Prenhez confirmada; continua novilha até o primeiro parto.' });
     await addHeat({ label: 'Lua', occurredOn: '2026-06-28', hadBreeding: false, notes: 'Cio observado sem cobertura — dado demonstrativo.' });
+    await addHeat({ label: 'Formosa', occurredOn: '2026-07-08', hadBreeding: true, bullId: bullByTag.get('802')?.id ?? null, outcome: 'PENDING', notes: 'Cobertura com touro cadastrado — dado demonstrativo.' });
     await syncCalvings();
+
+    // ----- Pastos e ocupações datadas (demonstrativo) -----
+    // Rotação coerente: Lote 1 saiu do Pasto do morro para o Pasto da entrada e o
+    // Lote 2 cedeu o Pasto do fundo ao Lote de corte, ambos em 2026-06-01; o
+    // Pasto do morro ficou em descanso (ocupação encerrada, nenhuma aberta).
+    const pastureSeeds = [
+      { name: 'Pasto da entrada', areaHa: '8.40' },
+      { name: 'Pasto do fundo', areaHa: '12.75' },
+      { name: 'Pasto do morro', areaHa: '15.20' },
+    ];
+    await tx.insert(pastures).values(pastureSeeds).onConflictDoNothing();
+    const pastureRows = await tx.select().from(pastures);
+    const pastureByName = new Map(pastureRows.map((row) => [row.name, row.id]));
+
+    const occupancySeeds: Array<{ pasture: string; groupId: string; startedOn: string; endedOn: string | null; notes: string }> = [
+      { pasture: 'Pasto do morro', groupId: lote1.id, startedOn: initialDate, endedOn: '2026-06-01', notes: 'Ocupação encerrada para rotação — dado demonstrativo.' },
+      { pasture: 'Pasto da entrada', groupId: lote1.id, startedOn: '2026-06-01', endedOn: null, notes: 'Ocupação atual do Lote 1 — dado demonstrativo.' },
+      { pasture: 'Pasto do fundo', groupId: lote2.id, startedOn: initialDate, endedOn: '2026-06-01', notes: 'Ocupação encerrada para rotação — dado demonstrativo.' },
+      { pasture: 'Pasto do fundo', groupId: loteCorte.id, startedOn: '2026-06-01', endedOn: null, notes: 'Ocupação atual do lote sem ordenha — dado demonstrativo.' },
+    ];
+    const currentOccupancies = await tx.select().from(pastureOccupancies);
+    for (const seed of occupancySeeds) {
+      const pastureId = pastureByName.get(seed.pasture);
+      if (!pastureId) continue;
+      if (currentOccupancies.some((row) => row.pastureId === pastureId && row.herdGroupId === seed.groupId && row.startedOn === seed.startedOn)) continue;
+      if (seed.endedOn === null && currentOccupancies.some((row) => row.endedOn === null && (row.pastureId === pastureId || row.herdGroupId === seed.groupId))) continue;
+      const [created] = await tx.insert(pastureOccupancies).values({ pastureId, herdGroupId: seed.groupId, startedOn: seed.startedOn, endedOn: seed.endedOn, notes: seed.notes }).returning();
+      currentOccupancies.push(created);
+    }
 
     const existingDailyRows = await tx.select().from(dailyMilkTotals);
     for (const [index, row] of existingDailyRows.entries()) {
@@ -207,7 +307,7 @@ async function runSeed() {
     if (!demoMilkRevenue) await tx.insert(revenues).values({ revenueDate: '2026-07-10', category: 'MILK_SALE', description: 'Pagamento demonstrativo do laticínio', amount: '18450.00', status: 'RECEIVED', receivedAt: new Date('2026-07-10T12:00:00-03:00'), periodStart: '2026-06-16', periodEnd: '2026-06-30', quantity: '10800.000', unitPrice: '1.7083', bonusAmount: '300.00', discountAmount: '300.00', buyerName: 'Laticínio demonstrativo', notes: 'Receita fictícia para demonstração local.' });
 
     let [soldDemoAnimal] = await tx.select().from(animals).where(eq(animals.name, 'Bezerro fictício vendido')).limit(1);
-    if (!soldDemoAnimal) [soldDemoAnimal] = await tx.insert(animals).values({ name: 'Bezerro fictício vendido', tagNumber: 'DEMO-VENDA', status: 'SOLD', notes: 'Animal exclusivamente demonstrativo.' }).returning();
+    if (!soldDemoAnimal) [soldDemoAnimal] = await tx.insert(animals).values({ name: 'Bezerro fictício vendido', tagNumber: 'DEMO-VENDA', sex: 'FEMALE', status: 'SOLD', notes: 'Animal exclusivamente demonstrativo.' }).returning();
     let [soldStatusEvent] = await tx.select().from(animalStatusEvents).where(and(eq(animalStatusEvents.animalId, soldDemoAnimal.id), eq(animalStatusEvents.status, 'SOLD'))).limit(1);
     if (!soldStatusEvent) [soldStatusEvent] = await tx.insert(animalStatusEvents).values({ animalId: soldDemoAnimal.id, previousStatus: 'HEIFER', status: 'SOLD', changedOn: '2026-07-05', notes: 'Venda fictícia para demonstração local.' }).returning();
     let [saleRevenue] = await tx.select().from(revenues).where(and(eq(revenues.animalId, soldDemoAnimal.id), eq(revenues.description, 'Venda demonstrativa de animal'))).limit(1);

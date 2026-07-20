@@ -18,8 +18,9 @@ import {
   milkSessions,
   revenues,
   weightSessions,
+  type HerdGroup,
 } from '../../db/schema.js';
-import { animalStatuses, canTransitionStatus, statusRequiresMilkingGroup } from '../../domain/animal-lifecycle.js';
+import { animalSexes, animalStatuses, canTransitionStatus, isLiveStatus, statusAllowedForSex, statusMatchesGroupRoutine, statusRequiresMilkingGroup } from '../../domain/animal-lifecycle.js';
 import { decimalString, normalizeLabel, parseDecimal } from '../../domain/format.js';
 import { reproductiveOutcomes, summarizeReproduction } from '../../domain/reproduction.js';
 import { fail } from '../http/api-error.js';
@@ -27,6 +28,7 @@ import { optionalText, readJson, validate } from '../http/validation.js';
 
 const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
 const statusSchema = z.enum(animalStatuses);
+const sexSchema = z.enum(animalSexes);
 const reproductiveOutcomeSchema = z.enum(reproductiveOutcomes);
 const exitTypes = ['CALF_SALE', 'BREEDING_SALE', 'PRODUCTIVE_CULL', 'HEALTH_CULL', 'MEAT_SALE', 'OTHER'] as const;
 const optionalPositiveDecimal = z.union([z.string(), z.number(), z.null()]).optional().transform((value, context): number | null => {
@@ -46,16 +48,40 @@ const exitSchema = z.object({
   existingRevenueId: z.string().uuid().nullable().optional(),
 }).nullable().optional();
 
+const calfSchema = z.object({
+  name: z.string().trim().max(120).nullable().optional().transform((value) => value || null),
+  tagNumber: z.string().trim().max(60).nullable().optional().transform((value) => value || null),
+  sex: sexSchema,
+  sireId: z.string().uuid().nullable().optional(),
+});
+
+const statusChangeSchema = z.object({
+  status: statusSchema,
+  changedOn: z.string().date(),
+  notes: optionalText,
+  groupId: z.string().uuid().nullable().optional(),
+  exit: exitSchema,
+  calf: calfSchema.nullable().optional(),
+}).superRefine((value, context) => {
+  if (!value.calf) return;
+  if (value.status !== 'LACTATING') context.addIssue({ code: 'custom', path: ['calf'], message: 'O bezerro só pode ser registrado no parto (entrada em lactação).' });
+  if (!value.calf.name && !value.calf.tagNumber) context.addIssue({ code: 'custom', path: ['calf'], message: 'Informe nome ou brinco do bezerro.' });
+});
+
 const reproductiveEventSchema = z.object({
   occurredOn: z.string().date(),
   hadBreeding: z.boolean(),
+  bullId: z.string().uuid().nullable().optional(),
   bullName: optionalText,
   outcome: reproductiveOutcomeSchema.nullable().optional(),
   outcomeRecordedOn: z.string().date().nullable().optional(),
   notes: optionalText,
 }).superRefine((value, context) => {
-  if (!value.hadBreeding && (value.bullName || value.outcome || value.outcomeRecordedOn)) {
+  if (!value.hadBreeding && (value.bullId || value.bullName || value.outcome || value.outcomeRecordedOn)) {
     context.addIssue({ code: 'custom', message: 'Sem cobertura, não informe touro ou resultado.' });
+  }
+  if (value.hadBreeding && value.bullId && value.bullName) {
+    context.addIssue({ code: 'custom', path: ['bullId'], message: 'O touro da cobertura é um vínculo ou um nome, nunca os dois.' });
   }
   if (value.hadBreeding && value.outcome && value.outcome !== 'PENDING' && !value.outcomeRecordedOn) {
     context.addIssue({ code: 'custom', path: ['outcomeRecordedOn'], message: 'Informe quando o resultado foi confirmado.' });
@@ -70,6 +96,7 @@ function normalizedReproductiveEvent(body: z.output<typeof reproductiveEventSche
   return {
     occurredOn: body.occurredOn,
     hadBreeding: body.hadBreeding,
+    bullId: body.hadBreeding ? (body.bullId ?? null) : null,
     bullName: body.hadBreeding ? body.bullName : null,
     outcome,
     outcomeRecordedOn: outcome && outcome !== 'PENDING' ? (body.outcomeRecordedOn ?? null) : null,
@@ -88,21 +115,35 @@ const animalUpdateSchema = z.object(identificationFields)
 
 const animalCreateSchema = z.object({
   ...identificationFields,
+  sex: sexSchema,
   status: statusSchema.default('LACTATING'),
   groupId: z.string().uuid().nullable().optional(),
+  damId: z.string().uuid().nullable().optional(),
+  sireId: z.string().uuid().nullable().optional(),
   changedOn: z.string().date().optional(),
 }).superRefine((value, context) => {
   if (!value.name && !value.tagNumber) context.addIssue({ code: 'custom', message: 'Informe nome ou brinco.' });
+  if (!statusAllowedForSex(value.status, value.sex)) context.addIssue({ code: 'custom', path: ['status'], message: 'Esta situação não combina com o sexo do animal.' });
   if (statusRequiresMilkingGroup(value.status) && !value.groupId) context.addIssue({ code: 'custom', path: ['groupId'], message: 'Escolha o lote de ordenha para uma vaca em lactação.' });
+});
+
+const bulkAnimalItemSchema = z.object({
+  ...identificationFields,
+  sex: sexSchema,
+  damId: z.string().uuid().nullable().optional(),
+  sireId: z.string().uuid().nullable().optional(),
 });
 
 const bulkCreateSchema = z.object({
   status: statusSchema,
   groupId: z.string().uuid().nullable().optional(),
   changedOn: z.string().date(),
-  animals: z.array(z.object(identificationFields).refine((value) => value.name || value.tagNumber, 'Informe nome ou brinco.')).min(1).max(200),
+  animals: z.array(bulkAnimalItemSchema.refine((value) => value.name || value.tagNumber, 'Informe nome ou brinco.')).min(1).max(200),
 }).superRefine((value, context) => {
   if (statusRequiresMilkingGroup(value.status) && !value.groupId) context.addIssue({ code: 'custom', path: ['groupId'], message: 'Escolha o lote de ordenha.' });
+  for (const [index, animal] of value.animals.entries()) {
+    if (!statusAllowedForSex(value.status, animal.sex)) context.addIssue({ code: 'custom', path: ['animals', index, 'sex'], message: 'Esta situação não combina com o sexo do animal.' });
+  }
 });
 
 async function ensureUniqueTag(tagNumber: string | null | undefined, exceptId?: string) {
@@ -112,11 +153,50 @@ async function ensureUniqueTag(tagNumber: string | null | undefined, exceptId?: 
   if (duplicate) throw new Error('DUPLICATE_TAG');
 }
 
-async function getActiveMilkingGroup(groupId: string | null | undefined) {
+async function getActiveGroup(groupId: string | null | undefined) {
   if (!groupId) return null;
   const [group] = await getDb().select().from(herdGroups).where(and(eq(herdGroups.id, groupId), eq(herdGroups.active, true))).limit(1);
-  if (!group || group.milkingRoutine === 'NOT_MILKED') return null;
-  return group;
+  return group ?? null;
+}
+
+async function validateDam(damId: string | null | undefined) {
+  if (!damId) return null;
+  const [dam] = await getDb().select().from(animals).where(eq(animals.id, damId)).limit(1);
+  if (!dam || dam.sex !== 'FEMALE' || !isLiveStatus(dam.status)) return 'A mãe precisa ser uma fêmea viva do rebanho.';
+  return null;
+}
+
+async function validateSire(sireId: string | null | undefined) {
+  if (!sireId) return null;
+  const [sire] = await getDb().select().from(animals).where(eq(animals.id, sireId)).limit(1);
+  if (!sire || sire.status !== 'BULL') return 'O pai precisa ser um touro vivo do rebanho.';
+  return null;
+}
+
+async function validateBull(bullId: string | null | undefined) {
+  if (!bullId) return null;
+  const [bull] = await getDb().select().from(animals).where(eq(animals.id, bullId)).limit(1);
+  if (!bull || bull.status !== 'BULL') return 'O touro da cobertura precisa ser um touro vivo do rebanho.';
+  return null;
+}
+
+function groupForStatusError(status: z.infer<typeof statusSchema>) {
+  if (!isLiveStatus(status)) return 'Animal que saiu do rebanho não entra em lote.';
+  return status === 'LACTATING'
+    ? 'Vacas em lactação precisam de um lote com rotina de ordenha.'
+    : 'Esta situação só aceita lote sem ordenha.';
+}
+
+type ResolvedGroup =
+  | { group: HerdGroup | null; error: null; code: null }
+  | { group: null; error: string; code: string };
+
+async function resolveGroupForStatus(status: z.infer<typeof statusSchema>, groupId: string | null | undefined, missingGroup: { message: string; code: string }): Promise<ResolvedGroup> {
+  const group = await getActiveGroup(groupId);
+  if (groupId && !group) return { group: null, error: 'Lote ativo não encontrado.', code: 'INVALID_GROUP' };
+  if (group && !statusMatchesGroupRoutine(status, group.milkingRoutine)) return { group: null, error: groupForStatusError(status), code: 'INVALID_GROUP' };
+  if (statusRequiresMilkingGroup(status) && !group) return { group: null, error: missingGroup.message, code: missingGroup.code };
+  return { group, error: null, code: null };
 }
 
 export const animalRoutes = new Hono()
@@ -160,11 +240,16 @@ export const animalRoutes = new Hono()
   .post('/animals', async (c) => {
     const body = validate(animalCreateSchema, await readJson(c));
     try { await ensureUniqueTag(body.tagNumber); } catch { return fail('Já existe um animal com este brinco.', 409, 'DUPLICATE_TAG'); }
-    const group = statusRequiresMilkingGroup(body.status) ? await getActiveMilkingGroup(body.groupId) : null;
-    if (statusRequiresMilkingGroup(body.status) && !group) return fail('Escolha um lote ativo com rotina de ordenha.', 400, 'INVALID_GROUP');
+    const resolved = await resolveGroupForStatus(body.status, body.groupId, { message: 'Escolha um lote ativo com rotina de ordenha.', code: 'INVALID_GROUP' });
+    if (resolved.error) return fail(resolved.error, 400, resolved.code);
+    const damError = await validateDam(body.damId);
+    if (damError) return fail(damError, 400, 'INVALID_DAM');
+    const sireError = await validateSire(body.sireId);
+    if (sireError) return fail(sireError, 400, 'INVALID_SIRE');
+    const group = resolved.group;
     const changedOn = body.changedOn ?? today();
     const created = await getDb().transaction(async (tx) => {
-      const [saved] = await tx.insert(animals).values({ name: body.name, tagNumber: body.tagNumber, status: body.status, notes: body.notes }).returning();
+      const [saved] = await tx.insert(animals).values({ name: body.name, tagNumber: body.tagNumber, sex: body.sex, status: body.status, damId: body.damId ?? null, sireId: body.sireId ?? null, notes: body.notes }).returning();
       await tx.insert(animalStatusEvents).values({ animalId: saved.id, previousStatus: null, status: body.status, changedOn, notes: 'Situação definida no cadastro.' });
       if (group) await tx.insert(animalGroupAssignments).values({ animalId: saved.id, groupId: group.id, startedOn: changedOn, notes: 'Lote definido no cadastro do animal.' });
       return saved;
@@ -178,10 +263,17 @@ export const animalRoutes = new Hono()
     for (const tag of tags) {
       try { await ensureUniqueTag(tag); } catch { return fail(`O brinco ${tag} já está cadastrado.`, 409, 'DUPLICATE_TAG'); }
     }
-    const group = statusRequiresMilkingGroup(body.status) ? await getActiveMilkingGroup(body.groupId) : null;
-    if (statusRequiresMilkingGroup(body.status) && !group) return fail('Escolha um lote ativo com rotina de ordenha.', 400, 'INVALID_GROUP');
+    const resolved = await resolveGroupForStatus(body.status, body.groupId, { message: 'Escolha um lote ativo com rotina de ordenha.', code: 'INVALID_GROUP' });
+    if (resolved.error) return fail(resolved.error, 400, resolved.code);
+    for (const animal of body.animals) {
+      const damError = await validateDam(animal.damId);
+      if (damError) return fail(damError, 400, 'INVALID_DAM');
+      const sireError = await validateSire(animal.sireId);
+      if (sireError) return fail(sireError, 400, 'INVALID_SIRE');
+    }
+    const group = resolved.group;
     const created = await getDb().transaction(async (tx) => {
-      const saved = await tx.insert(animals).values(body.animals.map((animal) => ({ ...animal, status: body.status }))).returning();
+      const saved = await tx.insert(animals).values(body.animals.map((animal) => ({ name: animal.name, tagNumber: animal.tagNumber, sex: animal.sex, status: body.status, damId: animal.damId ?? null, sireId: animal.sireId ?? null, notes: animal.notes }))).returning();
       await tx.insert(animalStatusEvents).values(saved.map((animal) => ({ animalId: animal.id, previousStatus: null, status: body.status, changedOn: body.changedOn, notes: 'Cadastro em massa.' })));
       if (group) await tx.insert(animalGroupAssignments).values(saved.map((animal) => ({ animalId: animal.id, groupId: group.id, startedOn: body.changedOn, notes: 'Lote definido no cadastro em massa.' })));
       return saved;
@@ -302,13 +394,14 @@ export const animalRoutes = new Hono()
   })
   .post('/animals/:id/status-changes', async (c) => {
     const animalId = c.req.param('id');
-    const body = validate(z.object({ status: statusSchema, changedOn: z.string().date(), notes: optionalText, groupId: z.string().uuid().nullable().optional(), exit: exitSchema }), await readJson(c));
+    const body = validate(statusChangeSchema, await readJson(c));
     if (body.changedOn > today()) return fail('A data da mudança não pode estar no futuro.', 400, 'FUTURE_STATUS_DATE');
     const db = getDb();
     const [animal] = await db.select().from(animals).where(eq(animals.id, animalId)).limit(1);
     if (!animal) return fail('Animal não encontrado.', 404, 'NOT_FOUND');
-    if (animal.status === body.status) return fail('A vaca já está nesta situação.', 409, 'SAME_STATUS');
+    if (animal.status === body.status) return fail('O animal já está nesta situação.', 409, 'SAME_STATUS');
     if (!canTransitionStatus(animal.status, body.status)) return fail('Esta mudança não faz parte do ciclo produtivo esperado. Corrija a última mudança se a situação atual estiver errada.', 409, 'INVALID_STATUS_TRANSITION');
+    if (!statusAllowedForSex(body.status, animal.sex)) return fail('Esta situação não combina com o sexo do animal.', 400, 'STATUS_SEX_MISMATCH');
     if ((body.status === 'SOLD' || body.status === 'DEAD') && !body.notes) return fail('Informe uma observação para preservar o motivo desta saída do rebanho.', 400, 'STATUS_NOTES_REQUIRED');
     if (body.status === 'DEAD' && body.exit && (body.exit.amount || body.exit.createRevenue || body.exit.existingRevenueId || body.exit.buyerName || body.exit.exitType)) {
       return fail('Morte não utiliza o fluxo comercial de venda.', 400, 'DEATH_COMMERCIAL_DATA');
@@ -322,12 +415,20 @@ export const animalRoutes = new Hono()
     if (existingRevenue?.animalId && existingRevenue.animalId !== animalId) return fail('A receita já está vinculada a outro animal.', 409, 'REVENUE_ANIMAL_CONFLICT');
     const [latestEvent] = await db.select().from(animalStatusEvents).where(eq(animalStatusEvents.animalId, animalId)).orderBy(desc(animalStatusEvents.changedOn), desc(animalStatusEvents.createdAt)).limit(1);
     if (latestEvent && body.changedOn < latestEvent.changedOn) return fail('A mudança não pode ser anterior à situação atual.', 400, 'INVALID_STATUS_DATE');
-    const group = statusRequiresMilkingGroup(body.status) ? await getActiveMilkingGroup(body.groupId) : null;
-    if (statusRequiresMilkingGroup(body.status) && !group) return fail('Ao entrar em lactação, escolha o lote de ordenha.', 400, 'GROUP_REQUIRED');
+    const resolved = await resolveGroupForStatus(body.status, body.groupId, { message: 'Ao entrar em lactação, escolha o lote de ordenha.', code: 'GROUP_REQUIRED' });
+    if (resolved.error) return fail(resolved.error, 400, resolved.code);
+    const group = resolved.group;
+    if (body.calf?.sireId) {
+      const sireError = await validateSire(body.calf.sireId);
+      if (sireError) return fail(sireError, 400, 'INVALID_SIRE');
+    }
+    if (body.calf?.tagNumber) {
+      try { await ensureUniqueTag(body.calf.tagNumber); } catch { return fail('Já existe um animal com este brinco.', 409, 'DUPLICATE_TAG'); }
+    }
     const [currentGroup] = await db.select().from(animalGroupAssignments).where(and(eq(animalGroupAssignments.animalId, animalId), isNull(animalGroupAssignments.endedOn))).limit(1);
     const result = await db.transaction(async (tx) => {
       if (currentGroup) await tx.update(animalGroupAssignments).set({ endedOn: body.changedOn }).where(eq(animalGroupAssignments.id, currentGroup.id));
-      if (group) await tx.insert(animalGroupAssignments).values({ animalId, groupId: group.id, startedOn: body.changedOn, notes: 'Lote definido ao entrar em lactação.' });
+      if (group) await tx.insert(animalGroupAssignments).values({ animalId, groupId: group.id, startedOn: body.changedOn, notes: statusRequiresMilkingGroup(body.status) ? 'Lote definido ao entrar em lactação.' : 'Lote definido na mudança de situação.' });
       await tx.update(animals).set({ status: body.status, updatedAt: new Date() }).where(eq(animals.id, animalId));
       const [created] = await tx.insert(animalStatusEvents).values({ animalId, previousStatus: animal.status, status: body.status, changedOn: body.changedOn, notes: body.notes }).returning();
       if (body.status === 'LACTATING') {
@@ -338,6 +439,20 @@ export const animalRoutes = new Hono()
           occurredOn: body.changedOn,
           notes: body.notes,
         });
+      }
+      let calfId: string | null = null;
+      if (body.status === 'LACTATING' && body.calf) {
+        const [calf] = await tx.insert(animals).values({
+          name: body.calf.name,
+          tagNumber: body.calf.tagNumber,
+          sex: body.calf.sex,
+          status: 'CALF',
+          damId: animalId,
+          sireId: body.calf.sireId ?? null,
+          notes: `Bezerro registrado no parto de ${animal.name || `animal ${animal.tagNumber}`}.`,
+        }).returning();
+        await tx.insert(animalStatusEvents).values({ animalId: calf.id, previousStatus: null, status: 'CALF', changedOn: body.changedOn, notes: 'Nascimento registrado no parto.' });
+        calfId = calf.id;
       }
       let revenueId = body.status === 'SOLD' ? (body.exit?.existingRevenueId ?? null) : null;
       let revenueCreatedHere = false;
@@ -377,9 +492,14 @@ export const animalRoutes = new Hono()
         }).returning();
         exitId = exit.id;
       }
-      return { ...created, exitId, revenueId };
+      return { ...created, exitId, revenueId, calfId };
     });
-    return c.json(result, 201);
+    const leavingMilking = animal.status === 'LACTATING' && body.status !== 'LACTATING';
+    const [suggestedGroup] = leavingMilking && !group
+      ? await db.select({ id: herdGroups.id, name: herdGroups.name }).from(herdGroups)
+        .where(and(eq(herdGroups.active, true), eq(herdGroups.milkingRoutine, 'NOT_MILKED'))).orderBy(asc(herdGroups.name)).limit(1)
+      : [];
+    return c.json({ ...result, suggestedGroup: suggestedGroup ?? null }, 201);
   })
   .delete('/animals/:id/status-changes/:eventId', async (c) => {
     const animalId = c.req.param('id');
@@ -395,18 +515,30 @@ export const animalRoutes = new Hono()
     }
     const [currentGroup] = await db.select().from(animalGroupAssignments)
       .where(and(eq(animalGroupAssignments.animalId, animalId), isNull(animalGroupAssignments.endedOn))).limit(1);
-    const [previousGroup] = latest.previousStatus === 'LACTATING'
-      ? await db.select().from(animalGroupAssignments).where(and(
-        eq(animalGroupAssignments.animalId, animalId),
-        eq(animalGroupAssignments.endedOn, latest.changedOn),
-      )).orderBy(desc(animalGroupAssignments.startedOn)).limit(1)
-      : [];
-    if (latest.status === 'LACTATING' && currentGroup?.startedOn !== latest.changedOn) {
+    const [previousGroup] = await db.select().from(animalGroupAssignments).where(and(
+      eq(animalGroupAssignments.animalId, animalId),
+      eq(animalGroupAssignments.endedOn, latest.changedOn),
+    )).orderBy(desc(animalGroupAssignments.startedOn)).limit(1);
+    if (currentGroup && currentGroup.startedOn !== latest.changedOn) {
       return fail('O lote já mudou depois desta situação. Corrija o lote antes de desfazer.', 409, 'STATUS_UNDO_GROUP_CHANGED');
     }
-    if (latest.previousStatus === 'LACTATING' && (!previousGroup || currentGroup)) {
+    if (latest.status === 'LACTATING' && !currentGroup) {
+      return fail('O lote já mudou depois desta situação. Corrija o lote antes de desfazer.', 409, 'STATUS_UNDO_GROUP_CHANGED');
+    }
+    if (latest.previousStatus === 'LACTATING' && !previousGroup) {
       return fail('O histórico de lote mudou depois desta situação e impede o desfazimento seguro.', 409, 'STATUS_UNDO_GROUP_CHANGED');
     }
+    const [calf] = latest.status === 'LACTATING'
+      ? await db.select({ id: animals.id }).from(animals)
+        .innerJoin(animalStatusEvents, eq(animalStatusEvents.animalId, animals.id))
+        .where(and(
+          eq(animals.damId, animalId),
+          eq(animalStatusEvents.status, 'CALF'),
+          isNull(animalStatusEvents.previousStatus),
+          eq(animalStatusEvents.changedOn, latest.changedOn),
+        )).limit(1)
+      : [];
+    if (calf) return fail('Este parto registrou um bezerro. Exclua o cadastro do bezerro antes de desfazer.', 409, 'CALVING_HAS_CALF');
     const [exit] = await db.select().from(animalExits).where(eq(animalExits.statusEventId, latest.id)).limit(1);
     if (exit) {
       const linkedDocuments = await db.select({ id: attachments.id }).from(attachments).where(or(
@@ -416,10 +548,10 @@ export const animalRoutes = new Hono()
       if (linkedDocuments.length) return fail('A saída possui documento vinculado. Remova o documento antes de desfazer.', 409, 'EXIT_HAS_DOCUMENTS');
     }
     await db.transaction(async (tx) => {
-      if (latest.status === 'LACTATING' && currentGroup) {
+      if (currentGroup) {
         await tx.delete(animalGroupAssignments).where(eq(animalGroupAssignments.id, currentGroup.id));
       }
-      if (latest.previousStatus === 'LACTATING' && previousGroup) {
+      if (previousGroup) {
         await tx.update(animalGroupAssignments).set({ endedOn: null }).where(eq(animalGroupAssignments.id, previousGroup.id));
       }
       await tx.update(animals).set({ status: latest.previousStatus!, updatedAt: new Date() }).where(eq(animals.id, animalId));
@@ -436,6 +568,8 @@ export const animalRoutes = new Hono()
     }
     const [animal] = await getDb().select({ id: animals.id }).from(animals).where(eq(animals.id, animalId)).limit(1);
     if (!animal) return fail('Animal não encontrado.', 404, 'NOT_FOUND');
+    const bullError = await validateBull(body.bullId);
+    if (bullError) return fail(bullError, 400, 'INVALID_BULL');
     const [created] = await getDb().insert(animalReproductiveEvents).values({
       animalId,
       type: 'HEAT',
@@ -456,6 +590,8 @@ export const animalRoutes = new Hono()
     )).limit(1);
     if (!existing) return fail('Registro reprodutivo não encontrado.', 404, 'NOT_FOUND');
     if (existing.type !== 'HEAT' || existing.statusEventId) return fail('O parto deve ser corrigido pela situação produtiva.', 409, 'CALVING_MANAGED_BY_STATUS');
+    const bullError = await validateBull(body.bullId);
+    if (bullError) return fail(bullError, 400, 'INVALID_BULL');
     const [updated] = await getDb().update(animalReproductiveEvents).set({
       ...normalizedReproductiveEvent(body),
       updatedAt: new Date(),
@@ -477,11 +613,12 @@ export const animalRoutes = new Hono()
     const body = validate(z.object({ groupId: z.string().uuid(), startedOn: z.string().date(), notes: optionalText }), await readJson(c));
     const [animal] = await getDb().select({ status: animals.status }).from(animals).where(eq(animals.id, animalId)).limit(1);
     if (!animal) return fail('Animal não encontrado.', 404, 'NOT_FOUND');
-    if (animal.status !== 'LACTATING') return fail('Somente vacas em lactação pertencem a lotes de ordenha.', 409, 'NOT_LACTATING');
-    const group = await getActiveMilkingGroup(body.groupId);
-    if (!group) return fail('Lote ativo com rotina de ordenha não encontrado.', 404, 'NOT_FOUND');
+    if (!isLiveStatus(animal.status)) return fail('Animal que saiu do rebanho não entra em lote.', 409, 'ANIMAL_NOT_ALIVE');
+    const group = await getActiveGroup(body.groupId);
+    if (!group) return fail('Lote ativo não encontrado.', 404, 'NOT_FOUND');
+    if (!statusMatchesGroupRoutine(animal.status, group.milkingRoutine)) return fail(groupForStatusError(animal.status), 409, 'GROUP_ROUTINE_MISMATCH');
     const [current] = await getDb().select().from(animalGroupAssignments).where(and(eq(animalGroupAssignments.animalId, animalId), isNull(animalGroupAssignments.endedOn))).limit(1);
-    if (current?.groupId === body.groupId) return fail('A vaca já pertence a este lote.', 409, 'SAME_GROUP');
+    if (current?.groupId === body.groupId) return fail('O animal já pertence a este lote.', 409, 'SAME_GROUP');
     if (current && body.startedOn < current.startedOn) return fail('A mudança não pode ser anterior à entrada no lote atual.', 400, 'INVALID_GROUP_DATE');
     const created = await getDb().transaction(async (tx) => {
       if (current) await tx.update(animalGroupAssignments).set({ endedOn: body.startedOn }).where(eq(animalGroupAssignments.id, current.id));

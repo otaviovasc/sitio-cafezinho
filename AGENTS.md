@@ -29,9 +29,11 @@ Sistema simples de gestão de uma propriedade leiteira familiar.
 - Mastite registra observação, decisão humana, ação e carência informada; nunca diagnosticar, prescrever ou liberar leite automaticamente.
 - Receita recebida e compra paga formam somente o resultado de caixa registrado, não lucro completo.
 - Venda cria no máximo uma receita; morte nunca usa o fluxo comercial.
-- Grupos são configuráveis e editados no contexto do animal; não codificar regras por nome do lote.
+- Grupos são configuráveis e editados no contexto do animal; não codificar regras por nome do lote ou do pasto.
 - Preservar o histórico datado de mudança de grupo e aplicar a rotina válida na data do controle.
-- Tratar situação como ciclo produtivo e lote como rotina de ordenha; sair de lactação encerra o lote atual.
+- Tratar situação como ciclo produtivo e lote como unidade de manejo; a rotina de ordenha é atributo do lote (`NOT_MILKED` = sem ordenha). Sair de lactação encerra o lote de ordenha atual; demais situações vivas podem ocupar lotes sem ordenha.
+- Pasto é entidade real: um pasto abriga no máximo um lote por vez e um lote ocupa no máximo um pasto por vez; subdivisão desativa o pasto e cria novos, sem hierarquia.
+- Mãe e pai do animal são vínculos declarados (cadastro ou parto), nunca inferidos; coberturas novas vinculam o touro cadastrado (`bull_id`) e o `bull_name` texto permanece só para registros antigos ou touros não cadastrados.
 - Tratar reprodução em paralelo: cio/cobertura não muda situação; parto inicia lactação; prenhez nunca é inferida.
 - Nunca habilitar `SEED_DEMO_DATA` em produção.
 - Documentos reutilizam `attachments`; documentos de compra, coleta, receita ou saída nunca criam outro fato financeiro.

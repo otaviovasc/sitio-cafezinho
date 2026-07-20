@@ -65,6 +65,9 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await page.getByLabel('Data da mudança').fill(operationDate);
   await page.getByLabel('Motivo ou observação').fill('Início da seca de teste');
   await page.getByRole('button', { name: 'Registrar mudança' }).click();
+  // Ao sair da lactação, o backend pode sugerir um lote sem ordenha; o teste opta por manter sem lote.
+  const keepNoGroup = page.getByRole('button', { name: 'Manter sem lote' });
+  if (await keepNoGroup.isVisible()) await keepNoGroup.click();
   await expect(page.getByText('Seca', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('Início da seca de teste')).toBeVisible();
   await expect(page.getByText('Fora da lactação', { exact: true })).toBeVisible();
@@ -81,7 +84,7 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await expect(page.getByText('Cio com cobertura')).toBeVisible();
   await expect(page.getByText('Aguardando confirmação', { exact: true }).first()).toBeVisible();
   await page.getByRole('button', { name: 'Mudar lote' }).first().click();
-  await page.getByLabel('Novo lote de ordenha').selectOption({ label: 'Lote 2' });
+  await page.getByLabel('Novo lote').selectOption({ label: 'Lote 2' });
   await page.getByLabel('Data da mudança').fill(operationDate);
   await page.getByRole('button', { name: 'Registrar mudança' }).click();
   await expect(page.getByText('Lote 2', { exact: true }).first()).toBeVisible();
@@ -418,18 +421,18 @@ test('rebanho abre por lotes, com contagem e pasto recalculados via API', async 
 
   // Contagens e pastos esperados derivados de forma independente das APIs.
   const expected = await page.evaluate(async () => {
-    const [animals, groups, map] = await Promise.all([
+    const [animals, groups, pastures] = await Promise.all([
       fetch('/api/animals').then((response) => response.json()) as Promise<Array<{ status: string; currentGroup: { id: string } | null }>>,
       fetch('/api/herd-groups').then((response) => response.json()) as Promise<Array<{ id: string; name: string; active: boolean }>>,
-      fetch('/api/game/map').then((response) => response.json()) as Promise<{ zones: Array<{ kind: string; name: string; herdGroupId: string | null }> }>,
+      fetch('/api/pastures').then((response) => response.json()) as Promise<Array<{ name: string; currentOccupancy: { herdGroupId: string } | null }>>,
     ]);
-    const alive = new Set(['HEIFER', 'LACTATING', 'DRY']);
+    const alive = new Set(['HEIFER', 'LACTATING', 'DRY', 'CALF', 'GROWING', 'BULL']);
     return {
       groups: groups.filter((group) => group.active).map((group) => ({
         id: group.id,
         name: group.name,
         count: animals.filter((animal) => animal.currentGroup?.id === group.id).length,
-        pasture: map.zones.find((zone) => zone.kind === 'PASTURE' && zone.herdGroupId === group.id)?.name ?? null,
+        pasture: pastures.find((pasture) => pasture.currentOccupancy?.herdGroupId === group.id)?.name ?? null,
       })),
       unassigned: animals.filter((animal) => alive.has(animal.status) && !animal.currentGroup).length,
     };
@@ -440,7 +443,7 @@ test('rebanho abre por lotes, com contagem e pasto recalculados via API', async 
     await expect(card).toBeVisible();
     await expect(page.getByTestId(`herd-group-count-${group.id}`)).toContainText(String(group.count));
     if (group.pasture) await expect(page.getByTestId(`herd-group-pasture-${group.id}`)).toContainText(group.pasture);
-    else await expect(page.getByTestId(`herd-group-pasture-${group.id}`)).toContainText('Sem pasto no mapa');
+    else await expect(page.getByTestId(`herd-group-pasture-${group.id}`)).toContainText('Sem pasto');
   }
   await expect(page.getByTestId('herd-group-card-sem-lote')).toHaveCount(expected.unassigned > 0 ? 1 : 0);
 

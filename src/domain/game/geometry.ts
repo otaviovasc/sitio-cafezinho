@@ -33,6 +33,23 @@ export function shoelaceArea(ring: Vec[]): number {
   return sum / 2;
 }
 
+// WGS84: metros por grau de latitude/longitude na latitude média do anel.
+const METERS_PER_DEGREE_LAT = 111132.92;
+const METERS_PER_DEGREE_LNG_EQUATOR = 111412.84;
+const SQUARE_METERS_PER_HECTARE = 10000;
+
+/**
+ * Área real de um anel lat/lng em hectares. Projeção equiretangular em metros
+ * ancorada na latitude média — erro desprezível na escala de um sítio.
+ */
+export function ringAreaHa(ring: MapPoint[]): number {
+  if (ring.length < 3) return 0;
+  const meanLat = ring.reduce((sum, point) => sum + point.lat, 0) / ring.length;
+  const metersPerDegreeLng = METERS_PER_DEGREE_LNG_EQUATOR * Math.cos((meanLat * Math.PI) / 180);
+  const projected = ring.map((point) => ({ x: point.lng * metersPerDegreeLng, y: point.lat * METERS_PER_DEGREE_LAT }));
+  return Math.abs(shoelaceArea(projected)) / SQUARE_METERS_PER_HECTARE;
+}
+
 /** Centroide do polígono (ponderado por área; média simples se degenerado). */
 export function centroid(ring: Vec[]): Vec {
   const area = shoelaceArea(ring);

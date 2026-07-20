@@ -6,7 +6,7 @@ import { animalGroupAssignments, herdGroups } from '../../db/schema.js';
 import { fail } from '../http/api-error.js';
 import { readJson, validate } from '../http/validation.js';
 
-const routineSchema = z.enum(['MORNING_AND_AFTERNOON', 'MORNING_ONLY']);
+const routineSchema = z.enum(['MORNING_AND_AFTERNOON', 'MORNING_ONLY', 'NOT_MILKED']);
 const groupSchema = z.object({
   name: z.string().trim().min(1, 'Informe o nome do grupo.').max(80),
   milkingRoutine: routineSchema,

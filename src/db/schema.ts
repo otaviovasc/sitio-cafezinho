@@ -15,6 +15,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
+import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 
 const auditColumns = {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -22,8 +23,9 @@ const auditColumns = {
 };
 
 export const animalStatus = pgEnum('animal_status', [
-  'HEIFER', 'LACTATING', 'DRY', 'SOLD', 'DEAD',
+  'HEIFER', 'LACTATING', 'DRY', 'SOLD', 'DEAD', 'CALF', 'GROWING', 'BULL',
 ]);
+export const animalSex = pgEnum('animal_sex', ['FEMALE', 'MALE']);
 export const reproductiveEventType = pgEnum('reproductive_event_type', ['HEAT', 'CALVING']);
 export const reproductiveOutcome = pgEnum('reproductive_outcome', ['PENDING', 'NOT_PREGNANT', 'PREGNANT']);
 export const milkingRoutine = pgEnum('milking_routine', ['MORNING_AND_AFTERNOON', 'MORNING_ONLY', 'NOT_MILKED']);
@@ -65,9 +67,10 @@ export const proposedActionType = pgEnum('proposed_action_type', [
 export const proposedActionCommitStatus = pgEnum('proposed_action_commit_status', ['READY', 'NEEDS_REVIEW', 'NEEDS_PERIOD', 'UNREPRESENTABLE']);
 export const proposedActionStatus = pgEnum('proposed_action_status', ['NEEDS_REVIEW', 'CONFIRMED', 'DISMISSED', 'FAILED']);
 
-// Camada de jogo (/jogo): o mapa é configuração de exibição — polígonos em
-// lat/lng traçados uma vez sobre satélite. Não é fato de fazenda; o vínculo
-// zona↔lote apenas diz ONDE desenhar o lote no tabuleiro.
+// Camada de jogo (/jogo): o mapa é a representação visual da fazenda —
+// polígonos em lat/lng traçados uma vez sobre satélite. Zonas de pasto são o
+// desenho de um pasto real (tabela pastures); o lote exibido dentro deriva da
+// ocupação real (pasture_occupancies), nunca de vínculo próprio da zona.
 export const mapZoneKind = pgEnum('map_zone_kind', ['PERIMETER', 'PASTURE']);
 export const mapInstallationKind = pgEnum('map_installation_kind', ['MANGUEIRA', 'DEPOSITO', 'GARAGEM', 'CASA', 'ESTACAO_ALIMENTACAO', 'PLANTACAO']);
 
@@ -95,12 +98,19 @@ export const animals = pgTable('animals', {
   name: text('name'),
   tagNumber: text('tag_number'),
   status: animalStatus('status').notNull().default('HEIFER'),
+  sex: animalSex('sex').notNull(),
+  damId: uuid('dam_id').references((): AnyPgColumn => animals.id, { onDelete: 'set null' }),
+  sireId: uuid('sire_id').references((): AnyPgColumn => animals.id, { onDelete: 'set null' }),
   notes: text('notes'),
   ...auditColumns,
 }, (table) => [
   uniqueIndex('animals_tag_number_unique').on(table.tagNumber),
   index('animals_name_idx').on(table.name),
+  index('animals_dam_idx').on(table.damId),
+  index('animals_sire_idx').on(table.sireId),
   check('animals_name_or_tag', sql`${table.name} is not null or ${table.tagNumber} is not null`),
+  check('animals_not_own_dam', sql`${table.damId} is null or ${table.damId} != ${table.id}`),
+  check('animals_not_own_sire', sql`${table.sireId} is null or ${table.sireId} != ${table.id}`),
 ]);
 
 export const animalStatusEvents = pgTable('animal_status_events', {
@@ -120,6 +130,10 @@ export const animalReproductiveEvents = pgTable('animal_reproductive_events', {
   type: reproductiveEventType('type').notNull(),
   occurredOn: date('occurred_on').notNull(),
   hadBreeding: boolean('had_breeding').notNull().default(false),
+  // Touro da cobertura: preferencialmente vínculo com animal BULL cadastrado.
+  // bullName (texto) permanece para registros antigos e touros não cadastrados;
+  // nunca é convertido em vínculo por similaridade.
+  bullId: uuid('bull_id').references(() => animals.id, { onDelete: 'set null' }),
   bullName: text('bull_name'),
   outcome: reproductiveOutcome('outcome'),
   outcomeRecordedOn: date('outcome_recorded_on'),
@@ -127,12 +141,13 @@ export const animalReproductiveEvents = pgTable('animal_reproductive_events', {
   ...auditColumns,
 }, (table) => [
   index('animal_reproductive_events_animal_date_idx').on(table.animalId, table.occurredOn),
+  index('animal_reproductive_events_bull_idx').on(table.bullId),
   uniqueIndex('animal_reproductive_events_status_event_unique').on(table.statusEventId).where(sql`${table.statusEventId} is not null`),
   check('animal_reproductive_events_shape', sql`
-    (${table.type} = 'CALVING' and ${table.hadBreeding} = false and ${table.bullName} is null and ${table.outcome} is null and ${table.outcomeRecordedOn} is null)
+    (${table.type} = 'CALVING' and ${table.hadBreeding} = false and ${table.bullId} is null and ${table.bullName} is null and ${table.outcome} is null and ${table.outcomeRecordedOn} is null)
     or
     (${table.type} = 'HEAT' and (
-      (${table.hadBreeding} = false and ${table.bullName} is null and ${table.outcome} is null and ${table.outcomeRecordedOn} is null)
+      (${table.hadBreeding} = false and ${table.bullId} is null and ${table.bullName} is null and ${table.outcome} is null and ${table.outcomeRecordedOn} is null)
       or
       (${table.hadBreeding} = true and ${table.outcome} is not null)
     ))
@@ -481,23 +496,54 @@ export const proposedActions = pgTable('proposed_actions', {
   index('proposed_actions_status_idx').on(table.status),
 ]);
 
-// Zonas do mapa do jogo: 1 perímetro ativo; pastos podem apontar para um lote
-// (1 pasto ativo por lote). `ring` é o anel em lat/lng originais do traçado —
-// fonte única; projeção e suavização são derivadas no domínio.
+// Pasto é entidade real da fazenda (não confundir com a zona desenhada no
+// mapa, que é sua representação visual). Subdivisão = desativar o pasto e
+// criar novos; a linhagem fica no nome ("Pasto 1.a"), sem hierarquia.
+export const pastures = pgTable('pastures', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: text('name').notNull(),
+  areaHa: numeric('area_ha', { precision: 8, scale: 2 }),
+  active: boolean('active').notNull().default(true),
+  ...auditColumns,
+}, (table) => [uniqueIndex('pastures_name_unique').on(table.name)]);
+
+// Histórico datado de ocupação lote↔pasto. Um pasto abriga no máximo um lote
+// por vez e um lote ocupa no máximo um pasto por vez; o descanso do pasto é
+// derivado da última ocupação encerrada, nunca armazenado.
+export const pastureOccupancies = pgTable('pasture_occupancies', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  pastureId: uuid('pasture_id').notNull().references(() => pastures.id, { onDelete: 'restrict' }),
+  herdGroupId: uuid('herd_group_id').notNull().references(() => herdGroups.id, { onDelete: 'restrict' }),
+  startedOn: date('started_on').notNull(),
+  endedOn: date('ended_on'),
+  notes: text('notes'),
+  ...auditColumns,
+}, (table) => [
+  index('pasture_occupancies_pasture_date_idx').on(table.pastureId, table.startedOn),
+  index('pasture_occupancies_group_date_idx').on(table.herdGroupId, table.startedOn),
+  uniqueIndex('pasture_occupancies_current_pasture_unique').on(table.pastureId).where(sql`${table.endedOn} is null`),
+  uniqueIndex('pasture_occupancies_current_group_unique').on(table.herdGroupId).where(sql`${table.endedOn} is null`),
+  check('pasture_occupancies_dates', sql`${table.endedOn} is null or ${table.endedOn} >= ${table.startedOn}`),
+]);
+
+// Zonas do mapa do jogo: 1 perímetro ativo; zonas de pasto são o desenho de
+// um pasto real (1 zona ativa por pasto). `ring` é o anel em lat/lng originais
+// do traçado — fonte única; projeção e suavização são derivadas no domínio.
+// O lote exibido dentro da zona deriva da ocupação real do pasto.
 export const mapZones = pgTable('map_zones', {
   id: uuid('id').primaryKey().defaultRandom(),
   kind: mapZoneKind('kind').notNull(),
   name: text('name').notNull(),
-  herdGroupId: uuid('herd_group_id').references(() => herdGroups.id, { onDelete: 'set null' }),
+  pastureId: uuid('pasture_id').references(() => pastures.id, { onDelete: 'set null' }),
   ring: jsonb('ring').notNull(),
   styleVariant: integer('style_variant').notNull().default(0),
   active: boolean('active').notNull().default(true),
   ...auditColumns,
 }, (table) => [
   uniqueIndex('map_zones_perimeter_unique').on(table.kind).where(sql`${table.kind} = 'PERIMETER' and ${table.active}`),
-  uniqueIndex('map_zones_herd_group_unique').on(table.herdGroupId).where(sql`${table.herdGroupId} is not null and ${table.active}`),
+  uniqueIndex('map_zones_pasture_unique').on(table.pastureId).where(sql`${table.pastureId} is not null and ${table.active}`),
   check('map_zones_ring_min_points', sql`jsonb_array_length(${table.ring}) >= 3`),
-  check('map_zones_perimeter_unlinked', sql`${table.kind} != 'PERIMETER' or ${table.herdGroupId} is null`),
+  check('map_zones_perimeter_unlinked', sql`${table.kind} != 'PERIMETER' or ${table.pastureId} is null`),
 ]);
 
 // Instalações do mapa (MVP: só MANGUEIRA tem ações; enum amplo é a costura
@@ -610,6 +656,8 @@ export type Purchase = typeof purchases.$inferSelect;
 export type Attachment = typeof attachments.$inferSelect;
 export type Capture = typeof captures.$inferSelect;
 export type ProposedAction = typeof proposedActions.$inferSelect;
+export type Pasture = typeof pastures.$inferSelect;
+export type PastureOccupancy = typeof pastureOccupancies.$inferSelect;
 export type MapZone = typeof mapZones.$inferSelect;
 export type MapInstallation = typeof mapInstallations.$inferSelect;
 export type FeedItem = typeof feedItems.$inferSelect;

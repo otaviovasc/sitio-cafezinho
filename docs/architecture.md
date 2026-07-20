@@ -14,7 +14,7 @@ src/db           schema, migrations e seed PostgreSQL
 ```
 
 - `src/domain` não conhece React, Hono, Drizzle, PostgreSQL ou Google.
-- `src/domain/animal-lifecycle.ts` separa ciclo produtivo de lote; `src/domain/herd.ts` concentra a semântica da rotina de ordenha. Nomes de lotes permanecem dados do PostgreSQL.
+- `src/domain/animal-lifecycle.ts` separa ciclo produtivo de lote e valida sexo por situação; `src/domain/herd.ts` concentra a semântica da rotina de ordenha. Nomes de lotes e de pastos permanecem dados do PostgreSQL.
 - `src/server/routes` valida entrada e traduz HTTP; operações com mais de uma gravação ficam em serviços transacionais.
 - `src/server/storage` contém a porta de arquivos e as implementações local/Google Drive escolhidas no composition root.
 - `src/client/features` concentra fluxos reutilizáveis; `pages` compõe as rotas e `components/ui.tsx` mantém as primitives do design system.
@@ -31,7 +31,9 @@ O armazenamento segue o mesmo contrato nos dois ambientes:
 
 Metadados ficam sempre no PostgreSQL. Segredos são lidos apenas no servidor e não entram no banco nem no bundle React.
 
-Situações, reprodução e lotações seguem modelos temporais pequenos. `animal_status_events` preserva transições produtivas; o campo atual em `animals` é a projeção rápida. `animal_reproductive_events` guarda cio, cobertura, resultado e o parto ligado à entrada em lactação, sem transformar prenhez em situação. O lote guarda apenas a rotina de ordenha e `animal_group_assignments` guarda os intervalos operacionais. O controle individual consulta situação e lote válidos na data informada. Criação e edição de lotes acontecem pelo `GroupPicker` reutilizado nos fluxos do animal, sem página administrativa isolada.
+Situações, reprodução e lotações seguem modelos temporais pequenos. `animal_status_events` preserva transições produtivas; o campo atual em `animals` é a projeção rápida. `animal_reproductive_events` guarda cio, cobertura, resultado e o parto ligado à entrada em lactação, sem transformar prenhez em situação. O lote é a unidade de manejo e guarda a rotina de ordenha como atributo (`NOT_MILKED` = lote sem ordenha para cria, recria/engorda, touros e secas); `animal_group_assignments` guarda os intervalos operacionais. O controle individual consulta situação e lote válidos na data informada. Criação e edição de lotes acontecem pelo `GroupPicker` reutilizado nos fluxos do animal, sem página administrativa isolada.
+
+Pastos são entidades reais (`pastures`) com histórico datado de ocupação por lote (`pasture_occupancies`): um pasto abriga no máximo um lote por vez e um lote ocupa no máximo um pasto por vez, ambos garantidos por índices únicos parciais. Dias de uso e de descanso são derivados das datas, nunca armazenados. A zona de pasto do mapa do jogo (`map_zones.pasture_id`) é apenas o desenho do pasto real; o lote exibido dentro deriva da ocupação atual.
 
 `daily_milk_totals` representa produção agregada com escopo opcional em `herd_group_id`: `null` significa rebanho todo e um UUID significa medição separada daquele lote. A unicidade é por data e escopo. Linhas anteriores à migration permanecem `null`, sem conversão ou rateio. A projeção geral prefere o total do rebanho; quando ele não existe, soma apenas os lotes registrados e informa essa base, evitando dupla contagem quando ambos coexistem. Lote de ordenha somente matinal mantém `afternoon_liters = null`.
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { sha256 } from '../../src/domain/files';
-import { allowedNextStatuses, canTransitionStatus, isProductiveCycleTransition, statusEndsMilkingGroup, statusRequiresMilkingGroup } from '../../src/domain/animal-lifecycle';
+import { allowedNextStatuses, canTransitionStatus, isProductiveCycleTransition, statusAllowedForSex, statusEndsMilkingGroup, statusMatchesGroupRoutine, statusRequiresMilkingGroup } from '../../src/domain/animal-lifecycle';
 import { canRegisterAnimalFromMeasurement, identityFromRawAnimalLabel, shouldSelectRegistrationByDefault } from '../../src/domain/animal-registration';
 import { filterByPeriod } from '../../src/domain/analytics';
 import { calculateDailyMilkTotal, resolveDailyMilkByDate, summarizeDailyMilk } from '../../src/domain/daily-milk';
@@ -196,6 +196,51 @@ describe('ciclo produtivo', () => {
     expect(statusEndsMilkingGroup('DRY')).toBe(true);
     expect(isProductiveCycleTransition('LACTATING', 'DRY')).toBe(true);
     expect(isProductiveCycleTransition('DRY', 'LACTATING')).toBe(true);
+  });
+});
+
+describe('situações de cria, recria e touro', () => {
+  it('bezerro vira novilha, corte ou touro, mas nunca entra em lactação direto', () => {
+    expect(allowedNextStatuses('CALF')).toEqual(['HEIFER', 'GROWING', 'BULL', 'SOLD', 'DEAD']);
+    expect(canTransitionStatus('CALF', 'LACTATING')).toBe(false);
+    expect(canTransitionStatus('CALF', 'DRY')).toBe(false);
+    expect(canTransitionStatus('GROWING', 'SOLD')).toBe(true);
+    expect(canTransitionStatus('GROWING', 'HEIFER')).toBe(false);
+    expect(canTransitionStatus('BULL', 'DEAD')).toBe(true);
+    expect(canTransitionStatus('BULL', 'GROWING')).toBe(false);
+    expect(canTransitionStatus('LACTATING', 'GROWING')).toBe(false);
+  });
+
+  it('restringe situação pelo sexo do animal', () => {
+    expect(statusAllowedForSex('HEIFER', 'FEMALE')).toBe(true);
+    expect(statusAllowedForSex('LACTATING', 'FEMALE')).toBe(true);
+    expect(statusAllowedForSex('DRY', 'FEMALE')).toBe(true);
+    expect(statusAllowedForSex('HEIFER', 'MALE')).toBe(false);
+    expect(statusAllowedForSex('LACTATING', 'MALE')).toBe(false);
+    expect(statusAllowedForSex('BULL', 'MALE')).toBe(true);
+    expect(statusAllowedForSex('BULL', 'FEMALE')).toBe(false);
+    expect(statusAllowedForSex('CALF', 'FEMALE')).toBe(true);
+    expect(statusAllowedForSex('CALF', 'MALE')).toBe(true);
+    expect(statusAllowedForSex('GROWING', 'MALE')).toBe(true);
+  });
+
+  it('saídas preservam o sexo do animal', () => {
+    expect(statusAllowedForSex('SOLD', 'MALE')).toBe(true);
+    expect(statusAllowedForSex('DEAD', 'FEMALE')).toBe(true);
+  });
+
+  it('combina rotina do lote com a situação do animal', () => {
+    expect(statusMatchesGroupRoutine('LACTATING', 'MORNING_AND_AFTERNOON')).toBe(true);
+    expect(statusMatchesGroupRoutine('LACTATING', 'MORNING_ONLY')).toBe(true);
+    expect(statusMatchesGroupRoutine('LACTATING', 'NOT_MILKED')).toBe(false);
+    expect(statusMatchesGroupRoutine('HEIFER', 'NOT_MILKED')).toBe(true);
+    expect(statusMatchesGroupRoutine('DRY', 'NOT_MILKED')).toBe(true);
+    expect(statusMatchesGroupRoutine('CALF', 'NOT_MILKED')).toBe(true);
+    expect(statusMatchesGroupRoutine('GROWING', 'NOT_MILKED')).toBe(true);
+    expect(statusMatchesGroupRoutine('BULL', 'NOT_MILKED')).toBe(true);
+    expect(statusMatchesGroupRoutine('GROWING', 'MORNING_AND_AFTERNOON')).toBe(false);
+    expect(statusMatchesGroupRoutine('SOLD', 'NOT_MILKED')).toBe(false);
+    expect(statusMatchesGroupRoutine('DEAD', 'NOT_MILKED')).toBe(false);
   });
 });
 

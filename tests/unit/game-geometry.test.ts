@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boundingBox, centroid, pointInPolygon, ringError, roundRing, shoelaceArea } from '../../src/domain/game/geometry';
+import { boundingBox, centroid, pointInPolygon, ringAreaHa, ringError, roundRing, shoelaceArea } from '../../src/domain/game/geometry';
 
 const square = [
   { x: 0, y: 0 },
@@ -37,6 +37,37 @@ describe('shoelaceArea e centroid', () => {
     const center = centroid(line);
     expect(center.x).toBeCloseTo(5);
     expect(center.y).toBeCloseTo(0);
+  });
+});
+
+describe('ringAreaHa', () => {
+  it('quadrado de ~100 m de lado no equador mede ~1 ha', () => {
+    // 0.0009° de latitude ≈ 100 m; quadrado ≈ 10.000 m² = 1 ha.
+    const side = 0.0009;
+    const ring = [
+      { lat: 0, lng: 0 },
+      { lat: 0, lng: side },
+      { lat: side, lng: side },
+      { lat: side, lng: 0 },
+    ];
+    expect(ringAreaHa(ring)).toBeCloseTo(1, 1);
+  });
+  it('mede o mesmo quadrado em latitude brasileira sem distorção relevante', () => {
+    // Quadrado real de ~100 m de lado a -21.5°: o lado em longitude
+    // precisa compensar o cos(latitude). Esperado ≈ 1 ha.
+    const base = { lat: -21.5, lng: -45.5 };
+    const latSide = 0.0009;
+    const lngSide = latSide / Math.cos((base.lat * Math.PI) / 180);
+    const ring = [
+      base,
+      { lat: base.lat, lng: base.lng + lngSide },
+      { lat: base.lat + latSide, lng: base.lng + lngSide },
+      { lat: base.lat + latSide, lng: base.lng },
+    ];
+    expect(ringAreaHa(ring)).toBeCloseTo(1, 1);
+  });
+  it('anel degenerado mede zero', () => {
+    expect(ringAreaHa([{ lat: -21, lng: -45 }, { lat: -21.1, lng: -45.1 }])).toBe(0);
   });
 });
 

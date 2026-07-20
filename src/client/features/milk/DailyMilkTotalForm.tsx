@@ -86,7 +86,7 @@ export function DailyMilkTotalForm({ initial, onSaved }: {
       <Field label="Produção de" hint={form.values.herdGroupId ? 'Use lote apenas quando o volume foi medido separadamente.' : 'Total geral da propriedade.'}>
         <Select value={form.values.herdGroupId} onChange={(event) => { form.set('herdGroupId', event.target.value); const group = groups?.find((item) => item.id === event.target.value); if (group?.milkingRoutine === 'MORNING_ONLY') form.set('afternoonLiters', ''); }}>
           <option value="">Rebanho todo</option>
-          {groups?.filter((group) => group.active || group.id === form.values.herdGroupId).map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+          {groups?.filter((group) => (group.active && group.milkingRoutine !== 'NOT_MILKED') || group.id === form.values.herdGroupId).map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
         </Select>
       </Field>
       <Field label="Manhã (L)" hint="Deixe em branco se ainda não ordenhou de manhã." error={form.error('morningLiters')}><LitersInput placeholder="Ex.: 210,5" value={form.values.morningLiters} onValueChange={(value) => form.set('morningLiters', value)} onBlur={() => form.blur('morningLiters')} autoFocus /></Field>

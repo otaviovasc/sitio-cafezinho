@@ -2,7 +2,7 @@ import { and, asc, eq, isNull, ne } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb } from '../../db/client.js';
-import { animalGroupAssignments, animals, dailyMilkTotals, mapInstallations, mapZones, herdGroups, milkCollections, monthlyMilkPrices, plantingInputs, plantings, purchases, type MapZone, type MapInstallation } from '../../db/schema.js';
+import { animalGroupAssignments, animals, dailyMilkTotals, mapInstallations, mapZones, herdGroups, milkCollections, monthlyMilkPrices, pastureOccupancies, pastures, plantingInputs, plantings, purchases, type MapZone, type MapInstallation } from '../../db/schema.js';
 import { resolveDailyMilkDay } from '../../domain/daily-milk.js';
 import { summarizeGameEconomy } from '../../domain/game/economy.js';
 import { pointInPolygon, ringError } from '../../domain/game/geometry.js';
@@ -13,12 +13,15 @@ import { tankLevel } from '../../domain/game/tank.js';
 import { dateKeyInSaoPaulo } from '../../domain/purchases.js';
 import { fail } from '../http/api-error.js';
 import { readJson, validate } from '../http/validation.js';
+import { syncPastureAreaFromRing } from '../services/pasture.service.js';
 
 /**
  * Rotas do jogo. O mapa (zonas/instalações) é configuração de exibição com
  * CRUD próprio; o estado agregado sai em /game/state. Fatos de fazenda nunca
  * são escritos por aqui — as ações do jogo usam os endpoints validados
- * existentes (regra de ouro em docs/game-design.md).
+ * existentes (regra de ouro em docs/game-design.md). Exceção deliberada: ao
+ * salvar uma zona de pasto, a área medida pelo traçado é gravada no pasto via
+ * pasture.service (o traçado é a medição oficial dos hectares).
  */
 
 const pointSchema = z.object({
@@ -29,13 +32,13 @@ const pointSchema = z.object({
 const zoneSchema = z.object({
   kind: z.enum(['PERIMETER', 'PASTURE']),
   name: z.string().trim().min(1, 'Dê um nome para a área.').max(120),
-  herdGroupId: z.string().uuid().nullable().optional().default(null),
+  pastureId: z.string().uuid().nullable().optional().default(null),
   ring: z.array(pointSchema).min(3, 'Trace pelo menos 3 pontos.').max(500),
 });
 
 const zonePatchSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
-  herdGroupId: z.string().uuid().nullable().optional(),
+  pastureId: z.string().uuid().nullable().optional(),
   ring: z.array(pointSchema).min(3).max(500).optional(),
 });
 
@@ -50,12 +53,13 @@ const installationPatchSchema = z.object({
   position: pointSchema.optional(),
 });
 
-function toZone(row: MapZone): GameMapZone {
+function toZone(row: MapZone, herdGroupId: string | null = null): GameMapZone {
   return {
     id: row.id,
     kind: row.kind,
     name: row.name,
-    herdGroupId: row.herdGroupId,
+    pastureId: row.pastureId,
+    herdGroupId,
     ring: row.ring as MapPoint[],
     styleVariant: row.styleVariant,
   };
@@ -65,13 +69,26 @@ function toInstallation(row: MapInstallation): GameMapInstallation {
   return { id: row.id, kind: row.kind, name: row.name, position: row.position as MapPoint };
 }
 
+/** Lote atual por pasto: derivado da ocupação aberta (pasture_occupancies), fonte única. */
+async function openGroupByPasture(): Promise<Map<string, string>> {
+  const rows = await getDb().select({
+    pastureId: pastureOccupancies.pastureId,
+    herdGroupId: pastureOccupancies.herdGroupId,
+  }).from(pastureOccupancies).where(isNull(pastureOccupancies.endedOn));
+  return new Map(rows.map((row) => [row.pastureId, row.herdGroupId]));
+}
+
 async function loadMapState(): Promise<GameMapState> {
   const db = getDb();
-  const [zoneRows, installationRows] = await Promise.all([
+  const [zoneRows, installationRows, groupByPasture] = await Promise.all([
     db.select().from(mapZones).where(eq(mapZones.active, true)).orderBy(asc(mapZones.createdAt)),
     db.select().from(mapInstallations).where(eq(mapInstallations.active, true)).orderBy(asc(mapInstallations.createdAt)),
+    openGroupByPasture(),
   ]);
-  return { zones: zoneRows.map(toZone), installations: installationRows.map(toInstallation) };
+  return {
+    zones: zoneRows.map((row) => toZone(row, row.pastureId ? groupByPasture.get(row.pastureId) ?? null : null)),
+    installations: installationRows.map(toInstallation),
+  };
 }
 
 async function activePerimeter() {
@@ -110,14 +127,14 @@ async function loadActivePlanting(now: Date): Promise<GamePlanting | null> {
   };
 }
 
-async function assertGroupLinkable(herdGroupId: string, exceptZoneId?: string) {
+async function assertPastureLinkable(pastureId: string, exceptZoneId?: string) {
   const db = getDb();
-  const [group] = await db.select({ id: herdGroups.id }).from(herdGroups).where(eq(herdGroups.id, herdGroupId)).limit(1);
-  if (!group) fail('Lote não encontrado.', 404, 'GROUP_NOT_FOUND');
-  const conditions = [eq(mapZones.herdGroupId, herdGroupId), eq(mapZones.active, true)];
+  const [pasture] = await db.select({ id: pastures.id }).from(pastures).where(eq(pastures.id, pastureId)).limit(1);
+  if (!pasture) fail('Pasto não encontrado.', 404, 'PASTURE_NOT_FOUND');
+  const conditions = [eq(mapZones.pastureId, pastureId), eq(mapZones.active, true)];
   if (exceptZoneId) conditions.push(ne(mapZones.id, exceptZoneId));
   const [taken] = await db.select({ id: mapZones.id }).from(mapZones).where(and(...conditions)).limit(1);
-  if (taken) fail('Este lote já está vinculado a outro pasto.', 409, 'GROUP_ZONE_EXISTS');
+  if (taken) fail('Este pasto já está desenhado em outra área do mapa.', 409, 'PASTURE_ZONE_EXISTS');
 }
 
 export const gameRoutes = new Hono()
@@ -178,7 +195,7 @@ export const gameRoutes = new Hono()
     if (invalidRing) return fail(invalidRing, 400, 'INVALID_RING');
     const db = getDb();
     if (body.kind === 'PERIMETER') {
-      if (body.herdGroupId) return fail('O perímetro não se vincula a um lote.', 400, 'PERIMETER_UNLINKED');
+      if (body.pastureId) return fail('O perímetro não se vincula a um pasto.', 400, 'PERIMETER_UNLINKED');
       if (await activePerimeter()) return fail('O sítio já tem um perímetro traçado. Edite ou exclua o atual.', 409, 'PERIMETER_EXISTS');
     } else {
       const perimeter = await activePerimeter();
@@ -186,20 +203,25 @@ export const gameRoutes = new Hono()
       if (!ringInsidePerimeter(perimeter.ring as MapPoint[], body.ring)) {
         return fail('O pasto precisa ficar inteiro dentro do perímetro do sítio.', 400, 'PASTURE_OUTSIDE_PERIMETER');
       }
-      if (body.herdGroupId) await assertGroupLinkable(body.herdGroupId);
+      if (body.pastureId) {
+        await assertPastureLinkable(body.pastureId);
+        // O traçado é a medição oficial da área do pasto (hectares).
+        await syncPastureAreaFromRing(body.pastureId, body.ring);
+      }
     }
     // Patchwork: a variação de verde é atribuída ciclicamente pelo servidor.
-    const pastures = await db.select({ id: mapZones.id }).from(mapZones)
+    const pastureZones = await db.select({ id: mapZones.id }).from(mapZones)
       .where(and(eq(mapZones.kind, 'PASTURE'), eq(mapZones.active, true)));
-    const styleVariant = body.kind === 'PASTURE' ? pastures.length % 3 : 0;
+    const styleVariant = body.kind === 'PASTURE' ? pastureZones.length % 3 : 0;
     const [created] = await db.insert(mapZones).values({
       kind: body.kind,
       name: body.name,
-      herdGroupId: body.kind === 'PASTURE' ? body.herdGroupId : null,
+      pastureId: body.kind === 'PASTURE' ? body.pastureId : null,
       ring: body.ring,
       styleVariant,
     }).returning();
-    return c.json(toZone(created), 201);
+    const groupByPasture = created.pastureId ? await openGroupByPasture() : new Map<string, string>();
+    return c.json(toZone(created, created.pastureId ? groupByPasture.get(created.pastureId) ?? null : null), 201);
   })
   .patch('/game/map/zones/:id', async (c) => {
     const id = c.req.param('id');
@@ -217,17 +239,21 @@ export const gameRoutes = new Hono()
         }
       }
     }
-    if (body.herdGroupId !== undefined && body.herdGroupId !== null) {
-      if (current.kind === 'PERIMETER') return fail('O perímetro não se vincula a um lote.', 400, 'PERIMETER_UNLINKED');
-      await assertGroupLinkable(body.herdGroupId, id);
+    if (body.pastureId !== undefined && body.pastureId !== null) {
+      if (current.kind === 'PERIMETER') return fail('O perímetro não se vincula a um pasto.', 400, 'PERIMETER_UNLINKED');
+      await assertPastureLinkable(body.pastureId, id);
     }
     const [updated] = await db.update(mapZones).set({
       ...(body.name !== undefined ? { name: body.name } : {}),
-      ...(body.herdGroupId !== undefined ? { herdGroupId: body.herdGroupId } : {}),
+      ...(body.pastureId !== undefined ? { pastureId: body.pastureId } : {}),
       ...(body.ring !== undefined ? { ring: body.ring } : {}),
       updatedAt: new Date(),
     }).where(eq(mapZones.id, id)).returning();
-    return c.json(toZone(updated));
+    if (updated.kind === 'PASTURE' && updated.pastureId && (body.ring !== undefined || body.pastureId)) {
+      await syncPastureAreaFromRing(updated.pastureId, updated.ring as MapPoint[]);
+    }
+    const groupByPasture = updated.pastureId ? await openGroupByPasture() : new Map<string, string>();
+    return c.json(toZone(updated, updated.pastureId ? groupByPasture.get(updated.pastureId) ?? null : null));
   })
   .delete('/game/map/zones/:id', async (c) => {
     const db = getDb();

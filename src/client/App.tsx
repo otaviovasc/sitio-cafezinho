@@ -17,6 +17,7 @@ import { FinancePage, NewRevenuePage, RevenueDetailPage } from './pages/FinanceP
 import { DataSettingsPage } from './pages/DataSettingsPage';
 import { NewPurchasePage, PurchaseDetailPage, PurchasesPage, SupplierDetailPage, SuppliersPage } from './pages/PurchasePages';
 import { NewWeightSessionPage, WeightSessionDetailPage, WeightSessionsPage } from './pages/WeightPages';
+import { PasturesPage } from './pages/PasturesPage';
 import { MilkPricePage } from './pages/MilkPricePage';
 import { NewFeedingEventPage } from './pages/FeedingPages';
 import { GamePage } from './pages/GamePage';
@@ -51,6 +52,7 @@ export function App() {
     <Route path="/jogo/mapa/editor" element={<Suspense fallback={<div className="page"><LoadingState /></div>}><GameMapEditorPage /></Suspense>} />
     <Route path="/revisar" element={<RevisarPage />} />
     <Route path="/rebanho" element={<AnimalsPage />} />
+    <Route path="/pastos" element={<PasturesPage />} />
     <Route path="/rebanho/novo" element={<NewAnimalPage />} />
     <Route path="/rebanho/lote/:groupId" element={<HerdGroupAnimalsPage />} />
     <Route path="/rebanho/:id" element={<AnimalDetailPage />} />
