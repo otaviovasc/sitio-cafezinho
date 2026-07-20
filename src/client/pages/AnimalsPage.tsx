@@ -20,6 +20,7 @@ import { AnimalStatusChangeForm } from '../features/animals/AnimalStatusChangeFo
 import { AnimalWeightPanel, type AnimalWeight } from '../features/animals/AnimalWeightPanel';
 import { BulkAnimalForm } from '../features/animals/BulkAnimalForm';
 import { GroupPicker, type HerdGroup } from '../features/animals/GroupPicker';
+import { HerdGroupForm } from '../features/animals/HerdGroupForm';
 import { milkingGroupRoutines, nonMilkingGroupRoutines } from '../features/animals/group-routines';
 import { ReproductiveEventForm, type ReproductiveEvent } from '../features/animals/ReproductiveEventForm';
 import { AnimalCycleSection } from '../features/animals/detail/AnimalCycleSection';
@@ -94,8 +95,9 @@ function matchesAnimalSearch(animal: Animal, normalizedSearch: string) {
  */
 export function AnimalsPage() {
   const [search, setSearch] = useState('');
+  const [showGroupForm, setShowGroupForm] = useState(false);
   const { data, loading, error, reload } = useResource<Animal[]>('/api/animals');
-  const { data: groups } = useResource<HerdGroup[]>('/api/herd-groups');
+  const { data: groups, reload: reloadGroups } = useResource<HerdGroup[]>('/api/herd-groups');
   const { data: pastures } = useResource<PastureSummary[]>('/api/pastures');
   const normalizedSearch = search.trim().toLocaleLowerCase('pt-BR');
   const searching = normalizedSearch.length > 0;
@@ -113,7 +115,13 @@ export function AnimalsPage() {
   const lactatingUnassigned = unassigned.filter((animal) => animal.status === 'LACTATING').length;
 
   return <div className="page">
-    <PageHeader icon={CowHead} title="Rebanho" subtitle="Os lotes do sítio; entre num lote para ver cada animal" action={<Link className="button button-primary" to="/rebanho/novo"><Plus size={18} aria-hidden />Cadastrar</Link>} />
+    <PageHeader icon={CowHead} title="Rebanho" subtitle="Os lotes do sítio; entre num lote para ver cada animal" action={<div className="flex flex-wrap gap-2">
+      <Button variant="secondary" onClick={() => setShowGroupForm(true)}><Tags size={17} aria-hidden />Criar lote</Button>
+      <Link className="button button-primary" to="/rebanho/novo"><Plus size={18} aria-hidden />Cadastrar</Link>
+    </div>} />
+    <Modal open={showGroupForm} title="Criar lote" onClose={() => setShowGroupForm(false)}>
+      <HerdGroupForm onCancel={() => setShowGroupForm(false)} onSaved={async () => { await reloadGroups(); setShowGroupForm(false); }} />
+    </Modal>
     <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4"><StatCard label="Total cadastrado" value={data?.length ?? 0} /><StatCard label="Em lactação" value={lactating} /><StatCard label="Secas" value={dry} /><StatCard label="Novilhas" value={heifers} /></div>
     <FilterControls search={{ value: search, onChange: setSearch, placeholder: 'Nome, brinco ou alias' }} />
     <div className="mt-5">
