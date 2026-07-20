@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { centroid, pointInPolygon, roundRing, spacedPointsAlongRing } from '../../../../domain/game/geometry';
+import { centroid, pointInPolygon, spacedPointsAlongRing } from '../../../../domain/game/geometry';
 import { herdClusterLayout } from '../../../../domain/game/herd-layout';
 import { toPathData, type GameProjection } from '../../../../domain/game/projection';
 import type { GameMapZone } from '../../../../domain/game/state';
@@ -9,11 +9,11 @@ import { gameTokens } from '../tokens';
 /**
  * Perímetro (diorama gramado com cerca de mourões) + pastos cercados. O chão
  * INTEIRO do sítio é grama (gradiente `game-ground-grass` + tufos) — os pastos
- * são recortes do mesmo capim em tons do patchwork. O perímetro mantém a
- * suavização de Chaikin (assinatura do diorama); os PASTOS seguem exatamente
- * os pontos traçados no editor (decisão do usuário: sem arredondar) e recebem
- * a mesma cerca do sítio em madeira mais clara. Árvores decorativas nascem
- * deterministicamente no chão livre.
+ * são recortes do mesmo capim em tons do patchwork. Perímetro e pastos seguem
+ * EXATAMENTE os pontos traçados no editor (decisão do usuário: sem arredondar)
+ * — o que a pessoa marcou no satélite é o que aparece no jogo. Os pastos
+ * recebem a mesma cerca do sítio em madeira mais clara. Árvores decorativas
+ * nascem deterministicamente no chão livre.
  */
 export function ZoneLayer({ zones, projection }: { zones: GameMapZone[]; projection: GameProjection }) {
   const { colors } = gameTokens;
@@ -24,20 +24,18 @@ export function ZoneLayer({ zones, projection }: { zones: GameMapZone[]; project
     () => (perimeter ? perimeter.ring.map(projection.toLocal) : []),
     [perimeter, projection],
   );
-  const perimeterRounded = useMemo(
-    () => (perimeterProjected.length ? roundRing(perimeterProjected) : []),
+  // Perímetro NÃO passa por suavização: o polígono renderizado é exatamente o
+  // que foi traçado no editor. Os mourões seguem o mesmo contorno exato.
+  const perimeterPath = useMemo(
+    () => (perimeterProjected.length ? toPathData(perimeterProjected) : ''),
     [perimeterProjected],
   );
-  const perimeterPath = useMemo(
-    () => (perimeterRounded.length ? toPathData(perimeterRounded) : ''),
-    [perimeterRounded],
-  );
   const fencePosts = useMemo(
-    () => spacedPointsAlongRing(perimeterRounded, gameTokens.fence.postSpacing),
-    [perimeterRounded],
+    () => spacedPointsAlongRing(perimeterProjected, gameTokens.fence.postSpacing),
+    [perimeterProjected],
   );
-  // Pastos NÃO passam por Chaikin: o polígono renderizado é exatamente o que
-  // foi traçado no editor. Os mourões seguem o mesmo contorno exato.
+  // Pastos idem: o polígono renderizado é exatamente o que foi traçado no
+  // editor. Os mourões seguem o mesmo contorno exato.
   const pastureShapes = useMemo(() => pastures.map((zone) => {
     const projected = zone.ring.map(projection.toLocal);
     return {

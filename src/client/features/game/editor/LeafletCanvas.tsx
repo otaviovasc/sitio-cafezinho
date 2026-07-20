@@ -72,7 +72,11 @@ export function LeafletCanvas({ center, zones, installations, draft, drawing, on
     for (const zone of zones) {
       const points = zone.ring.map((point) => [point.lat, point.lng] satisfies [number, number]);
       if (zone.kind === 'PERIMETER') {
-        L.polygon(points, { color: colors.wood, weight: 3, dashArray: '8 6', fillColor: colors.paper, fillOpacity: 0.08 })
+        // Contorno claro por baixo (casing) separa a cerca de madeira da
+        // imagem de satélite; sem ele o marrom se perde no solo escuro.
+        L.polygon(points, { color: '#FFFEF9', weight: 6, opacity: 0.85, fill: false, interactive: false })
+          .addTo(overlays);
+        L.polygon(points, { color: colors.wood, weight: 3.5, dashArray: '8 6', fillColor: colors.paper, fillOpacity: 0.18 })
           .bindTooltip(zone.name).addTo(overlays);
       } else {
         L.polygon(points, {

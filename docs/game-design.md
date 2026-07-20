@@ -25,13 +25,11 @@ escrita de fato de fazenda a partir das rotas do jogo.
 
 ## Direção de arte
 
-- **Assinatura:** o traçado bruto do GPS vira brinquedo. O PERÍMETRO passa por
-  suavização de Chaikin (2 iterações, `roundRing()` em
-  `src/domain/game/geometry.ts`) e recebe sombra suave (`feDropShadow` único em
-  `GameDefs`) — o sítio parece um diorama recortado sobre uma mesa. Os PASTOS
-  são a exceção deliberada (decisão do usuário, 2026-07-18): renderizam
-  EXATAMENTE os pontos traçados no editor, sem arredondar — o que a pessoa
-  desenhou é o que aparece.
+- **Assinatura:** o traçado bruto do GPS vira brinquedo. Perímetro e pastos
+  renderizam EXATAMENTE os pontos traçados no editor (decisão do usuário):
+  sem suavização — o que a pessoa marcou no satélite é o que aparece no
+  jogo. O perímetro recebe sombra suave (`feDropShadow` único em
+  `GameDefs`) — o sítio parece um diorama recortado sobre uma mesa.
 - **Estilo:** flat vetorial top-down. Sem outline preto, gradientes com no
   máximo 2 stops, ruído zero. Formas arredondadas e amigáveis.
 - **Cor:** no máximo **2 cores de destaque por cena** (telhado `roof`, leite no

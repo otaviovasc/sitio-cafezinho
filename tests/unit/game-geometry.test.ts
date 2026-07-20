@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boundingBox, centroid, pointInPolygon, ringAreaHa, ringError, roundRing, shoelaceArea } from '../../src/domain/game/geometry';
+import { centroid, pointInPolygon, ringAreaHa, ringError, shoelaceArea } from '../../src/domain/game/geometry';
 
 const square = [
   { x: 0, y: 0 },
@@ -84,26 +84,5 @@ describe('pointInPolygon', () => {
     ];
     expect(pointInPolygon({ x: 2, y: 8 }, ell)).toBe(true);
     expect(pointInPolygon({ x: 8, y: 8 }, ell)).toBe(false);
-  });
-});
-
-describe('roundRing (Chaikin)', () => {
-  it('é determinístico e dobra os pontos por iteração', () => {
-    const once = roundRing(square, 1);
-    expect(once).toHaveLength(8);
-    expect(roundRing(square, 2)).toHaveLength(16);
-    expect(roundRing(square, 1)).toEqual(once);
-  });
-  it('mantém os pontos dentro da caixa original (corta cantos, não expande)', () => {
-    const rounded = roundRing(square, 2);
-    const box = boundingBox(rounded);
-    expect(box.minX).toBeGreaterThanOrEqual(0);
-    expect(box.minY).toBeGreaterThanOrEqual(0);
-    expect(box.maxX).toBeLessThanOrEqual(10);
-    expect(box.maxY).toBeLessThanOrEqual(10);
-  });
-  it('preserva área aproximada (suaviza sem colapsar)', () => {
-    const rounded = roundRing(square, 2);
-    expect(Math.abs(shoelaceArea(rounded))).toBeGreaterThan(80);
   });
 });

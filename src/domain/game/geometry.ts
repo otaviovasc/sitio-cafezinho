@@ -82,26 +82,6 @@ export function pointInPolygon(point: Vec, ring: Vec[]): boolean {
 }
 
 /**
- * Suavização de Chaikin em anel fechado — a assinatura visual do jogo: o
- * traçado irregular do GPS vira forma orgânica de tabuleiro. Determinística;
- * cada iteração troca cada vértice pelo par (3/4, 1/4) das arestas vizinhas.
- */
-export function roundRing(ring: Vec[], iterations = 2): Vec[] {
-  let current = ring;
-  for (let step = 0; step < iterations; step += 1) {
-    const next: Vec[] = [];
-    for (let index = 0; index < current.length; index += 1) {
-      const a = current[index];
-      const b = current[(index + 1) % current.length];
-      next.push({ x: 0.75 * a.x + 0.25 * b.x, y: 0.75 * a.y + 0.25 * b.y });
-      next.push({ x: 0.25 * a.x + 0.75 * b.x, y: 0.25 * a.y + 0.75 * b.y });
-    }
-    current = next;
-  }
-  return current;
-}
-
-/**
  * Pontos equiespaçados ao longo do anel fechado (para os mourões da cerca do
  * perímetro). Caminha o contorno acumulando distância e emite um ponto a cada
  * `spacing`, começando no primeiro vértice. Determinístico.
