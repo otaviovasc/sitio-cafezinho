@@ -12,6 +12,7 @@ import type { FeedInventoryRow } from './types';
 import { formatFeedQuantity } from './types';
 
 type PurchaseOption = { id: string; purchaseDate: string; description: string; totalAmount: string; status: string };
+type SupplierOption = { id: string; name: string };
 
 /**
  * Compra de alimento pelo Depósito. A compra é o fato financeiro REAL de
@@ -23,6 +24,7 @@ export function FeedPurchaseForm({ onSaved }: { onSaved: () => void }) {
   const { busy, error, run } = useSubmit();
   const { data: inventory } = useResource<FeedInventoryRow[]>('/api/feed-inventory');
   const { data: purchases } = useResource<PurchaseOption[]>('/api/purchases');
+  const { data: suppliers } = useResource<SupplierOption[]>('/api/suppliers');
   const [mode, setMode] = useState<'NEW' | 'EXISTING'>('NEW');
   const [feedItemId, setFeedItemId] = useState('');
   const [quantity, setQuantity] = useState('');
@@ -32,6 +34,7 @@ export function FeedPurchaseForm({ onSaved }: { onSaved: () => void }) {
   const [amount, setAmount] = useState('');
   const [paid, setPaid] = useState(false);
   const [existingPurchaseId, setExistingPurchaseId] = useState('');
+  const [supplierId, setSupplierId] = useState('');
   const [formError, setFormError] = useState('');
 
   const item = inventory?.find((row) => row.feedItemId === feedItemId) ?? null;
@@ -63,25 +66,26 @@ export function FeedPurchaseForm({ onSaved }: { onSaved: () => void }) {
 
   async function persist() {
     const parsed = canonicalQuantity()!;
-    let purchaseId = existingPurchaseId;
     if (mode === 'NEW') {
-      const created = await api<{ id: string }>('/api/purchases', json('POST', {
+      await api('/api/feed-purchases', json('POST', {
+        feedItemId,
+        quantity: parsed,
         purchaseDate,
         description: description.trim() || `Compra de ${item?.name ?? 'alimento'}`,
-        category: 'FEED',
         totalAmount: parseDecimal(amount),
         status: paid ? 'PAID' : 'OPEN',
+        supplierId: supplierId || null,
       }));
-      purchaseId = created.id;
+    } else {
+      await api('/api/feed-purchase-entries', json('POST', { feedItemId, purchaseId: existingPurchaseId, quantity: parsed }));
     }
-    await api('/api/feed-purchase-entries', json('POST', { feedItemId, purchaseId, quantity: parsed }));
     onSaved();
   }
 
   return <form className="grid gap-4" noValidate data-testid="feed-purchase-form" onSubmit={(event) => { event.preventDefault(); if (validate()) void run(persist); }}>
     {error && <ErrorState message={error} />}
     <FormErrorSummary errors={formError ? [formError] : []} />
-    <div className="flex gap-2">
+    <div className="grid grid-cols-2 gap-2">
       <Button type="button" variant={mode === 'NEW' ? 'primary' : 'secondary'} onClick={() => setMode('NEW')}>Nova compra</Button>
       <Button type="button" variant={mode === 'EXISTING' ? 'primary' : 'secondary'} onClick={() => setMode('EXISTING')}>Vincular compra existente</Button>
     </div>
@@ -110,6 +114,12 @@ export function FeedPurchaseForm({ onSaved }: { onSaved: () => void }) {
       </div>
       <Field label="Descrição" hint="Opcional; por padrão usa o nome do item.">
         <Input value={description} onChange={(event) => setDescription(event.target.value)} placeholder={item ? `Compra de ${item.name}` : 'Compra de alimento'} />
+      </Field>
+      <Field label="Fornecedor (opcional)">
+        <Select value={supplierId} onChange={(event) => setSupplierId(event.target.value)}>
+          <option value="">Sem fornecedor</option>
+          {suppliers?.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
+        </Select>
       </Field>
       <label className="flex min-h-11 items-center gap-3 text-sm font-semibold">
         <input className="h-5 w-5" type="checkbox" checked={paid} onChange={(event) => setPaid(event.target.checked)} />Compra já paga

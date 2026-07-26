@@ -1,0 +1,11 @@
+{
+    "schema_version": 2,
+    "commit": "62c082a50c9a8bb4a66cd2afd4f368e32263e9d9",
+    "indexed_at": "2026-07-26T21:13:23Z",
+    "project": "sitio-cafezinho",
+    "nodes": 2895,
+    "edges": 7516,
+    "original_size": 6094848,
+    "compressed_size": 726108,
+    "compression_level": 3
+}

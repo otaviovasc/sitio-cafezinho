@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { ClipboardCheck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { formatDate, formatLiters, formatMoney } from '../../domain/format';
+import type { FeedUnit } from '../../domain/feeding';
+import { formatDate, formatLiters, formatMoney, normalizeLabel } from '../../domain/format';
 import type { MilkingRoutine } from '../../domain/herd';
+import { resolveFeedQuantity } from '../../domain/nl/resolve';
 import { ReviewCard, type ReviewAccent } from '../components/review';
 import { useToast } from '../components/feedback-context';
 import { ParsedDecimalInput } from '../components/form-controls';
-import { Button, EmptyState, ErrorState, Field, PageHeader, Select, SkeletonList, StatusBadge } from '../components/ui';
+import { Button, EmptyState, ErrorState, Field, Input, PageHeader, Select, SkeletonList, StatusBadge } from '../components/ui';
 import { useResource } from '../hooks/useResource';
 import { api, ApiError, json } from '../lib/api';
 import { captureInputKindLabel, commitStatusDescriptor, proposedActionStatusDescriptor, proposedActionTypeLabel } from '../lib/status';
@@ -118,29 +120,75 @@ function DailyTotalReview({ action, groups, onDone }: { action: ProposedAction; 
 const DIRECT_COMMIT = new Set(['MILK_COLLECTION', 'REVENUE', 'PURCHASE', 'MASTITIS_CASE']);
 
 type FeedItemOption = { id: string; name: string; canonicalUnit: 'KG' | 'LITER' | 'UNIT'; active: boolean };
+type SupplierOption = { id: string; name: string };
 const feedUnitShort: Record<string, string> = { KG: 'kg', LITER: 'L', UNIT: 'un' };
 const feedingContextShort: Record<string, string> = { MILKING: 'Ordenha', PASTURE: 'Pasto', STATION: 'Estação' };
 
+function inferredFeedUnit(unitLabel: unknown): FeedUnit | '' {
+  const unit = normalizeLabel(String(unitLabel ?? ''));
+  if (['kg', 'quilo', 'quilos', 'quilograma', 'quilogramas', 't', 'tonelada', 'toneladas'].includes(unit)) return 'KG';
+  if (['l', 'litro', 'litros'].includes(unit)) return 'LITER';
+  if (['un', 'unidade', 'unidades'].includes(unit)) return 'UNIT';
+  return '';
+}
+
 /**
- * Compra de alimento falada: revisa item, quantidade (na unidade canônica) e
- * valor. Confirmar cria a compra real + o crédito de estoque numa transação.
+ * A revisão resolve item e fornecedor sem abandonar o documento. Cadastros
+ * novos, compra e crédito de estoque são confirmados na mesma transação.
  */
-function FeedPurchaseReview({ action, feedItems, onDone }: { action: ProposedAction; feedItems: FeedItemOption[]; onDone: () => void }) {
+function FeedPurchaseReview({ action, feedItems, suppliers, onDone }: { action: ProposedAction; feedItems: FeedItemOption[]; suppliers: SupplierOption[]; onDone: () => void }) {
   const toast = useToast();
   const payload = action.resolvedPayload ?? {};
   const pending = action.status === 'NEEDS_REVIEW';
+  const suggestedNewItemUnit = inferredFeedUnit(payload.spokenUnit);
   const [editing, setEditing] = useState(action.commitStatus !== 'READY');
   const [date, setDate] = useState(String(payload.purchaseDate ?? ''));
   const [feedItemId, setFeedItemId] = useState(payload.feedItemId ? String(payload.feedItemId) : '');
-  const [quantity, setQuantity] = useState<number | null>(num(payload.quantity));
+  const [creatingItem, setCreatingItem] = useState(!payload.feedItemId);
+  const [newItemName, setNewItemName] = useState(String(payload.itemLabel ?? ''));
+  const [newItemUnit, setNewItemUnit] = useState<FeedUnit | ''>(suggestedNewItemUnit);
+  const [quantity, setQuantity] = useState<number | null>(() => {
+    const resolvedQuantity = num(payload.quantity);
+    const spokenQuantity = num(payload.spokenQuantity);
+    if (resolvedQuantity !== null || spokenQuantity === null || !suggestedNewItemUnit) return resolvedQuantity;
+    return resolveFeedQuantity(spokenQuantity, payload.spokenUnit ? String(payload.spokenUnit) : null, suggestedNewItemUnit).quantity;
+  });
   const [amount, setAmount] = useState<number | null>(num(payload.totalAmount));
+  const [supplierChoice, setSupplierChoice] = useState(payload.supplierId ? String(payload.supplierId) : payload.supplierLabel ? '' : 'NONE');
+  const [newSupplierName, setNewSupplierName] = useState(String(payload.supplierLabel ?? ''));
+  const [quantityConfirmed, setQuantityConfirmed] = useState(payload.quantitySource !== 'DOCUMENT_OCR' || payload.quantityConfirmed === true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const item = feedItems.find((row) => row.id === feedItemId) ?? null;
+  const inactiveMatch = feedItems.find((row) => !row.active && normalizeLabel(row.name) === normalizeLabel(String(payload.itemLabel ?? ''))) ?? null;
+  const unit = creatingItem ? newItemUnit : item?.canonicalUnit;
+  const requiresSupplierChoice = Boolean(payload.supplierLabel);
+  const supplierReady = supplierChoice === 'CREATE' ? Boolean(newSupplierName.trim()) : supplierChoice === 'NONE' || Boolean(supplierChoice);
+  const itemReady = creatingItem ? Boolean(newItemName.trim() && newItemUnit) : Boolean(item);
+  const canSave = Boolean(date && itemReady && quantity !== null && quantity > 0 && amount !== null && amount > 0 && quantityConfirmed && (!requiresSupplierChoice || supplierReady));
 
   const itemName = payload.resolvedItemName ? String(payload.resolvedItemName) : `${payload.itemLabel ?? 'item'} (a confirmar)`;
   const spoken = payload.spokenQuantity !== null && payload.spokenQuantity !== undefined ? `${payload.spokenQuantity} ${payload.spokenUnit ?? ''}`.trim() : null;
-  const subtitle = `${payload.purchaseDate ? formatDate(String(payload.purchaseDate)) : 'Sem data'} · ${itemName}${spoken ? ` · dito: ${spoken}` : ''}`;
+  const sourceLabel = payload.quantitySource === 'DOCUMENT_OCR' ? 'extraído' : 'dito';
+  const subtitle = `${payload.purchaseDate ? formatDate(String(payload.purchaseDate)) : 'Sem data'} · ${itemName}${spoken ? ` · ${sourceLabel}: ${spoken}` : ''}`;
+
+  function applyUnit(nextUnit: FeedUnit) {
+    setNewItemUnit(nextUnit);
+    const spokenQuantity = num(payload.spokenQuantity);
+    if (spokenQuantity === null) return;
+    const resolved = resolveFeedQuantity(spokenQuantity, payload.spokenUnit ? String(payload.spokenUnit) : null, nextUnit);
+    if (resolved.quantity !== null) setQuantity(resolved.quantity);
+  }
+
+  function chooseExistingItem(id: string) {
+    setFeedItemId(id);
+    setCreatingItem(false);
+    const selected = feedItems.find((row) => row.id === id);
+    const spokenQuantity = num(payload.spokenQuantity);
+    if (!selected || spokenQuantity === null) return;
+    const resolved = resolveFeedQuantity(spokenQuantity, payload.spokenUnit ? String(payload.spokenUnit) : null, selected.canonicalUnit);
+    if (resolved.quantity !== null) setQuantity(resolved.quantity);
+  }
 
   async function run(override?: Record<string, unknown>) {
     setBusy(true);
@@ -179,13 +227,76 @@ function FeedPurchaseReview({ action, feedItems, onDone }: { action: ProposedAct
     {pending && editing && <div className="grid gap-3">
       {error && <ErrorState message={error} />}
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Data"><input className="input" type="date" value={date} onChange={(event) => setDate(event.target.value)} /></Field>
-        <Field label="Item do catálogo"><Select value={feedItemId} onChange={(event) => setFeedItemId(event.target.value)}><option value="">Selecione…</option>{feedItems.filter((row) => row.active).map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</Select></Field>
-        <Field label="Quantidade"><ParsedDecimalInput suffix={item ? feedUnitShort[item.canonicalUnit] : undefined} value={quantity} onValueChange={setQuantity} /></Field>
+        <Field label="Data"><Input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></Field>
+        <Field label="Item do catálogo">
+          <Select value={creatingItem ? '' : feedItemId} onChange={(event) => event.target.value && chooseExistingItem(event.target.value)}>
+            <option value="">Selecione…</option>
+            {feedItems.filter((row) => row.active).map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
+          </Select>
+        </Field>
+      </div>
+
+      {!creatingItem && inactiveMatch && inactiveMatch.id !== feedItemId && <Button type="button" variant="secondary" onClick={() => chooseExistingItem(inactiveMatch.id)}>Reativar “{inactiveMatch.name}”</Button>}
+      {!creatingItem && !inactiveMatch && <Button type="button" variant="secondary" onClick={() => { setCreatingItem(true); setFeedItemId(''); if (newItemUnit) applyUnit(newItemUnit); }}>Cadastrar “{newItemName || 'novo item'}”</Button>}
+      {creatingItem && <div className="rounded-xl border border-[var(--border)] bg-[var(--background)] p-3">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div><strong className="block">Novo item do catálogo</strong><span className="text-xs text-[var(--muted)]">Será criado somente ao confirmar esta compra.</span></div>
+          {feedItems.some((row) => row.active) && <Button type="button" variant="secondary" onClick={() => setCreatingItem(false)}>Usar existente</Button>}
+        </div>
+        {inactiveMatch && <div className="mb-3"><Button type="button" variant="secondary" onClick={() => chooseExistingItem(inactiveMatch.id)}>Reativar “{inactiveMatch.name}”</Button></div>}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Nome do item"><Input value={newItemName} onChange={(event) => setNewItemName(event.target.value)} /></Field>
+          <Field label="Unidade de controle">
+            <Select value={newItemUnit} onChange={(event) => applyUnit(event.target.value as FeedUnit)}>
+              <option value="">Selecione…</option>
+              <option value="KG">Quilos (kg)</option>
+              <option value="LITER">Litros (L)</option>
+              <option value="UNIT">Unidades</option>
+            </Select>
+          </Field>
+        </div>
+      </div>}
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label={unit ? `Quantidade no estoque (${feedUnitShort[unit]})` : 'Quantidade'}>
+          <ParsedDecimalInput suffix={unit ? feedUnitShort[unit] : undefined} value={quantity} onValueChange={(next) => { setQuantity(next); if (payload.quantitySource === 'DOCUMENT_OCR') setQuantityConfirmed(false); }} />
+        </Field>
         <Field label="Valor total"><ParsedDecimalInput suffix="R$" value={amount} onValueChange={setAmount} /></Field>
       </div>
+      {payload.quantitySource === 'DOCUMENT_OCR' && <div className="notice notice-warning">
+        <p><strong>Confira o documento.</strong> O OCR informou {spoken ?? 'uma quantidade sem leitura clara'}{payload.rawValueText ? ` (“${String(payload.rawValueText)}”)` : ''}. O valor acima só vira entrada de estoque após sua confirmação.</p>
+        <label className="mt-3 flex min-h-11 items-center gap-3 font-semibold">
+          <input className="h-5 w-5" type="checkbox" checked={quantityConfirmed} onChange={(event) => setQuantityConfirmed(event.target.checked)} />
+          Confirmei quantidade e unidade no documento
+        </label>
+      </div>}
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Fornecedor">
+          <Select value={supplierChoice} onChange={(event) => setSupplierChoice(event.target.value)}>
+            <option value="">{requiresSupplierChoice ? 'Resolva o fornecedor…' : 'Selecione (opcional)…'}</option>
+            {suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
+            {Boolean(payload.supplierLabel) && <option value="CREATE">Cadastrar “{String(payload.supplierLabel)}”</option>}
+            <option value="NONE">Salvar sem fornecedor</option>
+          </Select>
+        </Field>
+        {supplierChoice === 'CREATE' && <Field label="Nome do novo fornecedor"><Input value={newSupplierName} onChange={(event) => setNewSupplierName(event.target.value)} /></Field>}
+      </div>
       <div className="flex flex-wrap gap-2">
-        <Button disabled={busy || !date || !feedItemId || !quantity || !amount} onClick={() => void run({ ...payload, purchaseDate: date, feedItemId, quantity, totalAmount: amount, description: `Compra de ${item?.name ?? 'alimento'}` })}>{busy ? 'Salvando…' : 'Salvar'}</Button>
+        <Button disabled={busy || !canSave} onClick={() => void run({
+          ...payload,
+          purchaseDate: date,
+          feedItemId: creatingItem ? null : feedItemId,
+          reactivateFeedItem: !creatingItem && !item?.active,
+          newFeedItem: creatingItem ? { name: newItemName.trim(), canonicalUnit: newItemUnit } : null,
+          quantity,
+          quantityConfirmed,
+          totalAmount: amount,
+          supplierId: supplierChoice && !['CREATE', 'NONE'].includes(supplierChoice) ? supplierChoice : null,
+          newSupplierName: supplierChoice === 'CREATE' ? newSupplierName.trim() : null,
+          supplierResolution: supplierChoice === 'NONE' ? 'NONE' : 'LINKED',
+          description: `Compra de ${creatingItem ? newItemName.trim() : item?.name ?? 'alimento'}`,
+        })}>{busy ? 'Confirmando…' : 'Confirmar compra'}</Button>
         <Button variant="secondary" disabled={busy} onClick={() => setEditing(false)}>Cancelar</Button>
       </div>
     </div>}
@@ -355,9 +466,9 @@ function GenericReview({ action, onDone }: { action: ProposedAction; onDone: () 
   </ReviewCard>;
 }
 
-function ActionReview({ action, groups, feedItems, onDone }: { action: ProposedAction; groups: HerdGroup[]; feedItems: FeedItemOption[]; onDone: () => void }) {
+function ActionReview({ action, groups, feedItems, suppliers, onDone }: { action: ProposedAction; groups: HerdGroup[]; feedItems: FeedItemOption[]; suppliers: SupplierOption[]; onDone: () => void }) {
   if (action.actionType === 'DAILY_MILK_TOTAL') return <DailyTotalReview action={action} groups={groups} onDone={onDone} />;
-  if (action.actionType === 'FEED_PURCHASE') return <FeedPurchaseReview action={action} feedItems={feedItems} onDone={onDone} />;
+  if (action.actionType === 'FEED_PURCHASE') return <FeedPurchaseReview action={action} feedItems={feedItems} suppliers={suppliers} onDone={onDone} />;
   if (action.actionType === 'FEEDING_EVENT') return <FeedingEventReview action={action} groups={groups} feedItems={feedItems} onDone={onDone} />;
   return <GenericReview action={action} onDone={onDone} />;
 }
@@ -366,7 +477,9 @@ export function RevisarPage() {
   const { data, loading, error, reload } = useResource<Capture[]>('/api/captures');
   const { data: groupsData } = useResource<HerdGroup[]>('/api/herd-groups');
   const { data: feedItemsData } = useResource<FeedItemOption[]>('/api/feed-items');
+  const { data: suppliersData } = useResource<SupplierOption[]>('/api/suppliers');
   const feedItems = feedItemsData ?? [];
+  const suppliers = suppliersData ?? [];
   const groups = groupsData ?? [];
   const captures = data ?? [];
   const pendingCount = captures.reduce((sum, capture) => sum + capture.actions.filter((action) => action.status === 'NEEDS_REVIEW').length, 0);
@@ -391,7 +504,7 @@ export function RevisarPage() {
               {(byDay.get(day) ?? []).map((capture) => <div key={capture.id} className="grid gap-2">
                 {capture.transcript && <p className="text-sm text-[var(--muted)]"><span className="font-semibold">{captureInputKindLabel[capture.inputKind] ?? capture.inputKind}:</span> “{capture.transcript}”</p>}
                 {capture.actions.length
-                  ? capture.actions.map((action) => <ActionReview key={action.id} action={action} groups={groups} feedItems={feedItems} onDone={reload} />)
+                  ? capture.actions.map((action) => <ActionReview key={action.id} action={action} groups={groups} feedItems={feedItems} suppliers={suppliers} onDone={reload} />)
                   : <p className="text-sm text-[var(--muted)]">Nenhuma ação reconhecida nesta captura.</p>}
               </div>)}
             </section>)}

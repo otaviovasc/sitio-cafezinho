@@ -21,6 +21,7 @@ import { PasturesPage } from './pages/PasturesPage';
 import { MilkPricePage } from './pages/MilkPricePage';
 import { NewFeedingEventPage } from './pages/FeedingPages';
 import { GamePage } from './pages/GamePage';
+import { FeedCatalogPage, FeedInventoryPage, NewFeedPurchasePage } from './pages/FeedInventoryPages';
 
 // Leaflet (satélite do editor) só entra no bundle quando o editor abre.
 const GameMapEditorPage = lazy(() => import('./pages/GameMapEditorPage').then((module) => ({ default: module.GameMapEditorPage })));
@@ -75,7 +76,10 @@ export function App() {
     <Route path="/producao/:id" element={<MilkSessionDetailPage />} />
     <Route path="/compras" element={<PurchasesPage />} />
     <Route path="/compras/nova" element={<NewPurchasePage />} />
+    <Route path="/compras/alimentos/nova" element={<NewFeedPurchasePage />} />
     <Route path="/compras/:id" element={<PurchaseDetailPage />} />
+    <Route path="/estoque-alimentos" element={<FeedInventoryPage />} />
+    <Route path="/catalogo-alimentos" element={<FeedCatalogPage />} />
     <Route path="/fornecedores" element={<SuppliersPage />} />
     <Route path="/fornecedores/:id" element={<SupplierDetailPage />} />
     <Route path="/documentos" element={<DocumentsPage />} />

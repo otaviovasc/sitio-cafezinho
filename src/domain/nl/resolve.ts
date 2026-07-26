@@ -94,6 +94,23 @@ export type ResolvedAction = {
   commitStatus: CommitStatus;
 };
 
+export function requireDocumentQuantityReview(action: ResolvedAction): ResolvedAction {
+  if (action.actionType !== 'FEED_PURCHASE') return action;
+  return {
+    ...action,
+    resolvedPayload: {
+      ...action.resolvedPayload,
+      quantitySource: 'DOCUMENT_OCR',
+      quantityConfirmed: false,
+    },
+    issues: [
+      ...action.issues,
+      'Confirme a quantidade e a unidade extraídas do documento antes de salvar.',
+    ],
+    commitStatus: 'NEEDS_REVIEW',
+  };
+}
+
 const DAY_MS = 86_400_000;
 
 /**
@@ -426,7 +443,10 @@ export function resolveFeedPurchase(intent: FeedPurchaseIntent, ctx: ResolveCont
     const normalized = normalizeLabel(intent.supplierLabel);
     const supplier = ctx.suppliers.find((row) => normalizeLabel(row.name) === normalized);
     supplierId = supplier?.id ?? null;
-    if (!supplier) issues.push(`Fornecedor “${intent.supplierLabel}” não cadastrado; será salvo sem vínculo.`);
+    if (!supplier) {
+      commitStatus = 'NEEDS_REVIEW';
+      issues.push(`Fornecedor “${intent.supplierLabel}” não cadastrado; selecione, cadastre ou confirme que deseja salvar sem vínculo.`);
+    }
   }
   return {
     actionType: 'FEED_PURCHASE',

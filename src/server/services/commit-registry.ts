@@ -1,6 +1,8 @@
 import { getDb } from '../../db/client.js';
-import { feedingEventItems, feedingEvents, feedPurchaseEntries, mastitisCases, milkCollections, purchases, revenues } from '../../db/schema.js';
-import { decimalString } from '../../domain/format.js';
+import { eq } from 'drizzle-orm';
+import { feedingEventItems, feedingEvents, feedItems, feedPurchaseEntries, mastitisCases, milkCollections, purchases, revenues, suppliers } from '../../db/schema.js';
+import { decimalString, normalizeLabel } from '../../domain/format.js';
+import { GUARDRAILS } from '../../domain/guardrails.js';
 import type { ProposedActionType } from '../../domain/nl/resolve.js';
 import { fail } from '../http/api-error.js';
 import { createDailyMilkTotal } from './daily-milk.service.js';
@@ -91,29 +93,90 @@ const committers: Partial<Record<ProposedActionType, Committer>> = {
   // quantidade — aqui só validamos o essencial.
   FEED_PURCHASE: async (payload) => {
     const amount = payload.totalAmount;
-    if (amount === null || amount === undefined) return fail('Informe o valor da compra.', 400, 'AMOUNT_REQUIRED');
-    const feedItemId = payload.feedItemId as string | null | undefined;
-    if (!feedItemId) return fail('Selecione o item do catálogo antes de salvar.', 400, 'FEED_ITEM_REQUIRED');
+    const numericAmount = Number(amount);
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) return fail('Informe o valor da compra.', 400, 'AMOUNT_REQUIRED');
     const quantity = payload.quantity;
-    if (quantity === null || quantity === undefined || Number(quantity) <= 0) return fail('Informe a quantidade comprada na unidade do item.', 400, 'QUANTITY_REQUIRED');
-    const total = decimalString(Number(amount));
+    const numericQuantity = Number(quantity);
+    if (!Number.isFinite(numericQuantity) || numericQuantity <= 0 || numericQuantity > GUARDRAILS.feedQuantity.max) {
+      return fail(`Informe uma quantidade entre 0 e ${GUARDRAILS.feedQuantity.max.toLocaleString('pt-BR')}.`, 400, 'QUANTITY_REQUIRED');
+    }
+    if (payload.quantitySource === 'DOCUMENT_OCR' && payload.quantityConfirmed !== true) {
+      return fail('Confirme a quantidade extraída do documento antes de salvar.', 400, 'QUANTITY_CONFIRMATION_REQUIRED');
+    }
+    const total = decimalString(numericAmount);
     const status = (payload.status as PurchaseStatus | undefined) ?? 'OPEN';
     return getDb().transaction(async (tx) => {
+      let feedItemId = (payload.feedItemId as string | null | undefined) ?? null;
+      let feedItemName: string;
+      if (feedItemId) {
+        const [knownItem] = await tx.select().from(feedItems).where(eq(feedItems.id, feedItemId)).limit(1);
+        if (!knownItem) return fail('Item do catálogo não encontrado.', 404, 'FEED_ITEM_NOT_FOUND');
+        if (!knownItem.active) {
+          if (payload.reactivateFeedItem !== true) return fail('Este item está inativo. Reative-o antes de confirmar.', 409, 'FEED_ITEM_INACTIVE');
+          await tx.update(feedItems).set({ active: true, updatedAt: new Date() }).where(eq(feedItems.id, feedItemId));
+        }
+        feedItemName = knownItem.name;
+      } else {
+        const draft = payload.newFeedItem as { name?: unknown; canonicalUnit?: unknown } | null | undefined;
+        const name = typeof draft?.name === 'string' ? draft.name.trim() : '';
+        const canonicalUnit = draft?.canonicalUnit;
+        if (!name) return fail('Selecione ou cadastre o item do catálogo antes de salvar.', 400, 'FEED_ITEM_REQUIRED');
+        if (name.length > 120) return fail('O nome do item deve ter no máximo 120 caracteres.', 400, 'FEED_ITEM_NAME_TOO_LONG');
+        if (!['KG', 'LITER', 'UNIT'].includes(String(canonicalUnit))) return fail('Informe a unidade de controle do novo item.', 400, 'FEED_ITEM_UNIT_REQUIRED');
+        const existingItems = await tx.select().from(feedItems);
+        const existing = existingItems.find((item) => normalizeLabel(item.name) === normalizeLabel(name));
+        if (existing) {
+          if (existing.canonicalUnit !== canonicalUnit) {
+            return fail(`O item “${existing.name}” já existe com outra unidade de controle.`, 409, 'FEED_ITEM_UNIT_CONFLICT');
+          }
+          feedItemId = existing.id;
+          feedItemName = existing.name;
+          if (!existing.active) await tx.update(feedItems).set({ active: true, updatedAt: new Date() }).where(eq(feedItems.id, existing.id));
+        } else {
+          const [createdItem] = await tx.insert(feedItems).values({
+            name,
+            canonicalUnit: canonicalUnit as 'KG' | 'LITER' | 'UNIT',
+          }).returning();
+          feedItemId = createdItem.id;
+          feedItemName = createdItem.name;
+        }
+      }
+
+      let supplierId = (payload.supplierId as string | null | undefined) ?? null;
+      if (supplierId) {
+        const [knownSupplier] = await tx.select({ id: suppliers.id }).from(suppliers).where(eq(suppliers.id, supplierId)).limit(1);
+        if (!knownSupplier) return fail('Fornecedor não encontrado.', 404, 'SUPPLIER_NOT_FOUND');
+      } else {
+        const supplierName = typeof payload.newSupplierName === 'string' ? payload.newSupplierName.trim() : '';
+        if (supplierName) {
+          if (supplierName.length > 160) return fail('O nome do fornecedor deve ter no máximo 160 caracteres.', 400, 'SUPPLIER_NAME_TOO_LONG');
+          const existingSuppliers = await tx.select().from(suppliers);
+          const existing = existingSuppliers.find((supplier) => normalizeLabel(supplier.name) === normalizeLabel(supplierName));
+          if (existing) supplierId = existing.id;
+          else {
+            const [createdSupplier] = await tx.insert(suppliers).values({ name: supplierName }).returning();
+            supplierId = createdSupplier.id;
+          }
+        } else if (payload.supplierLabel && payload.supplierResolution !== 'NONE') {
+          return fail('Selecione, cadastre ou confirme que deseja salvar sem fornecedor.', 400, 'SUPPLIER_RESOLUTION_REQUIRED');
+        }
+      }
+
       const [purchase] = await tx.insert(purchases).values({
         purchaseDate: String(payload.purchaseDate),
-        description: String(payload.description ?? 'Compra de alimento'),
+        description: String(payload.description ?? `Compra de ${feedItemName}`),
         category: 'FEED',
         grossAmount: total,
         totalAmount: total,
-        supplierId: (payload.supplierId as string | null | undefined) ?? null,
+        supplierId,
         status,
         paidAt: status === 'PAID' ? new Date() : null,
         notes: (payload.notes as string | null | undefined) ?? null,
       }).returning();
       await tx.insert(feedPurchaseEntries).values({
-        feedItemId,
+        feedItemId: feedItemId!,
         purchaseId: purchase.id,
-        quantity: Number(quantity).toFixed(3),
+        quantity: numericQuantity.toFixed(3),
       });
       return { recordType: 'purchase', recordId: purchase.id };
     });

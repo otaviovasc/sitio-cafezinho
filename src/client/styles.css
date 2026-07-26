@@ -156,6 +156,7 @@ a { color: inherit; text-decoration: none; }
   .finance-action small { color: var(--muted); @apply mt-1 text-xs leading-4; }
   .finance-action-income > svg { color: var(--success); }
   .finance-action-expense > svg { color: var(--warning); }
+  .finance-action-stock > svg { color: var(--primary); }
   .finance-action-milk > svg { color: var(--primary); }
   .form-submit-bar { background: color-mix(in srgb, var(--background) 92%, transparent); bottom: calc(4.2rem + env(safe-area-inset-bottom)); @apply sticky z-10 -mx-1 rounded-xl p-1 backdrop-blur-sm sm:static sm:mx-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none; }
   .form-submit-bar .button { @apply w-full sm:w-auto; }

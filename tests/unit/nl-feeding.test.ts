@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { interpretationSchema, type FeedingEventIntent, type FeedPurchaseIntent } from '../../src/domain/nl/intents';
 import {
   matchFeedItemByLabel,
+  requireDocumentQuantityReview,
   resolveFeedingEvent,
   resolveFeedPurchase,
   resolveFeedQuantity,
@@ -111,6 +112,24 @@ describe('NL de alimentação — compra de alimento', () => {
     const resolved = resolveFeedPurchase(feedPurchase({ amount: null }), ctx, NOW);
     expect(resolved.commitStatus).toBe('NEEDS_REVIEW');
     expect(resolved.issues.join(' ')).toMatch(/valor da compra/);
+  });
+
+  it('fornecedor desconhecido exige decisão explícita antes da compra', () => {
+    const resolved = resolveFeedPurchase(feedPurchase({ supplierLabel: 'Fornecedor Novo' }), ctx, NOW);
+    expect(resolved.commitStatus).toBe('NEEDS_REVIEW');
+    expect(resolved.resolvedPayload.supplierId).toBeNull();
+    expect(resolved.issues.join(' ')).toMatch(/selecione, cadastre ou confirme/i);
+  });
+
+  it('documento sempre exige confirmação humana da quantidade extraída', () => {
+    const resolved = requireDocumentQuantityReview(resolveFeedPurchase(feedPurchase(), ctx, NOW));
+    expect(resolved.commitStatus).toBe('NEEDS_REVIEW');
+    expect(resolved.resolvedPayload).toMatchObject({
+      quantity: 3000,
+      quantitySource: 'DOCUMENT_OCR',
+      quantityConfirmed: false,
+    });
+    expect(resolved.issues.join(' ')).toMatch(/Confirme a quantidade e a unidade/);
   });
 });
 

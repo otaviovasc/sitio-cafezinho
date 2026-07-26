@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { login } from './helpers';
+import { mockOcrFeedPurchaseReview } from './ocr-review-fixture';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -67,6 +68,7 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await page.getByRole('button', { name: 'Registrar mudança' }).click();
   // Ao sair da lactação, o backend pode sugerir um lote sem ordenha; o teste opta por manter sem lote.
   const keepNoGroup = page.getByRole('button', { name: 'Manter sem lote' });
+  await keepNoGroup.waitFor({ state: 'visible', timeout: 2_000 }).catch(() => undefined);
   if (await keepNoGroup.isVisible()) await keepNoGroup.click();
   await expect(page.getByText('Seca', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('Início da seca de teste')).toBeVisible();
@@ -79,6 +81,7 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await expect(page.getByText('Em lactação', { exact: true }).first()).toBeVisible();
   await page.getByRole('button', { name: 'Registrar cio', exact: true }).click();
   await page.getByRole('button', { name: 'Sim' }).click();
+  await page.getByRole('button', { name: 'Outro touro' }).click();
   await page.getByLabel('Touro (opcional)').fill('Touro teste');
   await page.getByRole('button', { name: 'Salvar cio' }).click();
   await expect(page.getByText('Cio com cobertura')).toBeVisible();
@@ -367,6 +370,94 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await expect(page.getByRole('link', { name: /Registrar saída/ })).toBeVisible();
   await expect(page.getByText('Resultado de caixa registrado', { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('financeiro.png'), fullPage: true });
+
+  const feedCatalogName = `Powerlac ${suffix}`;
+  await page.goto('/catalogo-alimentos');
+  await expect(page.getByRole('heading', { name: 'Catálogo de alimentos' })).toBeVisible();
+  await page.getByRole('button', { name: 'Novo item' }).click();
+  await page.getByLabel('Nome do item').fill(feedCatalogName);
+  await page.getByLabel('Unidade de controle').selectOption('KG');
+  await page.getByRole('button', { name: 'Salvar item' }).click();
+  await expect(page.getByText(feedCatalogName, { exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('catalogo-alimentos.png'), fullPage: true });
+
+  await page.goto('/compras/alimentos/nova');
+  await expect(page.getByRole('heading', { name: 'Registrar entrada de alimento' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Estoque' })).toHaveAttribute('aria-current', 'page');
+  await page.getByLabel('Item do catálogo').selectOption({ label: feedCatalogName });
+  await page.getByLabel('Quantidade comprada').fill('2');
+  await page.getByLabel('Unidade digitada').selectOption('TONS');
+  await page.getByLabel('Valor total').fill('4380');
+  await page.getByLabel('Fornecedor (opcional)').selectOption({ label: 'Raca forte' });
+  await page.getByRole('button', { name: 'Registrar compra de alimento' }).click();
+  await expect(page.getByRole('heading', { name: 'Estoque de alimentos' })).toBeVisible();
+  const inventoryItem = page.locator('.mobile-item').filter({ hasText: feedCatalogName });
+  await expect(inventoryItem).toContainText('2.000 kg');
+  await page.screenshot({ path: testInfo.outputPath('estoque-alimentos.png'), fullPage: true });
+  const catalogGuards = await page.evaluate(async (name) => {
+    const items = await fetch('/api/feed-items').then((response) => response.json()) as Array<{ id: string; name: string }>;
+    const item = items.find((row) => row.name === name)!;
+    const unitChange = await fetch(`/api/feed-items/${item.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ canonicalUnit: 'LITER' }),
+    });
+    const duplicate = await fetch('/api/feed-items', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: name.toLocaleUpperCase('pt-BR'), canonicalUnit: 'KG' }),
+    });
+    const duplicateSupplier = await fetch('/api/suppliers', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'RAÇA FORTE' }),
+    });
+    const missingSupplier = await fetch('/api/feed-purchases', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        feedItemId: item.id,
+        quantity: 1,
+        purchaseDate: '2026-07-24',
+        description: 'Compra com fornecedor inexistente',
+        totalAmount: 10,
+        supplierId: crypto.randomUUID(),
+      }),
+    });
+    return {
+      itemId: item.id,
+      unitChange: unitChange.status,
+      duplicate: duplicate.status,
+      duplicateSupplier: duplicateSupplier.status,
+      missingSupplier: missingSupplier.status,
+    };
+  }, feedCatalogName);
+  expect(catalogGuards).toEqual({
+    itemId: expect.any(String),
+    unitChange: 409,
+    duplicate: 409,
+    duplicateSupplier: 409,
+    missingSupplier: 404,
+  });
+
+  await page.goto('/catalogo-alimentos');
+  const catalogItem = page.getByTestId(`feed-catalog-item-${catalogGuards.itemId}`);
+  await catalogItem.getByRole('button', { name: 'Editar' }).click();
+  await expect(catalogItem.getByLabel('Unidade de controle')).toBeDisabled();
+  await catalogItem.getByLabel('Nome do item').fill(`${feedCatalogName} atualizado`);
+  await catalogItem.getByRole('button', { name: 'Salvar item' }).click();
+  await expect(page.getByText(`${feedCatalogName} atualizado`, { exact: true })).toBeVisible();
+
+  const unmockOcrReview = await mockOcrFeedPurchaseReview(page);
+  await page.goto('/revisar');
+  await expect(page.getByLabel('Nome do item')).toHaveValue('POWERLAC 120 P');
+  await expect(page.getByRole('button', { name: 'Confirmar compra' })).toBeDisabled();
+  await page.screenshot({ path: testInfo.outputPath('revisao-ocr-pendencias.png'), fullPage: true });
+  await page.getByLabel('Fornecedor').selectOption('CREATE');
+  await page.getByLabel('Confirmei quantidade e unidade no documento').check();
+  await expect(page.getByRole('button', { name: 'Confirmar compra' })).toBeEnabled();
+  await page.screenshot({ path: testInfo.outputPath('revisao-ocr-pronta.png'), fullPage: true });
+  await unmockOcrReview();
 
   await page.goto('/financeiro/preco-leite');
   await expect(page.getByRole('heading', { name: 'Preço do leite' })).toBeVisible();

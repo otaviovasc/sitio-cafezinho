@@ -2,8 +2,9 @@ import { asc, desc, eq, inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb } from '../../db/client.js';
-import { feedItems, feedPurchaseEntries, feedingEventItems, feedingEvents, herdGroups, purchases } from '../../db/schema.js';
+import { feedItems, feedPurchaseEntries, feedingEventItems, feedingEvents, herdGroups, plantingInputs, purchases, suppliers } from '../../db/schema.js';
 import { linesBeyondBalance } from '../../domain/feeding.js';
+import { decimalString, normalizeLabel } from '../../domain/format.js';
 import { GUARDRAILS } from '../../domain/guardrails.js';
 import { fail } from '../http/api-error.js';
 import { loadFeedInventory } from '../services/feed-inventory.js';
@@ -24,6 +25,16 @@ const purchaseEntrySchema = z.object({
   purchaseId: z.string().uuid(),
   quantity: quantitySchema,
   notes: optionalText,
+});
+
+const feedPurchaseSchema = z.object({
+  feedItemId: z.string().uuid(),
+  quantity: quantitySchema,
+  purchaseDate: z.string().date(),
+  description: z.string().trim().min(1).max(200),
+  totalAmount: z.number().positive(),
+  status: z.enum(['OPEN', 'PAID']).default('OPEN'),
+  supplierId: z.string().uuid().nullable().optional().default(null),
 });
 
 const feedingEventSchema = z.object({
@@ -52,6 +63,10 @@ export const feedingRoutes = new Hono()
   })
   .post('/feed-items', async (c) => {
     const body = validate(feedItemSchema, await readJson(c));
+    const existingItems = await getDb().select({ name: feedItems.name }).from(feedItems);
+    if (existingItems.some((item) => normalizeLabel(item.name) === normalizeLabel(body.name))) {
+      return fail('Já existe um item com este nome.', 409, 'DUPLICATE_FEED_ITEM');
+    }
     try {
       const [created] = await getDb().insert(feedItems).values(body).returning();
       return c.json(created, 201);
@@ -61,14 +76,31 @@ export const feedingRoutes = new Hono()
   })
   .patch('/feed-items/:id', async (c) => {
     const body = validate(feedItemSchema.partial(), await readJson(c));
+    const id = c.req.param('id');
+    const [current] = await getDb().select().from(feedItems).where(eq(feedItems.id, id)).limit(1);
+    if (!current) return fail('Item não encontrado.', 404, 'NOT_FOUND');
+    if (body.name) {
+      const existingItems = await getDb().select({ id: feedItems.id, name: feedItems.name }).from(feedItems);
+      const duplicate = existingItems.find((item) => item.id !== id && normalizeLabel(item.name) === normalizeLabel(body.name!));
+      if (duplicate) return fail('Já existe um item com este nome.', 409, 'DUPLICATE_FEED_ITEM');
+    }
+    if (body.canonicalUnit && body.canonicalUnit !== current.canonicalUnit) {
+      const [purchaseMovement, feedingMovement, plantingMovement] = await Promise.all([
+        getDb().select({ id: feedPurchaseEntries.id }).from(feedPurchaseEntries).where(eq(feedPurchaseEntries.feedItemId, id)).limit(1),
+        getDb().select({ id: feedingEventItems.id }).from(feedingEventItems).where(eq(feedingEventItems.feedItemId, id)).limit(1),
+        getDb().select({ id: plantingInputs.id }).from(plantingInputs).where(eq(plantingInputs.feedItemId, id)).limit(1),
+      ]);
+      if (purchaseMovement.length || feedingMovement.length || plantingMovement.length) {
+        return fail('A unidade não pode ser alterada porque este item já possui movimentações.', 409, 'FEED_ITEM_UNIT_LOCKED');
+      }
+    }
     let updated: typeof feedItems.$inferSelect | undefined;
     try {
       [updated] = await getDb().update(feedItems).set({ ...body, updatedAt: new Date() })
-        .where(eq(feedItems.id, c.req.param('id'))).returning();
+        .where(eq(feedItems.id, id)).returning();
     } catch {
       return fail('Já existe um item com este nome.', 409, 'DUPLICATE_FEED_ITEM');
     }
-    if (!updated) return fail('Item não encontrado.', 404, 'NOT_FOUND');
     return c.json(updated);
   })
   .get('/feed-inventory', async (c) => {
@@ -89,6 +121,38 @@ export const feedingRoutes = new Hono()
         balance: line?.balance ?? 0,
       };
     }));
+  })
+  .post('/feed-purchases', async (c) => {
+    const body = validate(feedPurchaseSchema, await readJson(c));
+    const db = getDb();
+    const [item] = await db.select().from(feedItems).where(eq(feedItems.id, body.feedItemId)).limit(1);
+    if (!item) return fail('Item do catálogo não encontrado.', 404, 'FEED_ITEM_NOT_FOUND');
+    if (!item.active) return fail('Este item está inativo no catálogo.', 409, 'FEED_ITEM_INACTIVE');
+    if (body.supplierId) {
+      const [supplier] = await db.select({ id: suppliers.id }).from(suppliers)
+        .where(eq(suppliers.id, body.supplierId)).limit(1);
+      if (!supplier) return fail('Fornecedor não encontrado.', 404, 'SUPPLIER_NOT_FOUND');
+    }
+    const created = await db.transaction(async (tx) => {
+      const total = decimalString(body.totalAmount);
+      const [purchase] = await tx.insert(purchases).values({
+        purchaseDate: body.purchaseDate,
+        description: body.description,
+        category: 'FEED',
+        grossAmount: total,
+        totalAmount: total,
+        supplierId: body.supplierId,
+        status: body.status,
+        paidAt: body.status === 'PAID' ? new Date() : null,
+      }).returning();
+      const [entry] = await tx.insert(feedPurchaseEntries).values({
+        feedItemId: body.feedItemId,
+        purchaseId: purchase.id,
+        quantity: body.quantity.toFixed(3),
+      }).returning();
+      return { purchase, entry };
+    });
+    return c.json(created, 201);
   })
   .get('/feed-purchase-entries', async (c) => {
     const purchaseId = c.req.query('purchaseId');

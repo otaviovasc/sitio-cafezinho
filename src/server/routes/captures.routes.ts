@@ -4,7 +4,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb } from '../../db/client.js';
 import { animalAliases, animals, captures, feedItems, herdGroups, proposedActions, suppliers } from '../../db/schema.js';
-import { resolveIntent, type ResolveContext } from '../../domain/nl/resolve.js';
+import { requireDocumentQuantityReview, resolveIntent, type ResolveContext } from '../../domain/nl/resolve.js';
 import { fail } from '../http/api-error.js';
 import { readJson, validate } from '../http/validation.js';
 import { commitProposedAction } from '../services/commit-registry.js';
@@ -36,7 +36,10 @@ async function loadResolveContext(): Promise<ResolveContext> {
 }
 
 async function persistCapture(base: CaptureBase, interpretation: InterpretResult, ctx: ResolveContext, latencyMs: number) {
-  const resolved = interpretation.intents.map((intent) => resolveIntent(intent, ctx));
+  const resolved = interpretation.intents.map((intent) => {
+    const action = resolveIntent(intent, ctx);
+    return base.inputKind === 'DOCUMENT' ? requireDocumentQuantityReview(action) : action;
+  });
   return getDb().transaction(async (tx) => {
     const [capture] = await tx.insert(captures).values({
       inputKind: base.inputKind,

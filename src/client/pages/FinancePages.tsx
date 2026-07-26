@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BadgeDollarSign, Banknote, CircleDollarSign, ShoppingCart } from 'lucide-react';
+import { BadgeDollarSign, Banknote, CircleDollarSign, Package, ShoppingCart } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { formatDate, formatMoney, parseDecimal } from '../../domain/format';
 import { AttachmentPanel, type Attachment } from '../components/AttachmentPanel';
@@ -129,9 +129,10 @@ export function FinancePage() {
   const { data: purchases, loading: purchasesLoading, error: purchasesError, reload: reloadPurchases } = useResource<FinancePurchase[]>('/api/purchases');
   return <div className="page"><PageHeader icon={Banknote} title="Financeiro" subtitle="Veja o que entrou, o que saiu e o que ainda está pendente" />
     <div className="grid gap-5">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Link className="finance-action finance-action-income" to="/receitas/nova"><CircleDollarSign size={30} aria-hidden /><span><strong>Registrar entrada</strong><small>Venda de leite, animal ou outra receita</small></span></Link>
         <Link className="finance-action finance-action-expense" to="/compras/nova"><ShoppingCart size={30} aria-hidden /><span><strong>Registrar saída</strong><small>Compra, conta ou despesa da propriedade</small></span></Link>
+        <Link className="finance-action finance-action-stock" to="/compras"><Package size={30} aria-hidden /><span><strong>Compras e estoque</strong><small>Compras, alimentos, catálogo e fornecedores</small></span></Link>
         <Link className="finance-action finance-action-milk" to="/financeiro/preco-leite"><BadgeDollarSign size={30} aria-hidden /><span><strong>Preço do leite</strong><small>Valor mensal e estimativa sobre as coletas</small></span></Link>
       </div>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><h2 className="text-xl font-bold">Resumo de {monthLabel(month)}</h2><p className="text-sm text-[var(--muted)]">Somente valores registrados neste sistema.</p></div><div className="w-full sm:w-48"><Field label="Mês do resumo"><Input type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></Field></div></div>

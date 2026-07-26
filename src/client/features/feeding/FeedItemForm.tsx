@@ -1,5 +1,6 @@
 import { ErrorState, Field, FormErrorSummary, Input, Select, SubmitBar } from '../../components/ui';
 import { useForm } from '../../hooks/useForm';
+import { useUnsavedGuard } from '../../hooks/useUnsavedGuard';
 import { useSubmit } from '../../hooks/useSubmit';
 import { api, json } from '../../lib/api';
 import type { FeedUnit } from '../../../domain/feeding';
@@ -16,6 +17,7 @@ export function FeedItemForm({ onSaved }: { onSaved: (item: FeedItemRow) => void
     { name: '', canonicalUnit: 'KG' as FeedUnit },
     { name: (value) => (value.trim() ? undefined : 'Informe o nome do item.') },
   );
+  useUnsavedGuard(form.dirty);
 
   async function persist() {
     const created = await api<FeedItemRow>('/api/feed-items', json('POST', {

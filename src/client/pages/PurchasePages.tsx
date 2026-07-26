@@ -3,6 +3,7 @@ import { Plus, Store, WalletCards } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { AttachmentPanel, type Attachment } from '../components/AttachmentPanel';
 import { FinanceDirectionSwitch } from '../components/FinanceDirectionSwitch';
+import { PurchaseAreaNav } from '../components/PurchaseAreaNav';
 import { DecimalInput, MoneyInput } from '../components/form-controls';
 import { useConfirm } from '../components/feedback-context';
 import { ConfirmButton } from '../components/feedback';
@@ -33,7 +34,8 @@ export function PurchasesPage() {
       && (category === 'ALL' || purchase.category === category)
       && `${purchase.description} ${purchase.supplierName ?? ''}`.toLocaleLowerCase('pt-BR').includes(search.toLocaleLowerCase('pt-BR'));
   });
-  return <div className="page"><PageHeader icon={WalletCards} title="Compras" subtitle="Saídas: compras, contas e despesas da propriedade" action={<Link className="button button-primary" to="/compras/nova"><Plus size={18} aria-hidden />Registrar saída</Link>} />
+  return <div className="page"><PageHeader icon={WalletCards} title="Compras e estoque" subtitle="Compras, fornecedores e alimentos da propriedade" action={<Link className="button button-primary" to="/compras/nova"><Plus size={18} aria-hidden />Registrar saída</Link>} />
+    <PurchaseAreaNav />
     <FilterControls
       search={{ value: search, onChange: setSearch, placeholder: 'Descrição ou fornecedor' }}
       selects={[
@@ -205,7 +207,8 @@ export function SuppliersPage() {
     await api('/api/suppliers', json('POST', { name: form.values.name, notes: form.values.notes || null }));
     form.reset({ name: '', notes: '' }); reload();
   }
-  return <div className="page"><PageHeader icon={Store} title="Fornecedores" subtitle="Apenas nome e observação" />
+  return <div className="page"><PageHeader icon={Store} title="Fornecedores" subtitle="Cadastros usados para vincular e localizar compras" />
+    <PurchaseAreaNav />
     <div className="grid gap-5 lg:grid-cols-2">{submitError && <ErrorState message={submitError} />}<SectionCard title="Cadastrar fornecedor"><form className="grid gap-3" noValidate onSubmit={(event) => { event.preventDefault(); if (form.validate()) void run(create); }}><FormErrorSummary errors={form.visibleErrors} /><Field label="Nome"><Input value={form.values.name} onChange={(event) => form.set('name', event.target.value)} required /></Field><Field label="Observação"><Textarea value={form.values.notes} onChange={(event) => form.set('notes', event.target.value)} /></Field><SubmitBar label="Cadastrar" busy={busy} /></form></SectionCard>
       <SectionCard title="Fornecedores cadastrados"><Field label="Buscar"><Input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Nome ou observação" /></Field><div className="mt-3">{loading ? <SkeletonList rows={4} /> : error ? <ErrorState message={error} retry={reload} /> : !filtered.length ? <InlineEmpty>Nenhum fornecedor encontrado.</InlineEmpty> : <ScrollArea label="Fornecedores cadastrados">{filtered.map((supplier) => <Link className="mobile-item" key={supplier.id} to={`/fornecedores/${supplier.id}`}><strong>{supplier.name}</strong><span>Ver compras</span></Link>)}</ScrollArea>}</div></SectionCard>
     </div>
@@ -223,6 +226,7 @@ export function SupplierDetailPage() {
   if (loading) return <div className="page"><SkeletonList rows={4} /></div>;
   if (error || !data) return <div className="page"><ErrorState message={error || 'Fornecedor não encontrado.'} retry={reload} /></div>;
   return <div className="page"><PageHeader icon={Store} title={data.name} action={<Button onClick={() => { form.reset({ name: data.name, notes: data.notes || '' }); setEditing(true); }}>Editar</Button>} />
+    <PurchaseAreaNav />
     <div className="grid gap-5">{editing && <SectionCard title="Editar fornecedor"><form className="grid gap-3" noValidate onSubmit={(event) => { event.preventDefault(); if (form.validate()) void run(save); }}>{submitError && <ErrorState message={submitError} />}<FormErrorSummary errors={form.visibleErrors} /><Field label="Nome"><Input value={form.values.name} onChange={(event) => form.set('name', event.target.value)} /></Field><Field label="Observação"><Textarea value={form.values.notes} onChange={(event) => form.set('notes', event.target.value)} /></Field><SubmitBar label="Salvar" busy={busy} secondary={<Button type="button" variant="secondary" onClick={() => setEditing(false)}>Cancelar</Button>} /></form></SectionCard>}
       <SectionCard title="Compras deste fornecedor">{!data.purchases.length ? <InlineEmpty>Nenhuma compra vinculada.</InlineEmpty> : <ScrollArea label="Compras do fornecedor">{data.purchases.map((purchase) => <Link className="mobile-item" key={purchase.id} to={`/compras/${purchase.id}`}><span><strong>{purchase.description}</strong><span className="block text-xs text-[var(--muted)]">{formatDate(purchase.purchaseDate)}</span></span><strong>{formatMoney(purchase.totalAmount)}</strong></Link>)}</ScrollArea>}</SectionCard>
     </div>

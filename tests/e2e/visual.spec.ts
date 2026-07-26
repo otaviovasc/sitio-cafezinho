@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { login } from './helpers';
+import { mockOcrFeedPurchaseReview } from './ocr-review-fixture';
 
 async function capturePaintedViewport(page: Page, path: string) {
   await page.screenshot({ fullPage: true, animations: 'disabled' });
@@ -30,6 +31,10 @@ test('captura estados principais sem rolagem horizontal', async ({ page }, testI
     ['rebanho', '/rebanho'],
     ['pesos', '/pesos'],
     ['compras', '/compras'],
+    ['estoque-alimentos', '/estoque-alimentos'],
+    ['catalogo-alimentos', '/catalogo-alimentos'],
+    ['entrada-alimento', '/compras/alimentos/nova'],
+    ['fornecedores', '/fornecedores'],
     ['documentos', '/documentos'],
     ['registrar-coleta', '/producao/coletas/nova'],
     ['registrar-trato', '/alimentacao/trato/novo'],
@@ -52,6 +57,40 @@ test('captura estados principais sem rolagem horizontal', async ({ page }, testI
     expect(layout.scrollWidth > layout.clientWidth, `${route} não deve ter rolagem horizontal: ${JSON.stringify(layout)}`).toBe(false);
     await capturePaintedViewport(page, testInfo.outputPath(`${name}.png`));
   }
+
+  const unmockOcrReview = await mockOcrFeedPurchaseReview(page);
+  await page.goto('/revisar');
+  await expect(page.getByRole('heading', { name: 'Revisar' })).toBeVisible();
+  await expect(page.getByLabel('Nome do item')).toHaveValue('POWERLAC 120 P');
+  await expect(page.getByLabel('Unidade de controle')).toHaveValue('KG');
+  await expect(page.getByRole('button', { name: 'Confirmar compra' })).toBeDisabled();
+  await capturePaintedViewport(page, testInfo.outputPath('revisao-ocr-pendencias.png'));
+  await page.getByLabel('Fornecedor').selectOption('CREATE');
+  await page.getByLabel('Confirmei quantidade e unidade no documento').check();
+  await expect(page.getByRole('button', { name: 'Confirmar compra' })).toBeEnabled();
+  await capturePaintedViewport(page, testInfo.outputPath('revisao-ocr-pronta.png'));
+  await unmockOcrReview();
+
+  await page.route((url) => url.pathname === '/api/feed-inventory', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  });
+  await page.goto('/estoque-alimentos');
+  await expect(page.getByText('Estoque sem movimentações')).toBeVisible();
+  await capturePaintedViewport(page, testInfo.outputPath('estoque-vazio.png'));
+  await page.unroute((url) => url.pathname === '/api/feed-inventory');
+
+  await page.route((url) => url.pathname === '/api/feed-inventory', async (route) => {
+    await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: { message: 'Falha simulada ao carregar o catálogo.' } }) });
+  });
+  await page.goto('/catalogo-alimentos');
+  await expect(page.getByText('Falha simulada ao carregar o catálogo.')).toBeVisible();
+  await capturePaintedViewport(page, testInfo.outputPath('catalogo-erro.png'));
+  await page.unroute((url) => url.pathname === '/api/feed-inventory');
+
+  await page.goto('/compras/alimentos/nova');
+  await page.getByRole('button', { name: 'Registrar compra de alimento' }).click();
+  await expect(page.getByRole('alert').filter({ hasText: 'Revise os campos destacados' })).toBeFocused();
+  await capturePaintedViewport(page, testInfo.outputPath('entrada-alimento-validacao.png'));
 
   await page.goto('/producao/total/novo');
   await page.getByLabel('Produção de').selectOption({ label: 'Lote 2' });
