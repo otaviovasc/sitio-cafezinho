@@ -138,6 +138,53 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await expect(page).toHaveURL(/\/producao\/[0-9a-f-]+$/);
   await expect(page.getByRole('heading', { name: new RegExp(`Controle de ${manualControlDate.split('-').reverse().join('/')}`) })).toBeVisible();
 
+  // Um segundo envio para a mesma data oferece acesso ao controle existente
+  // sem descartar os valores preenchidos.
+  await page.goto('/producao/individual/novo');
+  await page.getByLabel('Data do controle').fill(manualControlDate);
+  await expect(page.getByRole('heading', { name: /Vacas em lactação/ })).toBeVisible();
+  const repeatedInputs = page.locator('.scroll-area input[inputmode="decimal"]:not([disabled])');
+  for (let index = 0; index < await repeatedInputs.count(); index++) await repeatedInputs.nth(index).fill('8');
+  await page.getByRole('button', { name: /^Salvar controle/ }).click();
+  const existingControlAlert = page.getByRole('alert').filter({ hasText: `Já existe um controle em ${manualControlDate.split('-').reverse().join('/')}.` });
+  await expect(existingControlAlert).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('controle-individual-existente.png'), fullPage: true });
+  await existingControlAlert.getByRole('button', { name: 'Cancelar' }).click();
+  await expect(existingControlAlert).toBeHidden();
+  await expect(repeatedInputs.first()).toHaveValue('8');
+  await page.getByRole('button', { name: /^Salvar controle/ }).click();
+  await existingControlAlert.getByRole('button', { name: 'Abrir controle' }).click();
+  await expect(page).toHaveURL(/\/producao\/[0-9a-f-]+$/);
+  await expect(page.getByRole('heading', { name: new RegExp(`Controle de ${manualControlDate.split('-').reverse().join('/')}`) })).toBeVisible();
+
+  // O mesmo conflito também é acionável ao revisar uma captura do Assistente.
+  const assistantImport = JSON.stringify({
+    sessionDate: manualControlDate,
+    sourceMode: 'SEPARATE_MORNING_AFTERNOON',
+    measurements: [{
+      rawAnimalLabel: 'Caruja',
+      rawValueText: '8 + 8',
+      morningLiters: 8,
+      afternoonLiters: 8,
+      totalLiters: 16,
+      confidence: 'HIGH',
+      excluded: false,
+      notes: null,
+    }],
+  });
+  await page.goto('/producao/importar');
+  await page.evaluate((prefillJson) => {
+    window.history.replaceState({ ...window.history.state, usr: { prefillJson } }, '', window.location.href);
+    window.location.reload();
+  }, assistantImport);
+  await expect(page.getByText('Caruja', { exact: true }).first()).toBeVisible();
+  await page.getByRole('button', { name: 'Salvar controle revisado' }).click();
+  const assistantConflict = page.getByRole('alert').filter({ hasText: `Já existe um controle em ${manualControlDate.split('-').reverse().join('/')}.` });
+  await expect(assistantConflict).toBeVisible();
+  await assistantConflict.getByRole('button', { name: 'Cancelar' }).click();
+  await expect(assistantConflict).toBeHidden();
+  await expect(page.getByText('Caruja', { exact: true }).first()).toBeVisible();
+
   // Revisão de transcrição (caminho do Assistente/OCR): criada via API e revisada no detalhe.
   const importDate = testInfo.project.name === 'desktop-1440' ? '2026-07-11' : '2026-07-12';
   const correctedImportDate = testInfo.project.name === 'desktop-1440' ? '2026-07-10' : '2026-07-11';

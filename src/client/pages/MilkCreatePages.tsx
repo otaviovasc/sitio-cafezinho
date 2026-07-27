@@ -7,10 +7,12 @@ import { ParsedDecimalInput } from '../components/form-controls';
 import { useToast } from '../components/feedback-context';
 import { Button, EmptyState, ErrorState, Field, FormErrorSummary, Input, PageHeader, ScrollArea, SectionCard, SkeletonList, SubmitBar } from '../components/ui';
 import { DailyMilkTotalForm } from '../features/milk/DailyMilkTotalForm';
+import { ExistingMilkSessionConflict } from '../features/milk/ExistingMilkSessionConflict';
+import { findMilkSessionByDate } from '../features/milk/findMilkSessionByDate';
 import { useResource } from '../hooks/useResource';
 import { useSubmit } from '../hooks/useSubmit';
 import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
-import { api, json } from '../lib/api';
+import { api, ApiError, json } from '../lib/api';
 import { today } from '../lib/labels';
 
 export function NewDailyMilkTotalPage() {
@@ -39,6 +41,7 @@ export function NewIndividualControlPage() {
   const { data: herd, loading, error: herdError, reload } = useResource<HerdMember[]>(`/api/milking-herd?date=${date}`);
   const [values, setValues] = useState<Record<string, RowValue>>({});
   const [errors, setErrors] = useState<Record<string, RowError>>({});
+  const [existingSession, setExistingSession] = useState<{ id: string; sessionDate: string } | null>(null);
   const dirty = Object.keys(values).length > 0;
   useUnsavedGuard(dirty);
 
@@ -81,7 +84,19 @@ export function NewIndividualControlPage() {
         status: 'CONFIRMED' as const,
       };
     });
-    const created = await api<{ id: string }>('/api/milk-sessions', json('POST', { sessionDate: date, inputMode: 'SEPARATE_MORNING_AFTERNOON', measurements }));
+    let created;
+    try {
+      created = await api<{ id: string }>('/api/milk-sessions', json('POST', { sessionDate: date, inputMode: 'SEPARATE_MORNING_AFTERNOON', measurements }));
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.code === 'SESSION_DATE_EXISTS') {
+        const session = await findMilkSessionByDate(date);
+        if (session) {
+          setExistingSession(session);
+          return;
+        }
+      }
+      throw cause;
+    }
     toast('Controle individual registrado');
     navigate(`/producao/${created.id}`, { replace: true });
   }
@@ -93,9 +108,14 @@ export function NewIndividualControlPage() {
     <PageHeader icon={ClipboardList} title="Controle individual" subtitle="Medição vaca a vaca das que estavam em lactação e em lote de ordenha na data" />
     <div className="grid gap-5">
       {error && <ErrorState message={error} />}
+      {existingSession && <ExistingMilkSessionConflict
+        session={existingSession}
+        onOpen={() => navigate(`/producao/${existingSession.id}`)}
+        onCancel={() => setExistingSession(null)}
+      />}
       <SectionCard>
         <Field label="Data do controle" hint="A lista abaixo é o rebanho em lactação e em ordenha nessa data.">
-          <Input type="date" value={date} max={today()} onChange={(event) => { setDate(event.target.value); setValues({}); setErrors({}); }} />
+          <Input type="date" value={date} max={today()} onChange={(event) => { setDate(event.target.value); setValues({}); setErrors({}); setExistingSession(null); }} />
         </Field>
       </SectionCard>
       {loading ? <SkeletonList rows={5} /> : herdError ? <ErrorState message={herdError} retry={reload} /> : !herd?.length

@@ -53,11 +53,11 @@ const installationPatchSchema = z.object({
   position: pointSchema.optional(),
 });
 
-function toZone(row: MapZone, herdGroupId: string | null = null): GameMapZone {
+function toZone(row: MapZone, herdGroupId: string | null = null, pastureName: string | null = null): GameMapZone {
   return {
     id: row.id,
     kind: row.kind,
-    name: row.name,
+    name: pastureName ?? row.name,
     pastureId: row.pastureId,
     herdGroupId,
     ring: row.ring as MapPoint[],
@@ -80,13 +80,19 @@ async function openGroupByPasture(): Promise<Map<string, string>> {
 
 async function loadMapState(): Promise<GameMapState> {
   const db = getDb();
-  const [zoneRows, installationRows, groupByPasture] = await Promise.all([
+  const [zoneRows, installationRows, groupByPasture, pastureRows] = await Promise.all([
     db.select().from(mapZones).where(eq(mapZones.active, true)).orderBy(asc(mapZones.createdAt)),
     db.select().from(mapInstallations).where(eq(mapInstallations.active, true)).orderBy(asc(mapInstallations.createdAt)),
     openGroupByPasture(),
+    db.select({ id: pastures.id, name: pastures.name }).from(pastures),
   ]);
+  const pastureNameById = new Map(pastureRows.map((row) => [row.id, row.name]));
   return {
-    zones: zoneRows.map((row) => toZone(row, row.pastureId ? groupByPasture.get(row.pastureId) ?? null : null)),
+    zones: zoneRows.map((row) => toZone(
+      row,
+      row.pastureId ? groupByPasture.get(row.pastureId) ?? null : null,
+      row.pastureId ? pastureNameById.get(row.pastureId) ?? null : null,
+    )),
     installations: installationRows.map(toInstallation),
   };
 }

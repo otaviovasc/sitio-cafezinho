@@ -60,8 +60,9 @@ test.describe('jogo — editor de mapa', () => {
 
     // Pasto vinculado a um pasto real (criado via API para o fluxo ser determinístico).
     const pastureName = `Pasto editor ${Date.now()}`;
-    await page.evaluate(async (name) => {
-      await fetch('/api/pastures', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) });
+    const pastureId = await page.evaluate(async (name) => {
+      const response = await fetch('/api/pastures', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) });
+      return ((await response.json()) as { id: string }).id;
     }, pastureName);
     await page.getByRole('button', { name: 'Adicionar pasto' }).click();
     await map.click({ position: { x: 140, y: 140 } });
@@ -71,7 +72,7 @@ test.describe('jogo — editor de mapa', () => {
     await expect(page.getByLabel('Nome do pasto')).toHaveValue('Pasto 1');
     await page.getByLabel('Pasto que esta área desenha').selectOption({ label: pastureName });
     await page.getByRole('button', { name: 'Salvar pasto' }).click();
-    await expect(page.getByText(`Pasto 1 — ${pastureName}`)).toBeVisible();
+    await expect(page.getByText(pastureName)).toBeVisible();
 
     // Mangueira com um clique.
     await page.getByRole('button', { name: 'Posicionar mangueira' }).click();
@@ -84,6 +85,26 @@ test.describe('jogo — editor de mapa', () => {
     const saved = await page.evaluate(() => fetch('/api/game/map').then((response) => response.json()) as Promise<{ zones: unknown[]; installations: unknown[] }>);
     expect(saved.zones).toHaveLength(2);
     expect(saved.installations).toHaveLength(1);
+
+    // O cadastro do pasto é a fonte do rótulo: renomear em /pastos atualiza
+    // tanto a lista do editor quanto a marca exibida no tabuleiro.
+    const renamedPasture = `Shifume ${Date.now()}`;
+    await page.evaluate(async ({ id, name }) => {
+      await fetch(`/api/pastures/${id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+    }, { id: pastureId, name: renamedPasture });
+    await page.reload();
+    await expect(page.getByText(renamedPasture)).toBeVisible();
+    const renamedZone = await page.evaluate((id) => fetch('/api/game/map').then(async (response) => {
+      const map = await response.json() as { zones: Array<{ pastureId: string | null; name: string }> };
+      return map.zones.find((zone) => zone.pastureId === id) ?? null;
+    }), pastureId);
+    expect(renamedZone?.name).toBe(renamedPasture);
+    await page.goto('/jogo');
+    await expect(page.locator('[data-testid^="game-zone-label-"]', { hasText: renamedPasture })).toBeVisible();
 
     // Segundo perímetro é recusado pela API.
     const duplicateStatus = await page.evaluate(async () => {

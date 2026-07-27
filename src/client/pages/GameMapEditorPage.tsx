@@ -230,9 +230,10 @@ export function GameMapEditorPage() {
                   {pastureZones.map((zone) => {
                     const linked = zone.pastureId ? pastureById.get(zone.pastureId) : null;
                     const occupant = linked?.currentOccupancy?.herdGroupName;
+                    const displayName = linked?.name ?? zone.name;
                     return <li key={zone.id} className="flex items-center justify-between gap-2">
-                      <span>{zone.name}{linked ? ` — ${linked.name}` : ''}{linked?.areaHa ? ` · ${Number(linked.areaHa).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} ha` : ''}{occupant ? ` · ${occupant}` : ''}</span>
-                      <ConfirmButton variant="danger" question={`O pasto “${zone.name}” será apagado do mapa.`} onClick={() => void removeZone(zone.id)}>Excluir</ConfirmButton>
+                      <span>{displayName}{linked?.areaHa ? ` · ${Number(linked.areaHa).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} ha` : ''}{occupant ? ` · ${occupant}` : ''}</span>
+                      <ConfirmButton variant="danger" question={`O pasto “${displayName}” será apagado do mapa.`} onClick={() => void removeZone(zone.id)}>Excluir</ConfirmButton>
                     </li>;
                   })}
                 </ul>}

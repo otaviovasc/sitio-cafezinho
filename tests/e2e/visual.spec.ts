@@ -133,6 +133,13 @@ test('captura estados principais sem rolagem horizontal', async ({ page }, testI
   await page.goto('/producao/individual/novo');
   await expect(page.getByRole('heading', { name: /Vacas em lactação/ })).toBeVisible();
   await capturePaintedViewport(page, testInfo.outputPath('controle-individual-manual.png'));
+  await page.getByLabel('Data do controle').fill('2026-05-06');
+  await expect(page.getByRole('heading', { name: /Vacas em lactação/ })).toBeVisible();
+  const individualInputs = page.locator('.scroll-area input[inputmode="decimal"]:not([disabled])');
+  for (let index = 0; index < await individualInputs.count(); index++) await individualInputs.nth(index).fill('8');
+  await page.getByRole('button', { name: /^Salvar controle/ }).click();
+  await expect(page.getByRole('alert').filter({ hasText: 'Já existe um controle em 06/05/2026.' })).toBeVisible();
+  await capturePaintedViewport(page, testInfo.outputPath('controle-individual-existente.png'));
 
   await page.goto('/producao/importar');
   await expect(page.getByRole('heading', { name: 'Revisar transcrição' })).toBeVisible();

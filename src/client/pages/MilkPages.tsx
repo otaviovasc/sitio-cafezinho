@@ -15,10 +15,12 @@ import { milkMeasurementStatusDescriptor } from '../lib/status';
 import type { MeasurementEditValue } from '../features/milk/MilkMeasurementEditor';
 import { MilkSessionMeasurementList, type Animal, type Measurement } from '../features/milk/MilkSessionMeasurementList';
 import { MilkSessionEditForm } from '../features/milk/MilkSessionEditForm';
+import { ExistingMilkSessionConflict } from '../features/milk/ExistingMilkSessionConflict';
+import { findMilkSessionByDate } from '../features/milk/findMilkSessionByDate';
 import { DailyMilkPanel } from '../features/milk/DailyMilkPanel';
 import { QuickAnimalForm } from '../features/animals/QuickAnimalForm';
 import { useResource } from '../hooks/useResource';
-import { api, json } from '../lib/api';
+import { api, ApiError, json } from '../lib/api';
 import { today } from '../lib/labels';
 import { formatDate, formatLiters } from '../../domain/format';
 import { MilkCollectionsPanel } from './MilkCollectionPages';
@@ -78,12 +80,13 @@ export function ImportMilkPage() {
   const [reviewSearch, setReviewSearch] = useState('');
   const [reviewFilter, setReviewFilter] = useState('ISSUES');
   const [showQuickAnimal, setShowQuickAnimal] = useState(false);
+  const [existingSession, setExistingSession] = useState<{ id: string; sessionDate: string } | null>(null);
   const { data: animals, reload: reloadAnimals } = useResource<Animal[]>('/api/animals');
   const navigate = useNavigate();
   const location = useLocation();
 
   const validate = useCallback(async (raw: string) => {
-    setBusy(true); setError('');
+    setBusy(true); setError(''); setExistingSession(null);
     try { setPreview(await api<Preview>('/api/import/milk-session/validate', json('POST', { content: raw }))); toast('Transcrição carregada. Revise cada linha antes de importar.'); }
     catch (cause) { setPreview(null); setError(cause instanceof Error ? cause.message : 'Não foi possível validar a transcrição.'); }
     finally { setBusy(false); }
@@ -122,7 +125,20 @@ export function ImportMilkPage() {
       }));
       toast('Controle individual importado');
       navigate(`/producao/${created.id}`);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível importar.'); }
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.code === 'SESSION_DATE_EXISTS') {
+        try {
+          const session = await findMilkSessionByDate(preview.sessionDate);
+          if (session) {
+            setExistingSession(session);
+            return;
+          }
+        } catch {
+          // Keep the original conflict message if the lookup also fails.
+        }
+      }
+      setError(cause instanceof Error ? cause.message : 'Não foi possível importar.');
+    }
     finally { setBusy(false); }
   }
 
@@ -141,6 +157,11 @@ export function ImportMilkPage() {
   return <div className="page"><PageHeader title="Revisar transcrição" subtitle="Confira cada linha antes de importar" />
     <div className="grid gap-5">
       {error && <ErrorState message={error} />}
+      {existingSession && <ExistingMilkSessionConflict
+        session={existingSession}
+        onOpen={() => navigate(`/producao/${existingSession.id}`)}
+        onCancel={() => setExistingSession(null)}
+      />}
       <SectionCard title="Revisar o controle" action={<Button variant="secondary" onClick={() => setShowQuickAnimal((value) => !value)}><Plus size={17} aria-hidden />Cadastrar vaca</Button>}>{showQuickAnimal && <div className="mb-4"><QuickAnimalForm initialDate={preview.sessionDate} onCancel={() => setShowQuickAnimal(false)} onCreated={async () => { await reloadAnimals(); setShowQuickAnimal(false); }} /></div>}<div className="mb-4 grid grid-cols-3 gap-3"><StatCard label="Confirmadas" value={preview.measurements.filter((row) => row.status === 'CONFIRMED').length} /><StatCard label="A revisar" value={preview.measurements.filter((row) => row.status === 'NEEDS_REVIEW').length} /><StatCard label="Sem medição" value={preview.missingAnimals.length} /></div>
         {preview.sessionIssues.length > 0 && <div className="notice notice-error mb-4"><strong>Corrija antes de salvar</strong><ul className="mt-1 list-disc pl-5">{preview.sessionIssues.map((issue) => <li key={issue}>{issue}</li>)}</ul></div>}
         {(preview.sessionWarnings?.length ?? 0) > 0 && <div className="notice notice-warning mb-4"><strong>Confira antes de salvar</strong><ul className="mt-1 list-disc pl-5">{preview.sessionWarnings?.map((issue) => <li key={issue}>{issue}</li>)}</ul>{preview.missingAnimals.length > 0 && <details className="mt-2"><summary className="min-h-11 cursor-pointer py-2 text-xs font-semibold">Ver vacas sem medição vinculada</summary><p className="text-xs">{preview.missingAnimals.map((animal) => animal.name || `Brinco ${animal.tagNumber}`).join(', ')}.</p></details>}<p className="mt-2 text-xs">Isso não impede salvar: o controle individual pode ser pontual e não registra ausência nem produção zero.</p></div>}
