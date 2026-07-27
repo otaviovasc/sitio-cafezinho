@@ -11,7 +11,7 @@ import { matchAnimalByLabel } from '../../domain/nl/matching.js';
 import { estimateSplit } from '../../domain/milk.js';
 import { fail } from '../http/api-error.js';
 import { decimalInput, optionalText, readJson, validate } from '../http/validation.js';
-import { createMilkSession, loadMilkingHerdOnDate } from '../services/milk-session.service.js';
+import { createMilkSession, loadMilkingHerdOnDate, mergeMilkSession } from '../services/milk-session.service.js';
 
 const measurementBaseSchema = z.object({
   animalId: z.string().uuid().nullable().optional(),
@@ -22,6 +22,7 @@ const measurementBaseSchema = z.object({
   totalLiters: decimalInput.nullable(),
   confidence: z.enum(['HIGH', 'MEDIUM', 'LOW']).default('HIGH'),
   status: z.enum(['CONFIRMED', 'NEEDS_REVIEW', 'EXCLUDED']).default('CONFIRMED'),
+  mergeDecision: z.enum(['ADD', 'KEEP_EXISTING', 'REPLACE_EXISTING']).nullable().optional(),
   notes: optionalText,
 });
 
@@ -255,7 +256,7 @@ export const milkRoutes = new Hono()
       if (error instanceof z.ZodError) return fail(formatMilkImportIssues(error));
       return fail(error instanceof Error ? error.message : 'Não foi possível validar os dados.');
     }
-    const [allAnimals, allAliases, expectedHerd, previousRows] = await Promise.all([
+    const [allAnimals, allAliases, expectedHerd, previousRows, existingRows] = await Promise.all([
       getDb().select().from(animals),
       getDb().select().from(animalAliases),
       loadMilkingHerdOnDate(parsed.sessionDate),
@@ -263,7 +264,39 @@ export const milkRoutes = new Hono()
         .from(milkMeasurements).innerJoin(milkSessions, eq(milkMeasurements.milkSessionId, milkSessions.id))
         .where(and(eq(milkMeasurements.status, 'CONFIRMED'), sql`${milkSessions.sessionDate} < ${parsed.sessionDate}`))
         .orderBy(desc(milkSessions.sessionDate)),
+      getDb().select({
+        sessionId: milkSessions.id,
+        sessionDate: milkSessions.sessionDate,
+        title: milkSessions.title,
+        measurementId: milkMeasurements.id,
+        animalId: milkMeasurements.animalId,
+        animalName: animals.name,
+        tagNumber: animals.tagNumber,
+        rawAnimalLabel: milkMeasurements.rawAnimalLabel,
+        morningLiters: milkMeasurements.morningLiters,
+        afternoonLiters: milkMeasurements.afternoonLiters,
+        totalLiters: milkMeasurements.totalLiters,
+        status: milkMeasurements.status,
+      }).from(milkSessions)
+        .leftJoin(milkMeasurements, eq(milkMeasurements.milkSessionId, milkSessions.id))
+        .leftJoin(animals, eq(milkMeasurements.animalId, animals.id))
+        .where(eq(milkSessions.sessionDate, parsed.sessionDate))
+        .orderBy(asc(milkMeasurements.createdAt)),
     ]);
+    const existingMeasurements = existingRows.flatMap((row) => row.measurementId ? [{
+      id: row.measurementId,
+      animalId: row.animalId,
+      animalName: row.animalName,
+      tagNumber: row.tagNumber,
+      rawAnimalLabel: row.rawAnimalLabel,
+      morningLiters: row.morningLiters,
+      afternoonLiters: row.afternoonLiters,
+      totalLiters: row.totalLiters,
+      status: row.status,
+    }] : []);
+    const activeExistingByAnimal = new Map(existingMeasurements
+      .filter((row): row is typeof row & { animalId: string } => Boolean(row.animalId) && row.status !== 'EXCLUDED')
+      .map((row) => [row.animalId, row]));
     const matched = parsed.measurements.map((row) => ({ row, match: matchAnimalByLabel(row.rawAnimalLabel, allAnimals, allAliases) }));
     const matchCounts = matched.reduce((counts, item) => {
       if (item.match && !item.row.excluded) counts.set(item.match.id, (counts.get(item.match.id) ?? 0) + 1);
@@ -271,11 +304,13 @@ export const milkRoutes = new Hono()
     }, new Map<string, number>());
     const measurements = matched.map(({ row, match }) => {
       const expected = match ? expectedHerd.find((animal) => animal.id === match.id) : undefined;
+      const existingMeasurement = match ? activeExistingByAnimal.get(match.id) : undefined;
       const totalLiters = row.totalLiters ?? (row.morningLiters !== null || row.afternoonLiters !== null ? (row.morningLiters ?? 0) + (row.afternoonLiters ?? 0) : null);
       const issues: string[] = [];
       if (!match && !row.excluded) issues.push('Animal não encontrado por nome, brinco ou alias exato.');
       if (match && !expected) issues.push('Animal não fazia parte do rebanho em lactação nesta data.');
       if (match && (matchCounts.get(match.id) ?? 0) > 1) issues.push('Animal repetido no controle.');
+      if (existingMeasurement && !row.excluded) issues.push('Este animal já possui uma medição ativa no controle desta data.');
       if (row.confidence === 'LOW') issues.push('Baixa confiança na transcrição.');
       if (!row.excluded && row.morningLiters === null) issues.push('Produção da manhã ausente.');
       if (!row.excluded && expected?.milkingRoutine === 'MORNING_AND_AFTERNOON' && row.afternoonLiters === null) issues.push('Produção da tarde ausente para este lote.');
@@ -295,17 +330,34 @@ export const milkRoutes = new Hono()
         animalId: match?.id ?? null,
         matchedAnimal: match ? { id: match.id, name: match.name, tagNumber: match.tagNumber } : null,
         milkingRoutine: expected?.milkingRoutine ?? null,
+        mergeDecision: row.excluded || !existingMeasurement ? 'ADD' : null,
+        existingMeasurement: existingMeasurement ?? null,
         issues,
       };
     });
-    const linkedIds = new Set(matched.flatMap((item) => item.match && !item.row.excluded ? [item.match.id] : []));
+    const linkedIds = new Set([
+      ...existingMeasurements.flatMap((row) => row.animalId && row.status !== 'EXCLUDED' ? [row.animalId] : []),
+      ...matched.flatMap((item) => item.match && !item.row.excluded ? [item.match.id] : []),
+    ]);
     const missingAnimals = expectedHerd.filter((animal) => !linkedIds.has(animal.id)).map((animal) => ({ id: animal.id, name: animal.name, tagNumber: animal.tagNumber }));
     const sessionIssues = parsed.sourceMode !== 'SEPARATE_MORNING_AFTERNOON' ? ['O controle novo deve separar manhã e tarde.'] : [];
     const sessionWarnings = missingAnimals.length ? [`Há ${missingAnimals.length} vaca(s) em lactação sem medição vinculada neste controle.`] : [];
-    return c.json({ sessionDate: parsed.sessionDate, sourceMode: parsed.sourceMode, measurements, missingAnimals, sessionIssues, sessionWarnings });
+    const existingSession = existingRows[0] ? {
+      id: existingRows[0].sessionId,
+      sessionDate: existingRows[0].sessionDate,
+      title: existingRows[0].title,
+      measurementCount: existingMeasurements.filter((row) => row.status !== 'EXCLUDED').length,
+      measurements: existingMeasurements,
+    } : null;
+    return c.json({ sessionDate: parsed.sessionDate, sourceMode: parsed.sourceMode, measurements, missingAnimals, sessionIssues, sessionWarnings, existingSession });
   })
   .post('/import/milk-session', async (c) => {
     const body = validate(sessionSchema, await readJson(c));
+    const [sameDate] = await getDb().select({ id: milkSessions.id }).from(milkSessions).where(eq(milkSessions.sessionDate, body.sessionDate)).limit(1);
+    if (sameDate) {
+      const merged = await mergeMilkSession(sameDate.id, { ...body, source: 'IMPORT', title: body.title || 'Controle importado' });
+      return c.json(merged);
+    }
     const created = await createMilkSession({ ...body, source: 'IMPORT', title: body.title || 'Controle importado' });
     return c.json(created, 201);
   })

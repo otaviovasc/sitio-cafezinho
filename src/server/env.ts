@@ -27,6 +27,9 @@ const envSchema = z.object({
   OPENROUTER_BASE_URL: z.string().url().default('https://openrouter.ai/api/v1'),
   // Transcrição pt-BR: Chirp 3 (STT dedicado do Google). Interpretação/JSON: Gemini 3.1 Flash Lite.
   OPENROUTER_STT_MODEL: z.string().default('google/chirp-3'),
+  // Áudio longo pode atingir o timeout de processamento do provider do Chirp.
+  // O fallback também cobre indisponibilidade temporária do modelo principal.
+  OPENROUTER_STT_FALLBACK_MODEL: z.string().default('openai/gpt-4o-mini-transcribe'),
   OPENROUTER_INTENT_MODEL: z.string().default('google/gemini-3.1-flash-lite'),
 }).superRefine((value, context) => {
   if (value.STORAGE_MODE === 'google_drive') {

@@ -10,7 +10,7 @@ function pickMime(): string {
   return MIME_CANDIDATES.find((mime) => MediaRecorder.isTypeSupported(mime)) ?? '';
 }
 
-export type RecordingResult = { blob: Blob; mime: string; filename: string };
+export type RecordingResult = { blob: Blob; mime: string; filename: string; durationSeconds: number };
 
 export function useAudioRecorder(maxSeconds = 60) {
   const [recording, setRecording] = useState(false);
@@ -20,6 +20,7 @@ export function useAudioRecorder(maxSeconds = 60) {
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<number | null>(null);
+  const startedAtRef = useRef<number | null>(null);
 
   const cleanup = useCallback(() => {
     if (timerRef.current) window.clearInterval(timerRef.current);
@@ -27,6 +28,7 @@ export function useAudioRecorder(maxSeconds = 60) {
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     recorderRef.current = null;
+    startedAtRef.current = null;
     setRecording(false);
   }, []);
 
@@ -49,6 +51,7 @@ export function useAudioRecorder(maxSeconds = 60) {
       const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
       recorderRef.current = recorder;
       chunksRef.current = [];
+      startedAtRef.current = Date.now();
       setSeconds(0);
       const done = new Promise<RecordingResult | null>((resolve) => {
         recorder.ondataavailable = (event) => { if (event.data.size > 0) chunksRef.current.push(event.data); };
@@ -56,8 +59,9 @@ export function useAudioRecorder(maxSeconds = 60) {
           const type = recorder.mimeType || mime || 'audio/webm';
           const blob = new Blob(chunksRef.current, { type });
           const ext = type.includes('mp4') || type.includes('aac') ? 'mp4' : type.includes('ogg') ? 'ogg' : 'webm';
+          const durationSeconds = startedAtRef.current === null ? 0 : (Date.now() - startedAtRef.current) / 1000;
           cleanup();
-          resolve(blob.size > 0 ? { blob, mime: type, filename: `captura.${ext}` } : null);
+          resolve(blob.size > 0 ? { blob, mime: type, filename: `captura.${ext}`, durationSeconds } : null);
         };
       });
       recorder.start();

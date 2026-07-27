@@ -96,8 +96,19 @@ export const captureRoutes = new Hono()
         const audioType = (audio.type || 'audio/webm').split(';')[0].trim().toLowerCase();
         if (!ALLOWED_AUDIO_MIME.has(audioType)) return fail(`Formato de áudio não suportado (${audio.type || 'desconhecido'}).`, 400, 'UNSUPPORTED_AUDIO');
         if (audio.size > MAX_AUDIO_BYTES) return fail('O áudio deve ter no máximo 20 MB.', 413, 'AUDIO_TOO_LARGE');
+        const rawDuration = form.get('durationSeconds');
+        const durationSeconds = typeof rawDuration === 'string' ? Number(rawDuration) : undefined;
+        const hasValidDuration = typeof durationSeconds === 'number'
+          && Number.isFinite(durationSeconds)
+          && durationSeconds > 0
+          && durationSeconds <= 65;
         const buffer = Buffer.from(await audio.arrayBuffer());
-        const result = await provider.transcribe({ buffer, filename: audio.name || 'audio.webm', mimeType: audioType });
+        const result = await provider.transcribe({
+          buffer,
+          filename: audio.name || 'audio.webm',
+          mimeType: audioType,
+          ...(hasValidDuration ? { durationSeconds } : {}),
+        });
         base = { inputKind: 'AUDIO', transcript: result.text, sttRaw: result.raw, sttModel: result.model };
       } else if (document instanceof File) {
         const hint = typeof form.get('context') === 'string' ? String(form.get('context')) : undefined;

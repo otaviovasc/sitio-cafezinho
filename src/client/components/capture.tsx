@@ -63,6 +63,7 @@ function CaptureSheet({ open, onClose }: { open: boolean; onClose: () => void })
     }
     const form = new FormData();
     form.append('audio', result.blob, result.filename);
+    form.append('durationSeconds', result.durationSeconds.toFixed(3));
     await submit({ method: 'POST', body: form });
   }
 

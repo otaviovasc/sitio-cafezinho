@@ -157,12 +157,15 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await expect(page).toHaveURL(/\/producao\/[0-9a-f-]+$/);
   await expect(page.getByRole('heading', { name: new RegExp(`Controle de ${manualControlDate.split('-').reverse().join('/')}`) })).toBeVisible();
 
-  // O mesmo conflito também é acionável ao revisar uma captura do Assistente.
+  // Uma captura do Assistente completa o controle da data com outro lote.
+  // A vaca nova pode ter nome/lote corrigidos e é vinculada à linha sem sair da revisão.
+  const importedCowLabel = `Vaca do lote 2 ${suffix}`;
+  const correctedCowName = `Aurora ${suffix}`;
   const assistantImport = JSON.stringify({
     sessionDate: manualControlDate,
     sourceMode: 'SEPARATE_MORNING_AFTERNOON',
     measurements: [{
-      rawAnimalLabel: 'Caruja',
+      rawAnimalLabel: importedCowLabel,
       rawValueText: '8 + 8',
       morningLiters: 8,
       afternoonLiters: 8,
@@ -177,13 +180,67 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
     window.history.replaceState({ ...window.history.state, usr: { prefillJson } }, '', window.location.href);
     window.location.reload();
   }, assistantImport);
-  await expect(page.getByText('Caruja', { exact: true }).first()).toBeVisible();
-  await page.getByRole('button', { name: 'Salvar controle revisado' }).click();
-  const assistantConflict = page.getByRole('alert').filter({ hasText: `Já existe um controle em ${manualControlDate.split('-').reverse().join('/')}.` });
-  await expect(assistantConflict).toBeVisible();
-  await assistantConflict.getByRole('button', { name: 'Cancelar' }).click();
-  await expect(assistantConflict).toBeHidden();
-  await expect(page.getByText('Caruja', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(importedCowLabel, { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('Este controle diário já existe')).toBeVisible();
+  await page.getByRole('button', { name: 'Cadastrar como nova' }).click();
+  await expect(page.getByLabel('Nome')).toHaveValue(importedCowLabel);
+  await page.getByLabel('Nome').fill(correctedCowName);
+  await page.getByLabel('Lote de ordenha').selectOption({ label: 'Lote 1' });
+  await page.getByRole('button', { name: 'Cadastrar e voltar à revisão' }).click();
+  await expect(page.getByText('Animal cadastrado')).toBeVisible();
+  await page.getByRole('button', { name: 'Confirmar', exact: true }).click();
+  await expect(page.getByText('Confirmado', { exact: true }).first()).toBeVisible();
+  await page.getByRole('button', { name: 'Adicionar ao controle existente' }).click();
+  await expect(page).toHaveURL(/\/producao\/[0-9a-f-]+$/);
+  await expect(page.getByText(correctedCowName, { exact: true }).first()).toBeVisible();
+  const mergedControl = await page.evaluate(async ({ date, rawLabel, animalName }) => {
+    const sessions = await fetch('/api/milk-sessions').then((response) => response.json()) as Array<{ id: string; sessionDate: string }>;
+    const onDate = sessions.filter((session) => session.sessionDate === date);
+    const detail = await fetch(`/api/milk-sessions/${onDate[0].id}`).then((response) => response.json()) as {
+      measurements: Array<{ rawAnimalLabel: string; animalName: string | null; status: string }>;
+    };
+    return {
+      sessionCount: onDate.length,
+      row: detail.measurements.find((measurement) => measurement.rawAnimalLabel === rawLabel && measurement.animalName === animalName),
+    };
+  }, { date: manualControlDate, rawLabel: importedCowLabel, animalName: correctedCowName });
+  expect(mergedControl.sessionCount).toBe(1);
+  expect(mergedControl.row?.status).toBe('CONFIRMED');
+
+  // Se a vaca já foi medida, a revisão exige uma decisão direta. Ao usar a
+  // nova medição, a anterior continua preservada como excluída.
+  const replacementImport = JSON.stringify({
+    sessionDate: manualControlDate,
+    sourceMode: 'SEPARATE_MORNING_AFTERNOON',
+    measurements: [{
+      rawAnimalLabel: 'Caruja',
+      rawValueText: '7 + 7',
+      morningLiters: 7,
+      afternoonLiters: 7,
+      totalLiters: 14,
+      confidence: 'HIGH',
+      excluded: false,
+      notes: null,
+    }],
+  });
+  await page.goto('/producao/importar');
+  await page.evaluate((prefillJson) => {
+    window.history.replaceState({ ...window.history.state, usr: { prefillJson } }, '', window.location.href);
+    window.location.reload();
+  }, replacementImport);
+  await expect(page.getByText('Medição já registrada para este animal')).toBeVisible();
+  await page.getByRole('button', { name: 'Usar nova medição' }).click();
+  await page.getByRole('button', { name: 'Adicionar ao controle existente' }).click();
+  const carujaVersions = await page.evaluate(async (date) => {
+    const sessions = await fetch('/api/milk-sessions').then((response) => response.json()) as Array<{ id: string; sessionDate: string }>;
+    const session = sessions.find((item) => item.sessionDate === date);
+    const detail = await fetch(`/api/milk-sessions/${session?.id}`).then((response) => response.json()) as {
+      measurements: Array<{ animalName: string | null; totalLiters: string | null; status: string }>;
+    };
+    return detail.measurements.filter((measurement) => measurement.animalName === 'Caruja');
+  }, manualControlDate);
+  expect(carujaVersions.some((measurement) => measurement.status === 'EXCLUDED')).toBe(true);
+  expect(carujaVersions.some((measurement) => measurement.status === 'CONFIRMED' && Number(measurement.totalLiters) === 14)).toBe(true);
 
   // Revisão de transcrição (caminho do Assistente/OCR): criada via API e revisada no detalhe.
   const importDate = testInfo.project.name === 'desktop-1440' ? '2026-07-11' : '2026-07-12';

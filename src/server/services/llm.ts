@@ -18,7 +18,7 @@ export class LlmDisabledError extends ApiError {
   }
 }
 
-export type BinaryInput = { buffer: Buffer; filename: string; mimeType: string };
+export type BinaryInput = { buffer: Buffer; filename: string; mimeType: string; durationSeconds?: number };
 export type TranscribeResult = { text: string; raw: unknown; model: string };
 export type OcrResult = { text: string; raw: unknown; model: string };
 export type InterpretResult = { intents: VoiceIntent[]; raw: unknown; model: string; tokensUsed: number | null };
@@ -53,9 +53,22 @@ class DisabledProvider implements LlmProvider {
   interpret(): Promise<InterpretResult> { throw new LlmDisabledError(); }
 }
 
-type OpenRouterConfig = { apiKey: string; baseUrl: string; sttModel: string; intentModel: string; appUrl: string };
+type OpenRouterConfig = {
+  apiKey: string;
+  baseUrl: string;
+  sttModel: string;
+  sttFallbackModel: string;
+  intentModel: string;
+  appUrl: string;
+};
 
-class OpenRouterProvider implements LlmProvider {
+type TranscriptionResponse = {
+  response: Response;
+  raw: unknown;
+  model: string;
+};
+
+export class OpenRouterProvider implements LlmProvider {
   readonly enabled = true;
   constructor(private readonly config: OpenRouterConfig) {}
 
@@ -68,18 +81,56 @@ class OpenRouterProvider implements LlmProvider {
     };
   }
 
-  async transcribe(audio: BinaryInput): Promise<TranscribeResult> {
+  private async requestTranscription(audio: BinaryInput, model: string): Promise<TranscriptionResponse> {
     const form = new FormData();
-    form.append('model', this.config.sttModel);
+    form.append('model', model);
     form.append('language', 'pt');
     form.append('file', new Blob([audio.buffer], { type: audio.mimeType }), audio.filename);
     const response = await fetch(`${this.config.baseUrl}/audio/transcriptions`, {
       method: 'POST', headers: this.headers(), body: form,
     });
     const raw = await response.json();
-    if (!response.ok) throw new ApiError(`Falha na transcrição: ${describeError(raw)}`, 502, 'STT_FAILED');
-    const text = typeof (raw as { text?: unknown }).text === 'string' ? ((raw as { text: string }).text).trim() : '';
-    return { text, raw, model: this.config.sttModel };
+    return { response, raw, model };
+  }
+
+  async transcribe(audio: BinaryInput): Promise<TranscribeResult> {
+    const longRecording = typeof audio.durationSeconds === 'number' && audio.durationSeconds >= 45;
+    const firstModel = longRecording ? this.config.sttFallbackModel : this.config.sttModel;
+    const secondModel = longRecording ? this.config.sttModel : this.config.sttFallbackModel;
+    const primary = await this.requestTranscription(audio, firstModel);
+    let result = primary;
+
+    const shouldFallback = !primary.response.ok
+      && secondModel !== firstModel
+      && (
+        primary.response.status === 400
+        || primary.response.status === 404
+        || primary.response.status === 408
+        || primary.response.status === 429
+        || primary.response.status >= 500
+    );
+    if (shouldFallback) {
+      result = await this.requestTranscription(audio, secondModel);
+    }
+
+    if (!result.response.ok) {
+      console.warn(JSON.stringify({
+        level: 'warn',
+        event: 'stt_failed',
+        firstModel: primary.model,
+        firstStatus: primary.response.status,
+        firstMessage: describeError(primary.raw),
+        secondModel: result === primary ? null : result.model,
+        secondStatus: result === primary ? null : result.response.status,
+        secondMessage: result === primary ? null : describeError(result.raw),
+      }));
+      throw new ApiError('Não foi possível transcrever o áudio agora. Tente novamente.', 502, 'STT_FAILED');
+    }
+
+    const text = typeof (result.raw as { text?: unknown }).text === 'string'
+      ? ((result.raw as { text: string }).text).trim()
+      : '';
+    return { text, raw: result.raw, model: result.model };
   }
 
   async ocr(document: BinaryInput, hint?: string): Promise<OcrResult> {
@@ -152,6 +203,7 @@ export function getLlmProvider(): LlmProvider {
         apiKey: config.OPENROUTER_API_KEY,
         baseUrl: config.OPENROUTER_BASE_URL,
         sttModel: config.OPENROUTER_STT_MODEL,
+        sttFallbackModel: config.OPENROUTER_STT_FALLBACK_MODEL,
         intentModel: config.OPENROUTER_INTENT_MODEL,
         appUrl: config.PUBLIC_APP_URL,
       })

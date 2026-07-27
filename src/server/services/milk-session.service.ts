@@ -3,6 +3,7 @@ import { getDb } from '../../db/client.js';
 import { animalGroupAssignments, animals, animalStatusEvents, herdGroups, milkMeasurements, milkSessions } from '../../db/schema.js';
 import { decimalString } from '../../domain/format.js';
 import { requiresAfternoonMeasurement } from '../../domain/herd.js';
+import { planMilkSessionMerge, type MilkMergeDecision } from '../../domain/milk-session-merge.js';
 import { fail } from '../http/api-error.js';
 
 export type MeasurementDraft = {
@@ -14,6 +15,7 @@ export type MeasurementDraft = {
   totalLiters: number | null;
   confidence?: 'HIGH' | 'MEDIUM' | 'LOW';
   status?: 'CONFIRMED' | 'NEEDS_REVIEW' | 'EXCLUDED';
+  mergeDecision?: MilkMergeDecision | null;
   notes?: string | null;
 };
 
@@ -103,5 +105,88 @@ export async function createMilkSession(draft: MilkSessionDraft) {
       notes: row.notes ?? null,
     })));
     return session;
+  });
+}
+
+function storedMeasurement(sessionId: string, row: MeasurementDraft) {
+  return {
+    milkSessionId: sessionId,
+    animalId: row.animalId ?? null,
+    rawAnimalLabel: row.rawAnimalLabel,
+    rawValueText: row.rawValueText ?? null,
+    morningLiters: row.morningLiters == null ? null : decimalString(row.morningLiters),
+    afternoonLiters: row.afternoonLiters == null ? null : decimalString(row.afternoonLiters),
+    totalLiters: row.totalLiters === null ? null : decimalString(row.totalLiters),
+    confidence: row.confidence ?? 'HIGH' as const,
+    status: row.status ?? 'CONFIRMED' as const,
+    notes: row.notes ?? null,
+  };
+}
+
+export async function mergeMilkSession(sessionId: string, draft: MilkSessionDraft) {
+  const db = getDb();
+  const [session] = await db.select().from(milkSessions).where(eq(milkSessions.id, sessionId)).limit(1);
+  if (!session) return fail('Controle não encontrado.', 404, 'NOT_FOUND');
+  if (session.sessionDate !== draft.sessionDate) return fail('A data importada não corresponde ao controle existente.', 409, 'SESSION_DATE_MISMATCH');
+  if (draft.source !== 'IMPORT') return fail('Somente importações revisadas podem completar um controle existente.', 400, 'INVALID_MERGE_SOURCE');
+  if (draft.inputMode !== 'SEPARATE_MORNING_AFTERNOON') return fail('O controle importado deve registrar manhã e tarde.', 400, 'SEPARATE_VALUES_REQUIRED');
+
+  const activeIncomingIds = draft.measurements
+    .filter((row) => (row.status ?? 'CONFIRMED') !== 'EXCLUDED')
+    .map((row) => row.animalId)
+    .filter((id): id is string => Boolean(id));
+  if (new Set(activeIncomingIds).size !== activeIncomingIds.length) {
+    return fail('Cada animal deve aparecer uma única vez nos dados revisados.', 400, 'DUPLICATE_ANIMAL_MEASUREMENT');
+  }
+
+  const existing = await db.select({
+    id: milkMeasurements.id,
+    animalId: milkMeasurements.animalId,
+    status: milkMeasurements.status,
+  }).from(milkMeasurements).where(eq(milkMeasurements.milkSessionId, sessionId));
+  const activeExistingIds = new Set(existing.flatMap((row) => row.animalId && row.status !== 'EXCLUDED' ? [row.animalId] : []));
+  if (draft.measurements.some((row) => row.status !== 'EXCLUDED'
+    && row.mergeDecision
+    && row.mergeDecision !== 'ADD'
+    && (!row.animalId || !activeExistingIds.has(row.animalId)))) {
+    return fail('A medição existente mudou desde a revisão. Valide os dados novamente antes de salvar.', 409, 'MERGE_TARGET_CHANGED');
+  }
+  const plan = planMilkSessionMerge(existing, draft.measurements.map((row) => ({
+    animalId: row.animalId,
+    status: row.status ?? 'CONFIRMED',
+    mergeDecision: row.mergeDecision,
+  })));
+  if (plan.conflicts.length) {
+    return fail('Escolha se deseja manter a medição existente ou usar a nova em cada animal repetido.', 409, 'MEASUREMENT_MERGE_CONFLICT');
+  }
+
+  return db.transaction(async (tx) => {
+    const rowsToInsert: MeasurementDraft[] = [];
+    let replacedCount = 0;
+    let skippedCount = 0;
+    for (const action of plan.actions) {
+      if (action.kind === 'SKIP') {
+        skippedCount += 1;
+        continue;
+      }
+      if (action.kind === 'REPLACE') {
+        await tx.update(milkMeasurements)
+          .set({ status: 'EXCLUDED', updatedAt: new Date() })
+          .where(and(eq(milkMeasurements.id, action.existingMeasurementId), eq(milkMeasurements.milkSessionId, sessionId)));
+        replacedCount += 1;
+      }
+      rowsToInsert.push(draft.measurements[action.incomingIndex]);
+    }
+    if (rowsToInsert.length) {
+      await tx.insert(milkMeasurements).values(rowsToInsert.map((row) => storedMeasurement(sessionId, row)));
+    }
+    await tx.update(milkSessions).set({ updatedAt: new Date() }).where(eq(milkSessions.id, sessionId));
+    return {
+      ...session,
+      merged: true as const,
+      addedCount: rowsToInsert.length - replacedCount,
+      replacedCount,
+      skippedCount,
+    };
   });
 }
