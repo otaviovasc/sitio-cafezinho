@@ -8,27 +8,9 @@ import { matchAnimalByLabel } from '../../domain/nl/matching.js';
 import { parseWeightImport } from '../../domain/weight.js';
 import { fail } from '../http/api-error.js';
 import { decimalInput, optionalText, readJson, validate } from '../http/validation.js';
+import { createWeightSession, weightSessionCreateSchema } from '../services/weight-session.service.js';
 
 const weightStatusSchema = z.enum(['CONFIRMED', 'NEEDS_REVIEW', 'EXCLUDED']);
-const weightRowSchema = z.object({
-  animalId: z.string().uuid().nullable(),
-  rawAnimalLabel: z.string().trim().min(1).max(120),
-  rawValueText: z.string().trim().max(120).nullable().optional(),
-  weightKg: decimalInput.nullable(),
-  confidence: z.enum(['HIGH', 'MEDIUM', 'LOW']),
-  status: weightStatusSchema,
-  notes: optionalText,
-}).superRefine((value, context) => {
-  if (value.status === 'CONFIRMED' && !value.animalId) context.addIssue({ code: 'custom', path: ['animalId'], message: 'Vincule um animal antes de confirmar.' });
-  if (value.status === 'CONFIRMED' && value.weightKg === null) context.addIssue({ code: 'custom', path: ['weightKg'], message: 'Informe o peso antes de confirmar.' });
-});
-
-const weightSessionCreateSchema = z.object({
-  measuredOn: z.string().date(),
-  title: z.string().trim().max(160).nullable().optional(),
-  notes: optionalText,
-  measurements: z.array(weightRowSchema).min(1).max(300),
-});
 
 async function loadMatchingContext() {
   const db = getDb();
@@ -94,25 +76,7 @@ export const weightRoutes = new Hono()
   })
   .post('/weight-sessions', async (c) => {
     const body = validate(weightSessionCreateSchema, await readJson(c));
-    const confirmedIds = body.measurements.filter((row) => row.status === 'CONFIRMED').map((row) => row.animalId);
-    if (new Set(confirmedIds).size !== confirmedIds.length) return fail('Um animal aparece mais de uma vez entre as linhas confirmadas.', 409, 'DUPLICATE_ANIMAL');
-    const [existing] = await getDb().select({ id: weightSessions.id }).from(weightSessions).where(eq(weightSessions.measuredOn, body.measuredOn)).limit(1);
-    if (existing) return fail('Já existe uma sessão de pesagem nesta data.', 409, 'DUPLICATE_DATE');
-    const session = await getDb().transaction(async (tx) => {
-      const [created] = await tx.insert(weightSessions).values({ measuredOn: body.measuredOn, title: body.title || 'Pesagem do rebanho', source: 'IMPORT', notes: body.notes }).returning();
-      await tx.insert(animalWeights).values(body.measurements.map((row) => ({
-        animalId: row.animalId,
-        weightSessionId: created.id,
-        measuredAt: new Date(`${body.measuredOn}T12:00:00-03:00`),
-        rawAnimalLabel: row.rawAnimalLabel,
-        rawValueText: row.rawValueText,
-        weightKg: row.weightKg === null ? null : decimalString(row.weightKg),
-        confidence: row.confidence,
-        status: row.status,
-        notes: row.notes,
-      })));
-      return created;
-    });
+    const session = await createWeightSession(body);
     return c.json(session, 201);
   })
   .get('/weight-sessions/:id', async (c) => {

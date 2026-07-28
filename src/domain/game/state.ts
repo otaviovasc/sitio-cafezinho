@@ -9,8 +9,9 @@ import type { PlantingGrowthStage } from './planting.js';
 
 export type MapPoint = { lat: number; lng: number };
 
-export type MapZoneKind = 'PERIMETER' | 'PASTURE';
-export type MapInstallationKind = 'MANGUEIRA' | 'DEPOSITO' | 'GARAGEM' | 'CASA' | 'ESTACAO_ALIMENTACAO' | 'PLANTACAO';
+export type MapZoneKind = 'PERIMETER' | 'PASTURE' | 'PLOT';
+// ESTACAO_ALIMENTACAO é o Cocho (rótulo novo, valor do enum preservado).
+export type MapInstallationKind = 'MANGUEIRA' | 'DEPOSITO' | 'GARAGEM' | 'CASA' | 'ESTACAO_ALIMENTACAO' | 'BALANCA' | 'ENFERMARIA' | 'PORTEIRA';
 
 export type GameMapZone = {
   id: string;
@@ -64,10 +65,11 @@ export type GameToday = {
 
 export type GamePlantingInput = { name: string; quantity: number; unit: string };
 
-/** Ciclo ativo da Plantação: o progresso vem do relógio, nunca do banco. */
+/** Ciclo ativo num talhão (zona PLOT): o progresso vem do relógio, nunca do banco. */
 export type GamePlanting = {
   id: string;
-  installationId: string;
+  /** Zona PLOT onde o ciclo está correndo. */
+  zoneId: string;
   cropName: string;
   plantedAt: string;
   durationHours: number;
@@ -76,6 +78,19 @@ export type GamePlanting = {
   progress: number;
   stage: PlantingGrowthStage;
   inputs: GamePlantingInput[];
+};
+
+/**
+ * Marcador no mundo: pendência derivada do estado real (nada é armazenado).
+ * O `rule` é a regra que gerou o marcador — sempre visível no texto.
+ */
+export type GameMarker = {
+  kind: 'COLLECTION_MISSING' | 'PLANTING_READY' | 'PURCHASE_OVERDUE';
+  /** Onde o marcador mora: instalação (porteira, casa) ou zona (talhão). */
+  targetType: 'installation' | 'zone';
+  targetId: string;
+  label: string;
+  rule: string;
 };
 
 export type GameStreaks = {
@@ -91,8 +106,10 @@ export type GameState = {
   today: GameToday;
   economy: GameEconomy;
   streaks: GameStreaks;
-  /** Plantio em andamento na Plantação; null = talhão vazio ou sem instalação. */
-  planting: GamePlanting | null;
+  /** Plantios em andamento nos talhões (um por zona PLOT); vazio = sem ciclo. */
+  plantings: GamePlanting[];
+  /** Pendências derivadas exibidas no mundo (coleta, colheita, conta vencida). */
+  markers: GameMarker[];
 };
 
 /** Monta o resumo do rebanho a partir das linhas cruas (função pura, testável). */

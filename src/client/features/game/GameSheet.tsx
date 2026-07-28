@@ -8,7 +8,7 @@ import { X } from 'lucide-react';
  * Modal padrão com a pele do tabuleiro. Cada instalação monta o próprio
  * conteúdo por cima (GameActionSheet, GameGroupSheet, …).
  */
-export function GameSheet({ open, label, testid, sprite, title, subtitle, onClose, children }: {
+export function GameSheet({ open, label, testid, sprite, title, subtitle, badge, className, onClose, children }: {
   open: boolean;
   label: string;
   testid: string;
@@ -16,6 +16,10 @@ export function GameSheet({ open, label, testid, sprite, title, subtitle, onClos
   sprite: ReactNode;
   title: string;
   subtitle?: string;
+  /** Slot opcional de badge (ex.: StatusBadge de situação), abaixo do subtítulo. */
+  badge?: ReactNode;
+  /** Classe extra na moldura (ex.: .game-notebook, folha mais larga/alta). */
+  className?: string;
   onClose: () => void;
   children: ReactNode;
 }) {
@@ -58,12 +62,13 @@ export function GameSheet({ open, label, testid, sprite, title, subtitle, onClos
 
   return createPortal(
     <div className="game-sheet-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <div ref={panelRef} className="game-sheet" role="dialog" aria-modal="true" aria-label={label} data-testid={testid}>
+      <div ref={panelRef} className={`game-sheet${className ? ` ${className}` : ''}`} role="dialog" aria-modal="true" aria-label={label} data-testid={testid}>
         <div className="game-sheet-header">
           <svg viewBox="0 0 64 64" width="52" height="52" aria-hidden>{sprite}</svg>
           <div className="min-w-0">
             <h2>{title}</h2>
             {subtitle && <p>{subtitle}</p>}
+            {badge && <div className="mt-1.5">{badge}</div>}
           </div>
           <button type="button" className="game-sheet-close" aria-label="Fechar" onClick={onClose}><X size={20} aria-hidden /></button>
         </div>

@@ -52,7 +52,11 @@ const ACTIONS = `Tipos de ação suportados:
 8) "feeding_event" — trato dado ao rebanho (alimentação consumida, não comprada).
    Campos: type, date, contextLabel (onde foi dado, como falado: "na ordenha", "na estação", "no cocho", "no pasto" ou null), scopeLabel (rótulo do lote como falado ou null), lines[] com { itemLabel, quantity, unitLabel, rawValueText } — uma linha por alimento citado —, confidence, notes.
 
-9) "unknown" — a fala não corresponde a nenhuma ação acima. Campos: type, reason.`;
+9) "weight_session" — pesagem do rebanho (uma linha por animal pesado).
+   Campos: type, date, measurements[] com { animalLabel, weightKg (número em kg, ou null se o valor não foi dito ou está ilegível), rawValueText, confidence, notes }.
+   "Mimosa 420, Estrela 385" são duas linhas. Nunca estime um peso; ilegível ou ausente = null.
+
+10) "unknown" — a fala não corresponde a nenhuma ação acima. Campos: type, reason.`;
 
 const EXAMPLES = `Exemplos:
 
@@ -81,6 +85,14 @@ JSON: { "intents": [
     { "itemLabel": "silagem", "quantity": 3, "unitLabel": "toneladas", "rawValueText": "3 toneladas de silagem" },
     { "itemLabel": "mineral", "quantity": 2, "unitLabel": "quilos", "rawValueText": "2 quilos de mineral" }
   ], "confidence": "HIGH", "notes": null }
+] }
+
+Fala: "Pesagem de hoje: Mimosa 420, Estrela 385 e meio."
+JSON: { "intents": [
+  { "type": "weight_session", "date": { "relative": "hoje", "iso": null, "rawText": "hoje" }, "measurements": [
+    { "animalLabel": "Mimosa", "weightKg": 420, "rawValueText": "420", "confidence": "HIGH", "notes": null },
+    { "animalLabel": "Estrela", "weightKg": 385.5, "rawValueText": "385 e meio", "confidence": "HIGH", "notes": null }
+  ] }
 ] }`;
 
 export type InterpretContext = {

@@ -2,7 +2,7 @@ import { and, desc, eq, inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb } from '../../db/client.js';
-import { feedItems, mapInstallations, plantingInputs, plantings, type Planting, type PlantingInput } from '../../db/schema.js';
+import { feedItems, mapZones, plantingInputs, plantings, type Planting, type PlantingInput } from '../../db/schema.js';
 import { feedUnitSuffix, linesBeyondBalance } from '../../domain/feeding.js';
 import { growthProgress, growthStage, plantingReadyAt } from '../../domain/game/planting.js';
 import { GUARDRAILS } from '../../domain/guardrails.js';
@@ -11,8 +11,9 @@ import { loadFeedInventory } from '../services/feed-inventory.js';
 import { optionalText, readJson, validate } from '../http/validation.js';
 
 /**
- * Plantação: plantio com insumos DO DEPÓSITO → crescimento por relógio →
- * colheita. Os insumos debitam o saldo derivado do inventário (como um trato);
+ * Talhões (zonas PLOT do mapa): plantio com insumos DO DEPÓSITO → crescimento
+ * por relógio → colheita. Cada talhão tem seu próprio ciclo (um GROWING por
+ * zona). Os insumos debitam o saldo derivado do inventário (como um trato);
  * uso além do saldo avisa (409 BEYOND_BALANCE) e pede confirmação, sem
  * bloquear. O servidor é quem decide "pronto" (growthProgress ≥ 1) — o cliente
  * só desenha. A colheita devolve o ciclo completo com os insumos gastos, para
@@ -25,6 +26,7 @@ const inputSchema = z.object({
 });
 
 const plantingSchema = z.object({
+  zoneId: z.string().uuid(),
   cropName: z.string().trim().min(1, 'Informe o que foi plantado.').max(120),
   durationHours: z.number().positive('Informe uma duração maior que zero.').max(24 * 366, 'Duração máxima: 1 ano.'),
   inputs: z.array(inputSchema).min(1, 'Adicione ao menos um insumo do depósito (ex.: sementes).').max(20),
@@ -52,7 +54,7 @@ function serialize(row: Planting, inputs: PlantingInput[], now: Date) {
   const progress = row.status === 'GROWING' ? growthProgress(row.plantedAt, durationHours, now) : 1;
   return {
     id: row.id,
-    installationId: row.installationId,
+    zoneId: row.zoneId,
     cropName: row.cropName,
     plantedAt: row.plantedAt.toISOString(),
     durationHours,
@@ -95,12 +97,12 @@ export const plantingRoutes = new Hono()
   .post('/plantings', async (c) => {
     const body = validate(plantingSchema, await readJson(c));
     const db = getDb();
-    const [installation] = await db.select({ id: mapInstallations.id }).from(mapInstallations)
-      .where(and(eq(mapInstallations.kind, 'PLANTACAO'), eq(mapInstallations.active, true))).limit(1);
-    if (!installation) return fail('Posicione a Plantação no mapa antes de plantar.', 409, 'PLANTACAO_REQUIRED');
+    const [zone] = await db.select({ id: mapZones.id, kind: mapZones.kind }).from(mapZones)
+      .where(and(eq(mapZones.id, body.zoneId), eq(mapZones.active, true))).limit(1);
+    if (!zone || zone.kind !== 'PLOT') return fail('Talhão não encontrado. Desenhe o talhão no editor do mapa antes de plantar.', 404, 'PLOT_NOT_FOUND');
     const [growing] = await db.select({ id: plantings.id }).from(plantings)
-      .where(and(eq(plantings.installationId, installation.id), eq(plantings.status, 'GROWING'))).limit(1);
-    if (growing) return fail('Já existe um plantio crescendo no talhão. Colha ou cancele antes de plantar de novo.', 409, 'PLANTING_EXISTS');
+      .where(and(eq(plantings.zoneId, zone.id), eq(plantings.status, 'GROWING'))).limit(1);
+    if (growing) return fail('Já existe um plantio crescendo neste talhão. Colha ou cancele antes de plantar de novo.', 409, 'PLANTING_EXISTS');
 
     const itemIds = body.inputs.map((input) => input.feedItemId);
     const knownItems = await db.select().from(feedItems).where(inArray(feedItems.id, itemIds));
@@ -126,7 +128,7 @@ export const plantingRoutes = new Hono()
 
     const created = await db.transaction(async (tx) => {
       const [planting] = await tx.insert(plantings).values({
-        installationId: installation.id,
+        zoneId: zone.id,
         cropName: body.cropName,
         durationHours: body.durationHours.toFixed(3),
         notes: body.notes,

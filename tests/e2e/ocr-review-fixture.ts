@@ -34,10 +34,18 @@ const capture = {
 };
 
 export async function mockOcrFeedPurchaseReview(page: Page): Promise<() => Promise<void>> {
-  const matcher = (url: URL) => url.pathname === '/api/captures';
-  const handler = async (route: Route) => {
+  const listMatcher = (url: URL) => url.pathname === '/api/captures';
+  const detailMatcher = (url: URL) => url.pathname === `/api/captures/${capture.id}`;
+  const listHandler = async (route: Route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([capture]) });
   };
-  await page.route(matcher, handler);
-  return () => page.unroute(matcher, handler);
+  const detailHandler = async (route: Route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(capture) });
+  };
+  await page.route(listMatcher, listHandler);
+  await page.route(detailMatcher, detailHandler);
+  return async () => {
+    await page.unroute(listMatcher, listHandler);
+    await page.unroute(detailMatcher, detailHandler);
+  };
 }

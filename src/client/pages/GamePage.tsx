@@ -1,23 +1,35 @@
-import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Pencil, ShoppingBag, Volume2, VolumeX } from 'lucide-react';
-import { growthProgress, growthStage } from '../../domain/game/planting';
-import { GameActionSheet, type SheetResult } from '../features/game/GameActionSheet';
+import { growthProgress } from '../../domain/game/planting';
+import type { GameHerdGroup, GameMapInstallation, GameMapZone, GameMarker, GameState } from '../../domain/game/state';
+import { GameActionSheet, type MangueiraView, type SheetResult } from '../features/game/GameActionSheet';
+import { GameBalancaSheet } from '../features/game/GameBalancaSheet';
+import { GameCasaSheet } from '../features/game/GameCasaSheet';
 import { GameDepositoSheet } from '../features/game/GameDepositoSheet';
+import { GameEnfermariaSheet } from '../features/game/GameEnfermariaSheet';
 import { GameEstacaoSheet } from '../features/game/GameEstacaoSheet';
 import { GameGroupSheet } from '../features/game/GameGroupSheet';
 import { GameHud } from '../features/game/GameHud';
 import { GameLojaSheet } from '../features/game/GameLojaSheet';
 import { GameMap } from '../features/game/GameMap';
+import { GameNotebook, type NotebookSheetTarget, type NotebookTab } from '../features/game/GameNotebook';
+import { GamePastureSheet } from '../features/game/GamePastureSheet';
 import { GamePlantacaoSheet } from '../features/game/GamePlantacaoSheet';
 import { GameShell } from '../features/game/GameShell';
+import { INSTALLATION_REGISTRY, type InstallationSheetKey } from '../features/game/installations.registry';
 import { InstallationLayer, type TruckState } from '../features/game/layers/InstallationLayer';
+import { MarkerLayer } from '../features/game/layers/MarkerLayer';
+import { reviewDestination, type ReviewableAction, type ReviewOutcome } from '../features/game/review';
 import { gameTokens } from '../features/game/tokens';
 import { useGameAudio } from '../features/game/useGameAudio';
 import { useToast } from '../components/feedback-context';
 import { ErrorState } from '../components/ui';
 import { useResource } from '../hooks/useResource';
-import type { GameHerdGroup, GameState } from '../../domain/game/state';
+import { api } from '../lib/api';
+
+/** Slugs válidos do parâmetro `?caderno=` (espelha as abas do GameNotebook). */
+const NOTEBOOK_TABS: NotebookTab[] = ['hoje', 'rebanho', 'producao', 'estoque', 'financeiro', 'saude', 'pendencias'];
 
 /** Convite ilustrado do estado vazio: uma cerquinha e o chamado para traçar o mapa. */
 function EmptyInvite() {
@@ -46,57 +58,198 @@ function EmptyInvite() {
 
 export function GamePage() {
   const { data, error, loading, reload } = useResource<GameState>('/api/game/state');
+  // Fila de revisão: mesma origem da aba Pendências do caderno (só leitura).
+  const capturesResource = useResource<Array<{ id: string; actions: Array<{ id: string; status: string }> }>>('/api/captures');
+  const pendingCount = (capturesResource.data ?? []).reduce((sum, capture) => sum + capture.actions.filter((action) => action.status === 'NEEDS_REVIEW').length, 0);
   const toast = useToast();
   const audio = useGameAudio();
-  const [openInstallation, setOpenInstallation] = useState<'MANGUEIRA' | 'DEPOSITO' | 'ESTACAO_ALIMENTACAO' | 'PLANTACAO' | 'LOJA' | null>(null);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [openSheet, setOpenSheet] = useState<InstallationSheetKey | null>(null);
+  // Sub-view inicial da folha da mangueira (pedida pela aba Produção do caderno).
+  const [mangueiraView, setMangueiraView] = useState<MangueiraView | undefined>(undefined);
+  const [selectedPlot, setSelectedPlot] = useState<GameMapZone | null>(null);
+  const [notebook, setNotebook] = useState<{ tab?: NotebookTab; create?: boolean } | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<GameHerdGroup | null>(null);
+  const [selectedPasture, setSelectedPasture] = useState<GameMapZone | null>(null);
   const [truckState, setTruckState] = useState<TruckState>('idle');
-  // Relógio do talhão: re-deriva o estágio periodicamente para a cultura
-  // crescer na tela sem recarregar o estado.
+  // Revisão pós-IA contextual: a ação proposta aberta na folha do fato.
+  const [review, setReview] = useState<{ action: ReviewableAction } | null>(null);
+  // Relógio dos talhões: re-deriva os estágios periodicamente para as culturas
+  // crescerem na tela sem recarregar o estado.
   const [plantingClock, setPlantingClock] = useState(() => Date.now());
   const hasMap = Boolean(data && data.map.zones.some((zone) => zone.kind === 'PERIMETER'));
 
-  const planting = data?.planting ?? null;
+  const plantings = useMemo(() => data?.plantings ?? [], [data]);
   useEffect(() => {
-    if (!planting || growthProgress(planting.plantedAt, planting.durationHours, new Date(plantingClock)) >= 1) return;
+    const anyGrowing = plantings.some((planting) => growthProgress(planting.plantedAt, planting.durationHours, new Date(plantingClock)) < 1);
+    if (!anyGrowing) return;
     const timer = window.setInterval(() => setPlantingClock(Date.now()), 5000);
     return () => window.clearInterval(timer);
-  }, [planting, plantingClock]);
-  const plantingStage = planting
-    ? growthStage(growthProgress(planting.plantedAt, planting.durationHours, new Date(plantingClock)))
-    : 'EMPTY';
+  }, [plantings, plantingClock]);
+
+  /**
+   * Abre uma ação proposta na folha onde o fato vai viver (modo revisão).
+   * Busca a captura completa para ter o payload; sem destino claro, cai no
+   * caderno na aba Pendências (fallback de capturas ambíguas/múltiplas).
+   */
+  async function openReview(captureId: string, actionId?: string) {
+    try {
+      const capture = await api<{ id: string; actions: ReviewableAction[] }>(`/api/captures/${captureId}`);
+      const pending = capture.actions.filter((action) => action.status === 'NEEDS_REVIEW');
+      const action = actionId ? pending.find((item) => item.id === actionId) : pending[0];
+      const target = action ? reviewDestination(action) : null;
+      if (!action || !target) {
+        setNotebook({ tab: 'pendencias' });
+        return;
+      }
+      setNotebook(null);
+      setSelectedPlot(null);
+      setSelectedGroup(null);
+      setSelectedPasture(null);
+      setReview({ action });
+      setOpenSheet(target);
+    } catch {
+      toast('Não foi possível abrir a revisão desta captura.');
+      setNotebook({ tab: 'pendencias' });
+    }
+  }
+
+  // Chegadas externas: assistente (capture.tsx) navega para cá com o estado da
+  // revisão; o fallback abre o caderno na aba Pendências.
+  useEffect(() => {
+    const state = location.state as { reviewCaptureId?: string; reviewActionId?: string; openNotebook?: NotebookTab } | null;
+    if (!state) return;
+    navigate('.', { replace: true, state: null });
+    if (state.reviewCaptureId) void openReview(state.reviewCaptureId, state.reviewActionId);
+    else if (state.openNotebook) setNotebook({ tab: state.openNotebook });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
+
+  // Entrada por link (menu "Caderno", redirect de /revisar): `/?caderno=pendencias`
+  // abre o caderno na aba pedida e limpa o parâmetro para não reabrir sozinho.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const caderno = searchParams.get('caderno');
+    if (!caderno) return;
+    setSearchParams({}, { replace: true });
+    const tab = NOTEBOOK_TABS.find((slug) => slug === caderno);
+    setNotebook({ tab });
+  }, [searchParams, setSearchParams]);
+
+  function handleReviewDone(outcome: ReviewOutcome) {
+    setReview(null);
+    setOpenSheet(null);
+    toast(outcome === 'committed' ? 'Registro confirmado' : 'Captura descartada');
+    if (outcome === 'committed') audio.play('success');
+    void reload(false);
+    void capturesResource.reload(false);
+  }
+
+  /** Passa a revisão só para a folha de destino da ação aberta. */
+  function reviewFor(key: InstallationSheetKey) {
+    return review && reviewDestination(review.action) === key
+      ? { action: review.action, onDone: handleReviewDone }
+      : undefined;
+  }
 
   function handleRegistered(result: SheetResult) {
-    setOpenInstallation(null);
-    toast(result === 'collection' ? 'Coleta registrada' : result === 'milkingFeed' ? 'Trato da ordenha registrado' : 'Produção registrada');
+    setOpenSheet(null);
+    toast(result === 'collection' ? 'Coleta registrada' : result === 'milkingFeed' ? 'Trato da ordenha registrado' : result === 'individual' ? 'Controle individual registrado' : 'Produção registrada');
     audio.play(result === 'collection' ? 'truck' : result === 'milkingFeed' ? 'feed' : 'pour');
     if (result === 'collection') setTruckState('driving');
     void reload(false);
   }
+
+  function openLoja() {
+    setSelectedPlot(null);
+    setOpenSheet('loja');
+  }
+
+  function handleSelectInstallation(installation: GameMapInstallation) {
+    const entry = INSTALLATION_REGISTRY[installation.kind];
+    if (!entry?.actionable) return;
+    audio.play('click');
+    setOpenSheet(entry.sheet);
+  }
+
+  function handleSelectPlot(zone: GameMapZone) {
+    audio.play('click');
+    setOpenSheet(null);
+    setSelectedPlot(zone);
+  }
+
+  /** Toque na área vazia do pasto: abre a folha do pasto (o rebanho abre a do lote). */
+  function handleSelectPasture(zone: GameMapZone) {
+    audio.play('click');
+    setSelectedGroup(null);
+    setSelectedPasture(zone);
+  }
+
+  /** Tocar no marcador abre a folha correspondente à pendência. */
+  function handleSelectMarker(marker: GameMarker) {
+    audio.play('click');
+    if (marker.kind === 'COLLECTION_MISSING') setOpenSheet('mangueira');
+    else if (marker.kind === 'PURCHASE_OVERDUE') setOpenSheet('casa');
+    else {
+      const zone = data?.map.zones.find((item) => item.id === marker.targetId);
+      if (zone) setSelectedPlot(zone);
+    }
+  }
+
+  function handleNotebookTarget(target: NotebookSheetTarget) {
+    audio.play('click');
+    setNotebook(null);
+    if (target === 'MANGUEIRA') setOpenSheet('mangueira');
+    else if (target === 'MANGUEIRA_PRODUCAO' || target === 'MANGUEIRA_COLETA' || target === 'MANGUEIRA_INDIVIDUAL') {
+      setMangueiraView(target === 'MANGUEIRA_PRODUCAO' ? 'dailyTotal' : target === 'MANGUEIRA_COLETA' ? 'collection' : 'individual');
+      setOpenSheet('mangueira');
+    }
+    else if (target === 'ESTACAO_ALIMENTACAO') setOpenSheet('cocho');
+    else if (target === 'LOJA') setOpenSheet('loja');
+    else if (target === 'CASA') setOpenSheet('casa');
+    else if (target === 'ENFERMARIA') setOpenSheet('enfermaria');
+    else {
+      const plot = data?.map.zones.find((zone) => zone.kind === 'PLOT');
+      if (plot) setSelectedPlot(plot);
+      else toast('Desenhe um talhão no editor do mapa para plantar.');
+    }
+  }
+
+  const plotPlanting = selectedPlot ? plantings.find((planting) => planting.zoneId === selectedPlot.id) ?? null : null;
 
   return <GameShell>
     {loading && <div className="game-center" role="status">Preparando o sítio…</div>}
     {!loading && error && <div className="game-center"><ErrorState message={error} retry={() => void reload()} /></div>}
     {!loading && !error && data && !hasMap && <EmptyInvite />}
     {!loading && !error && data && hasMap && <>
-      <GameMap state={data} onSelectGroup={(group) => { audio.play('moo'); setSelectedGroup(group); }}>
-        {(projection) => <InstallationLayer
-          installations={data.map.installations}
-          projection={projection}
-          tankLevel={data.today.tankLevel}
-          truckState={truckState}
-          plantingStage={plantingStage}
-          onTruckDone={() => setTruckState('idle')}
-          onSelect={(installation) => {
-            if (installation.kind === 'MANGUEIRA' || installation.kind === 'DEPOSITO' || installation.kind === 'ESTACAO_ALIMENTACAO' || installation.kind === 'PLANTACAO') {
-              audio.play('click');
-              setOpenInstallation(installation.kind);
-            }
-          }}
-        />}
+      <GameMap state={data} onSelectGroup={(group) => { audio.play('moo'); setSelectedPasture(null); setSelectedGroup(group); }} onSelectPlot={handleSelectPlot} onSelectPasture={handleSelectPasture}>
+        {(projection) => <>
+          <InstallationLayer
+            installations={data.map.installations}
+            projection={projection}
+            tankLevel={data.today.tankLevel}
+            truckState={truckState}
+            onTruckDone={() => setTruckState('idle')}
+            onSelect={handleSelectInstallation}
+          />
+          <MarkerLayer
+            markers={data.markers}
+            zones={data.map.zones}
+            installations={data.map.installations}
+            projection={projection}
+            onSelect={handleSelectMarker}
+          />
+        </>}
       </GameMap>
       <div className="game-hud">
-        <GameHud state={data} />
+        <GameHud
+          state={data}
+          pendingCount={pendingCount}
+          onOpenNotebook={() => { audio.play('click'); setNotebook({}); }}
+          onOpenPending={() => { audio.play('click'); setNotebook({ tab: 'pendencias' }); }}
+          onOpenCreate={() => { audio.play('click'); setNotebook({ create: true }); }}
+        />
         {data.unassignedCount > 0 && <div className="game-hud-chip game-hud-top-left" data-testid="game-corral">
           <small>Curral</small>{data.unassignedCount} fora do mapa
         </div>}
@@ -113,29 +266,60 @@ export function GamePage() {
             {audio.muted ? <VolumeX size={18} aria-hidden /> : <Volume2 size={18} aria-hidden />}
           </button>
         </div>
-        <button type="button" className="game-hud-chip game-hud-bottom-left-raised-2" data-testid="game-loja-chip" aria-label="Abrir a Loja do sítio" onClick={() => { audio.play('click'); setOpenInstallation('LOJA'); }}>
+        <button type="button" className="game-hud-chip game-hud-bottom-left-raised-3" data-testid="game-loja-chip" aria-label="Abrir a Loja do sítio" onClick={() => { audio.play('click'); setOpenSheet('loja'); }}>
           <ShoppingBag size={15} aria-hidden />Loja
         </button>
         <Link className="game-hud-chip game-hud-bottom-left-raised" to="/jogo/mapa/editor" aria-label="Editar o mapa do sítio">
           <Pencil size={15} aria-hidden />Mapa
         </Link>
       </div>
-      <GameActionSheet open={openInstallation === 'MANGUEIRA'} state={data} onClose={() => setOpenInstallation(null)} onRegistered={handleRegistered} />
-      {openInstallation === 'DEPOSITO' && <GameDepositoSheet open onClose={() => setOpenInstallation(null)} onOpenLoja={() => setOpenInstallation('LOJA')} />}
-      {openInstallation === 'LOJA' && <GameLojaSheet
+    </>}
+    {/* Folhas: montadas com o estado carregado, independente de o mapa existir —
+        a revisão pós-IA também abre a folha do fato sem perímetro traçado. */}
+    {!loading && !error && data && <>
+      <GameActionSheet open={openSheet === 'mangueira'} state={data} review={reviewFor('mangueira')} initialView={mangueiraView} onClose={() => { setOpenSheet(null); setReview(null); setMangueiraView(undefined); }} onRegistered={handleRegistered} />
+      {openSheet === 'deposito' && <GameDepositoSheet open review={reviewFor('deposito')} onClose={() => { setOpenSheet(null); setReview(null); }} onOpenLoja={() => setOpenSheet('loja')} />}
+      {openSheet === 'loja' && <GameLojaSheet
         open
-        onClose={() => setOpenInstallation(null)}
+        onClose={() => setOpenSheet(null)}
         onPurchased={(item) => { toast(`Comprado: ${item.name}`); audio.play('buy'); void reload(false); }}
       />}
-      {openInstallation === 'ESTACAO_ALIMENTACAO' && <GameEstacaoSheet open onClose={() => setOpenInstallation(null)} onRegistered={() => { setOpenInstallation(null); toast('Trato registrado'); audio.play('feed'); void reload(false); }} />}
-      {openInstallation === 'PLANTACAO' && <GamePlantacaoSheet
+      {openSheet === 'lojaCombustivel' && <GameLojaSheet
         open
-        planting={planting}
-        onClose={() => setOpenInstallation(null)}
-        onPlanted={() => { toast('Plantio registrado'); audio.play('plant'); setOpenInstallation(null); void reload(false); }}
+        initialCategory="combustivel"
+        onClose={() => setOpenSheet(null)}
+        onPurchased={(item) => { toast(`Comprado: ${item.name}`); audio.play('buy'); void reload(false); }}
+      />}
+      {openSheet === 'cocho' && <GameEstacaoSheet open review={reviewFor('cocho')} onClose={() => { setOpenSheet(null); setReview(null); }} onRegistered={() => { setOpenSheet(null); toast('Trato registrado'); audio.play('feed'); void reload(false); }} />}
+      {openSheet === 'casa' && <GameCasaSheet
+        open
+        review={reviewFor('casa')}
+        onClose={() => { setOpenSheet(null); setReview(null); }}
+        onChanged={() => void reload(false)}
+      />}
+      {openSheet === 'balanca' && <GameBalancaSheet
+        open
+        today={data.today.date}
+        review={reviewFor('balanca')}
+        onClose={() => { setOpenSheet(null); setReview(null); }}
+        onRegistered={() => { setOpenSheet(null); void reload(false); }}
+      />}
+      {openSheet === 'enfermaria' && <GameEnfermariaSheet
+        open
+        review={reviewFor('enfermaria')}
+        onClose={() => { setOpenSheet(null); setReview(null); }}
+        onChanged={() => void reload(false)}
+      />}
+      {selectedPlot && <GamePlantacaoSheet
+        open
+        zoneId={selectedPlot.id}
+        zoneName={selectedPlot.name}
+        planting={plotPlanting}
+        onClose={() => setSelectedPlot(null)}
+        onPlanted={() => { toast('Plantio registrado'); audio.play('plant'); setSelectedPlot(null); void reload(false); }}
         onHarvested={() => { audio.play('harvest'); void reload(false); }}
-        onCancelled={() => { toast('Plantio cancelado'); audio.play('click'); setOpenInstallation(null); void reload(false); }}
-        onOpenLoja={() => setOpenInstallation('LOJA')}
+        onCancelled={() => { toast('Plantio cancelado'); audio.play('click'); setSelectedPlot(null); void reload(false); }}
+        onOpenLoja={openLoja}
       />}
       {selectedGroup && <GameGroupSheet
         group={selectedGroup}
@@ -143,6 +327,21 @@ export function GamePage() {
         onClose={() => setSelectedGroup(null)}
         onChanged={() => void reload(false)}
       />}
+      {selectedPasture && <GamePastureSheet
+        zone={selectedPasture}
+        today={data.today.date}
+        onClose={() => setSelectedPasture(null)}
+        onChanged={() => void reload(false)}
+      />}
+      <GameNotebook
+        open={notebook !== null}
+        initialTab={notebook?.tab}
+        startInCreate={notebook?.create}
+        onClose={() => setNotebook(null)}
+        onOpenInstallation={handleNotebookTarget}
+        onOpenReview={(captureId, actionId) => void openReview(captureId, actionId)}
+        onChanged={() => { void reload(false); void capturesResource.reload(false); }}
+      />
     </>}
   </GameShell>;
 }

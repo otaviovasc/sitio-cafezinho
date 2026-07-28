@@ -86,7 +86,7 @@ test.describe('jogo — editor de mapa', () => {
     expect(saved.zones).toHaveLength(2);
     expect(saved.installations).toHaveLength(1);
 
-    // O cadastro do pasto é a fonte do rótulo: renomear em /pastos atualiza
+    // O cadastro do pasto é a fonte do rótulo: renomear pelo endpoint atualiza
     // tanto a lista do editor quanto a marca exibida no tabuleiro.
     const renamedPasture = `Shifume ${Date.now()}`;
     await page.evaluate(async ({ id, name }) => {
@@ -119,19 +119,18 @@ test.describe('jogo — editor de mapa', () => {
     expect(duplicateStatus.code).toBe('PERIMETER_EXISTS');
   });
 
-  test('deep-link de /pastos vincula o pasto ao desenho e grava a área medida', async ({ page }) => {
+  test('deep-link de pasto vincula o cadastro ao desenho e grava a área medida', async ({ page }) => {
     await login(page);
     await clearGameMap(page);
 
-    // Pasto real sem desenho: a página /pastos oferece "Desenhar no mapa".
+    // Pasto real sem desenho: o editor abre pelo deep-link já no traçado dele
+    // (a página /pastos virou o jogo; o desenho continua vinculando o cadastro).
     const pastureName = `Pasto mapa ${Date.now()}`;
     const pastureId = await page.evaluate(async (name) => {
       const response = await fetch('/api/pastures', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) });
       return ((await response.json()) as { id: string }).id;
     }, pastureName);
-    await page.goto('/pastos');
-    await page.getByRole('button', { name: `Desenhar ${pastureName} no mapa` }).click();
-    await expect(page).toHaveURL(new RegExp(`/jogo/mapa/editor\\?pasto=${pastureId}`));
+    await page.goto(`/jogo/mapa/editor?pasto=${pastureId}`);
 
     // O traçado de pasto só abre depois do perímetro (contenção).
     await page.getByLabel('Coordenadas ou link do Maps').fill('-21.122000, -45.648000');
@@ -158,15 +157,13 @@ test.describe('jogo — editor de mapa', () => {
     await page.getByRole('button', { name: 'Salvar pasto' }).click();
     await expect(page.getByText(`${pastureName} — ${pastureName}`)).toBeVisible();
 
-    // O traçado gravou a área (ha) no pasto real e /pastos não oferece mais o desenho.
+    // O traçado gravou a área (ha) no pasto real.
     const saved = await page.evaluate(async (id) => {
       const pastures = await fetch('/api/pastures').then((response) => response.json()) as Array<{ id: string; areaHa: string | null }>;
       return pastures.find((pasture) => pasture.id === id)?.areaHa ?? null;
     }, pastureId);
     expect(saved).not.toBeNull();
     expect(Number(saved)).toBeGreaterThan(0);
-    await page.goto('/pastos');
-    await expect(page.getByRole('button', { name: `Desenhar ${pastureName} no mapa` })).toHaveCount(0);
   });
 
   test('desenho sem vínculo cria o pasto real já com a área medida', async ({ page }) => {
@@ -553,9 +550,9 @@ test.describe('jogo — alimentação (Depósito e Estação)', () => {
     await page.getByTestId('game-installation-deposito').click();
     await expect(page.getByTestId('game-deposito-sheet').getByTestId(`feed-inventory-balance-${silageId}`)).toContainText('2.500 kg');
 
-    // Garagem é decorativa: sprite presente, sem papel de botão.
+    // Garagem virou acionável na fase 2: abre a Loja na prateleira de combustível.
     const garagemRole = await page.getByTestId('game-installation-garagem').getAttribute('role');
-    expect(garagemRole).toBe('img');
+    expect(garagemRole).toBe('button');
   });
 });
 
@@ -584,7 +581,7 @@ test.describe('jogo — trato da ordenha e tarefa do Hoje', () => {
       }
     });
 
-    await page.goto('/');
+    await page.goto('/?caderno=hoje');
     await expect(page.getByTestId('daily-task-feeding')).toContainText('Pendente');
 
     // Trato da ordenha pela folha da mangueira, com lote leiteiro selecionado.
@@ -609,7 +606,7 @@ test.describe('jogo — trato da ordenha e tarefa do Hoje', () => {
     expect(saved?.items[0]?.quantity).toBe('100.000');
 
     // A tarefa do Hoje vira "Feito".
-    await page.goto('/');
+    await page.goto('/?caderno=hoje');
     await expect(page.getByTestId('daily-task-feeding')).toContainText('Feito');
   });
 });

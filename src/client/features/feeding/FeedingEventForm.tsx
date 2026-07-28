@@ -7,29 +7,42 @@ import { useSubmit } from '../../hooks/useSubmit';
 import { api, ApiError, json } from '../../lib/api';
 import { today } from '../../lib/labels';
 import type { HerdGroup } from '../animals/GroupPicker';
+import type { ReviewSubmit } from '../game/review';
 import { FeedLinesEditor } from './FeedLinesEditor';
 import { emptyFeedLine, parsedLineQuantity, type FeedLineDraft } from './lines';
 import type { FeedInventoryRow } from './types';
 
 export type FeedingEventSaved = { id: string; date: string; context: FeedingContext };
 
+/** Pré-preenchimento do modo revisão (payload da ação proposta de trato). */
+export type FeedingEventReviewInitial = {
+  date: string;
+  herdGroupId: string;
+  notes: string;
+  lines: FeedLineDraft[];
+};
+
 /**
  * Registro de trato (feeding_event + linhas). O contexto vem de quem chama
  * (MILKING pela mangueira, STATION pela estação, PASTURE avulso). Consumo além
  * do saldo derivado NÃO bloqueia: o servidor devolve BEYOND_BALANCE e o
  * usuário confirma explicitamente (padrão confirmPossibleDuplicate).
+ * Com `review`, o submit confirma pela pipeline de revisão (commit da ação
+ * proposta) em vez de gravar direto — a revisão humana já é a confirmação.
  */
-export function FeedingEventForm({ context, onSaved }: {
+export function FeedingEventForm({ context, initial, review, onSaved }: {
   context: FeedingContext;
+  initial?: FeedingEventReviewInitial;
+  review?: ReviewSubmit;
   onSaved: (event: FeedingEventSaved) => void;
 }) {
   const { busy, error, run, setError } = useSubmit();
   const { data: inventory } = useResource<FeedInventoryRow[]>('/api/feed-inventory');
   const { data: groups } = useResource<HerdGroup[]>('/api/herd-groups');
-  const [date, setDate] = useState(today());
-  const [herdGroupId, setHerdGroupId] = useState('');
-  const [notes, setNotes] = useState('');
-  const [lines, setLines] = useState<FeedLineDraft[]>([emptyFeedLine()]);
+  const [date, setDate] = useState(initial?.date ?? today());
+  const [herdGroupId, setHerdGroupId] = useState(initial?.herdGroupId ?? '');
+  const [notes, setNotes] = useState(initial?.notes ?? '');
+  const [lines, setLines] = useState<FeedLineDraft[]>(initial?.lines.length ? initial.lines : [emptyFeedLine()]);
   const [formError, setFormError] = useState('');
   const [beyondBalance, setBeyondBalance] = useState(false);
 
@@ -54,14 +67,19 @@ export function FeedingEventForm({ context, onSaved }: {
     if (!items) return;
     setBeyondBalance(false);
     try {
-      const saved = await api<FeedingEventSaved>('/api/feeding-events', json('POST', {
+      const body = {
         date,
         context,
         herdGroupId: herdGroupId || null,
         notes: notes.trim() || null,
         items,
         confirmBeyondBalance: confirm,
-      }));
+      };
+      if (review) {
+        await review.onCommit(body);
+        return;
+      }
+      const saved = await api<FeedingEventSaved>('/api/feeding-events', json('POST', body));
       onSaved(saved);
     } catch (cause) {
       if (cause instanceof ApiError && cause.code === 'BEYOND_BALANCE') setBeyondBalance(true);
@@ -92,7 +110,7 @@ export function FeedingEventForm({ context, onSaved }: {
     <FeedLinesEditor lines={lines} inventory={inventory ?? []} onChange={(next) => { setLines(next); setBeyondBalance(false); }} />
     <Field label="Observação (opcional)"><Textarea className="min-h-12" value={notes} onChange={(event) => setNotes(event.target.value)} /></Field>
     <SubmitBar
-      label="Registrar trato"
+      label={review?.label ?? 'Registrar trato'}
       busy={busy}
       secondary={beyondBalance && <Button variant="secondary" type="button" disabled={busy} data-testid="feeding-confirm-beyond" onClick={() => { setError(''); void run(() => persist(true)); }}>O estoque está incompleto — registrar mesmo assim</Button>}
     />

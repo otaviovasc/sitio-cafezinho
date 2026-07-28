@@ -11,7 +11,7 @@
  * - A trilha pausa quando a aba perde visibilidade.
  */
 
-export type GameSoundKey = 'moo' | 'click' | 'pour' | 'truck' | 'feed' | 'plant' | 'harvest' | 'success' | 'buy';
+export type GameSoundKey = 'moo' | 'click' | 'pour' | 'truck' | 'feed' | 'plant' | 'harvest' | 'success' | 'buy' | 'pageTurn';
 
 /** Caminhos públicos dos arquivos de áudio — substitua pelos definitivos mantendo os nomes. */
 export const GAME_AUDIO_FILES: Record<GameSoundKey | 'soundtrack', string> = {
@@ -25,6 +25,7 @@ export const GAME_AUDIO_FILES: Record<GameSoundKey | 'soundtrack', string> = {
   harvest: '/audio/game/harvest.mp3',
   success: '/audio/game/success.mp3',
   buy: '/audio/game/buy.mp3',
+  pageTurn: '/audio/game/page-turn.mp3',
 };
 
 const MUTED_KEY = 'game-audio-muted';
@@ -156,6 +157,10 @@ function playSynth(key: GameSoundKey) {
     }
     case 'feed':
       noise(ctx, now, 0.28, 900, 400, 0.28);
+      break;
+    case 'pageTurn':
+      // Folha de papel virando: varredura curta de ruído, aguda → grave.
+      noise(ctx, now, 0.16, 2600, 800, 0.2);
       break;
     case 'plant':
       tone(ctx, now, 'sine', 150, 90, 0.4, 0.01, 0.16);

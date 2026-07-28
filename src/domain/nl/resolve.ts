@@ -15,6 +15,7 @@ import type {
   RevenueIntent,
   SpokenDate,
   VoiceIntent,
+  WeightSessionIntent,
 } from './intents.js';
 
 export type MatchableSupplier = { id: string; name: string };
@@ -539,6 +540,38 @@ export function resolveFeedingEvent(intent: FeedingEventIntent, ctx: ResolveCont
   };
 }
 
+/**
+ * Pesagem falada/fotografada: produz o rascunho da sessão (measuredOn +
+ * linhas animal+kg) para a revisão na folha da balança. O casamento por animal
+ * usa o mesmo matching exato das outras entidades; linhas sem vínculo ou sem
+ * peso ficam preservadas (rawAnimalLabel/rawValueText) e NUNCA criam animal.
+ * Sempre NEEDS_REVIEW: a revisão linha a linha na balança (que revalida pelo
+ * POST /api/weight-sessions/validate) é a porta de confirmação.
+ */
+export function resolveWeightSession(intent: WeightSessionIntent, ctx: ResolveContext, now = new Date()): ResolvedAction {
+  const measuredOn = resolveSpokenDate(intent.date, now);
+  const measurements = intent.measurements.map((row) => {
+    const match = matchAnimalByLabel(row.animalLabel, ctx.animals, ctx.aliases);
+    return {
+      rawAnimalLabel: row.animalLabel,
+      rawValueText: row.rawValueText,
+      weightKg: row.weightKg,
+      confidence: row.confidence,
+      excluded: false,
+      notes: row.notes,
+      animalId: match?.id ?? null,
+      animalName: match?.name ?? match?.tagNumber ?? null,
+    };
+  });
+  return {
+    actionType: 'WEIGHT_SESSION',
+    rawIntent: intent,
+    resolvedPayload: { measuredOn, measurements },
+    issues: [],
+    commitStatus: 'NEEDS_REVIEW',
+  };
+}
+
 /** Despacha uma intenção para o resolvedor determinístico correspondente. */
 export function resolveIntent(intent: VoiceIntent, ctx: ResolveContext, now = new Date()): ResolvedAction {
   switch (intent.type) {
@@ -550,6 +583,7 @@ export function resolveIntent(intent: VoiceIntent, ctx: ResolveContext, now = ne
     case 'mastitis_case': return resolveMastitis(intent, ctx.animals, ctx.aliases, now);
     case 'feed_purchase': return resolveFeedPurchase(intent, ctx, now);
     case 'feeding_event': return resolveFeedingEvent(intent, ctx, now);
+    case 'weight_session': return resolveWeightSession(intent, ctx, now);
     case 'unknown':
       return {
         actionType: 'UNKNOWN',

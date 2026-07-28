@@ -21,7 +21,7 @@ export const FIXTURE_RING = [
   { lat: -21.124, lng: -45.65 },
 ];
 
-/** Remove todo o mapa do jogo (pastos → perímetro → instalações), para specs idempotentes. */
+/** Remove todo o mapa do jogo (áreas internas → perímetro → instalações), para specs idempotentes. */
 export async function clearGameMap(page: Page) {
   await page.evaluate(async () => {
     const state = await fetch('/api/game/map').then((response) => response.json()) as {
@@ -29,7 +29,7 @@ export async function clearGameMap(page: Page) {
       installations: Array<{ id: string }>;
     };
     for (const installation of state.installations) await fetch(`/api/game/map/installations/${installation.id}`, { method: 'DELETE' });
-    for (const zone of state.zones.filter((item) => item.kind === 'PASTURE')) await fetch(`/api/game/map/zones/${zone.id}`, { method: 'DELETE' });
+    for (const zone of state.zones.filter((item) => item.kind !== 'PERIMETER')) await fetch(`/api/game/map/zones/${zone.id}`, { method: 'DELETE' });
     for (const zone of state.zones.filter((item) => item.kind === 'PERIMETER')) await fetch(`/api/game/map/zones/${zone.id}`, { method: 'DELETE' });
   });
 }

@@ -12,9 +12,13 @@ import { useMapCamera } from './useMapCamera';
  * único <g> e camadas puras por cima. `children` recebe a projeção para
  * camadas extras (instalações, feedbacks) sem acoplar este componente.
  */
-export function GameMap({ state, onSelectGroup, children }: {
+export function GameMap({ state, onSelectGroup, onSelectPlot, onSelectPasture, children }: {
   state: GameState;
   onSelectGroup?: Parameters<typeof HerdLayer>[0]['onSelect'];
+  /** Toque num talhão (zona PLOT) — abre a folha do ciclo de plantio. */
+  onSelectPlot?: (zone: GameState['map']['zones'][number]) => void;
+  /** Toque na área vazia de um pasto — abre a folha do pasto. */
+  onSelectPasture?: (zone: GameState['map']['zones'][number]) => void;
   children?: (projection: ReturnType<typeof createProjection>) => ReactNode;
 }) {
   const perimeter = state.map.zones.find((zone) => zone.kind === 'PERIMETER');
@@ -36,7 +40,7 @@ export function GameMap({ state, onSelectGroup, children }: {
     >
       <GameDefs />
       <g data-testid="game-camera" transform={camera.transform}>
-        <ZoneLayer zones={state.map.zones} projection={projection} />
+        <ZoneLayer zones={state.map.zones} projection={projection} plantings={state.plantings} onSelectPlot={onSelectPlot} onSelectPasture={onSelectPasture} />
         <HerdLayer herd={state.herd} zones={state.map.zones} projection={projection} onSelect={onSelectGroup} />
         {children?.(projection)}
       </g>

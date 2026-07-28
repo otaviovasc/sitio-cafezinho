@@ -1,9 +1,12 @@
-import { and, asc, eq, isNull } from 'drizzle-orm';
+import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import { getDb } from '../../db/client.js';
-import { herdGroups, pastureOccupancies, pastures, type Pasture } from '../../db/schema.js';
-import { ringAreaHa } from '../../domain/game/geometry.js';
+import { herdGroups, mapZones, pastureOccupancies, pastures, type Pasture } from '../../db/schema.js';
+import { pointInPolygon, ringAreaHa, ringError } from '../../domain/game/geometry.js';
+import { subdivisionName } from '../../domain/pastures.js';
 import type { MapPoint } from '../../domain/game/state.js';
-import { fail } from '../http/api-error.js';
+import { fail, ApiError } from '../http/api-error.js';
+
+export { subdivisionName };
 
 /**
  * Regras de pasto: exclusividade (um lote por pasto e um pasto por lote, por
@@ -144,8 +147,80 @@ export async function syncPastureAreaFromRing(pastureId: string, ring: MapPoint[
     .where(eq(pastures.id, pastureId));
 }
 
-export async function listPastureOccupancies(pastureId: string) {  const db = getDb();
-  const [pasture] = await db.select({ id: pastures.id }).from(pastures).where(eq(pastures.id, pastureId)).limit(1);
+/** Limites da subdivisão guiada: pelo menos duas áreas novas, no máximo oito. */
+export const SUBDIVISION_MIN_RINGS = 2;
+export const SUBDIVISION_MAX_RINGS = 8;
+
+export type SubdivisionPiece = { name: string; areaHa: string; ring: MapPoint[] };
+
+/**
+ * Planeja a subdivisão de um pasto (função pura, testável): cada anel vira um
+ * pasto novo com nome de linhagem e a área medida pelo próprio traçado.
+ */
+export function planSubdivision(baseName: string, rings: MapPoint[][]): SubdivisionPiece[] {
+  if (rings.length < SUBDIVISION_MIN_RINGS) return fail('Desenhe pelo menos duas áreas para subdividir o pasto.', 400, 'SUBDIVISION_MIN_RINGS');
+  if (rings.length > SUBDIVISION_MAX_RINGS) return fail(`Subdivida em no máximo ${SUBDIVISION_MAX_RINGS} áreas por vez.`, 400, 'SUBDIVISION_MAX_RINGS');
+  return rings.map((ring, index) => {
+    const invalid = ringError(ring);
+    if (invalid) return fail(`Área ${index + 1}: ${invalid}`, 400, 'INVALID_RING');
+    return { name: subdivisionName(baseName, index), areaHa: ringAreaHa(ring).toFixed(2), ring };
+  });
+}
+
+/**
+ * Subdivide um pasto desenhado no mapa (regra de domínio: subdividir desativa
+ * o original e cria os novos, com a linhagem no nome, sem hierarquia). Numa
+ * única transação: desativa o pasto e a zona que o desenhava, cria os pastos
+ * novos já com a área medida pelo traçado e uma zona PASTURE para cada um.
+ * Pasto ocupado não pode ser desativado — o lote precisa ser movido antes.
+ */
+export async function subdividePasture(pastureId: string, rings: MapPoint[][]) {
+  const db = getDb();
+  const [pasture] = await db.select().from(pastures).where(eq(pastures.id, pastureId)).limit(1);
+  if (!pasture) return fail('Pasto não encontrado.', 404, 'PASTURE_NOT_FOUND');
+  if (!pasture.active) return fail('Este pasto já está desativado.', 409, 'PASTURE_INACTIVE');
+  const [open] = await db.select({ id: pastureOccupancies.id }).from(pastureOccupancies)
+    .where(and(eq(pastureOccupancies.pastureId, pastureId), isNull(pastureOccupancies.endedOn))).limit(1);
+  if (open) return fail('Este pasto está ocupado. Mova o lote para outro pasto antes de subdividir.', 409, 'PASTURE_OCCUPIED');
+  const pieces = planSubdivision(pasture.name, rings);
+  const [perimeter] = await db.select({ ring: mapZones.ring }).from(mapZones)
+    .where(and(eq(mapZones.kind, 'PERIMETER'), eq(mapZones.active, true))).limit(1);
+  if (perimeter) {
+    const perimeterRing = (perimeter.ring as MapPoint[]).map((vertex) => ({ x: vertex.lng, y: vertex.lat }));
+    for (const piece of pieces) {
+      const inside = piece.ring.every((point) => pointInPolygon({ x: point.lng, y: point.lat }, perimeterRing));
+      if (!inside) return fail('As novas áreas precisam ficar inteiras dentro do perímetro do sítio.', 400, 'PASTURE_OUTSIDE_PERIMETER');
+    }
+  }
+  try {
+    return await db.transaction(async (tx) => {
+      await tx.update(pastures).set({ active: false, updatedAt: new Date() }).where(eq(pastures.id, pastureId));
+      // A zona que desenhava o pasto original sai do mapa junto com ele.
+      await tx.update(mapZones).set({ active: false, updatedAt: new Date() })
+        .where(and(eq(mapZones.pastureId, pastureId), eq(mapZones.active, true)));
+      const [zoneCount] = await tx.select({ count: sql<number>`count(*)::int` }).from(mapZones)
+        .where(and(eq(mapZones.kind, 'PASTURE'), eq(mapZones.active, true)));
+      const created: Pasture[] = [];
+      for (const [index, piece] of pieces.entries()) {
+        const [newPasture] = await tx.insert(pastures).values({ name: piece.name, areaHa: piece.areaHa }).returning();
+        await tx.insert(mapZones).values({
+          kind: 'PASTURE',
+          name: piece.name,
+          pastureId: newPasture.id,
+          ring: piece.ring,
+          styleVariant: (Number(zoneCount.count) + index) % 3,
+        });
+        created.push(newPasture);
+      }
+      return created;
+    });
+  } catch (cause) {
+    if (cause instanceof ApiError) throw cause;
+    return fail('Já existe um pasto com um dos nomes da subdivisão. Renomeie o pasto antigo antes de subdividir.', 409, 'DUPLICATE_PASTURE');
+  }
+}
+
+export async function listPastureOccupancies(pastureId: string) {  const db = getDb();  const [pasture] = await db.select({ id: pastures.id }).from(pastures).where(eq(pastures.id, pastureId)).limit(1);
   if (!pasture) return fail('Pasto não encontrado.', 404, 'NOT_FOUND');
   const rows = await db.select({
     id: pastureOccupancies.id,

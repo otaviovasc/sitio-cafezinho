@@ -14,6 +14,7 @@ Sistema simples de gestão de uma propriedade leiteira familiar.
 
 - Simplicidade acima de completude especulativa.
 - Frontend segue `docs/frontend-conventions.md`: formulários com `useForm`/`useSubmit`/`SubmitBar`/`useUnsavedGuard` (validação cedo, sem incomodar), revisão com `ReviewCard`, rótulo+tom via registro `lib/status.ts`.
+- O jogo (`/`) é a superfície central: registro e consulta acontecem nas folhas e no Caderno (`docs/game-design.md`); fora dele só gráficos e auditoria (hub `/graficos`). Menu do `AppShell` não cresce além de Mapa/Caderno/Gráficos.
 - Não inventar dados nem transformar estimativas em medições reais.
 - Não criar botão, filtro, endpoint ou campo sem uso real.
 - Não declarar conclusão sem validação.

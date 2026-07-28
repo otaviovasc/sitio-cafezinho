@@ -17,6 +17,7 @@ o `.mp3` nesta pasta com o nome exato e recarregar; nenhum código muda.
 | `harvest.mp3` | Colheita registrada |
 | `success.mp3` | Confirmações genéricas |
 | `buy.mp3` | Compra na Loja (caixa registradora/moedas) |
+| `page-turn.mp3` | Troca de aba no Caderno (página virando) |
 
 Formato: `.mp3` (ou troque a extensão também em `GAME_AUDIO_FILES`). Efeitos
 curtos (< 2s); a trilha pode ser longa — ela entra em loop.

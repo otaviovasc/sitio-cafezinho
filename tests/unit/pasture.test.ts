@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ApiError } from '../../src/server/http/api-error';
-import { daysBetween, planPastureMove, summarizePastures } from '../../src/server/services/pasture.service';
+import { daysBetween, planPastureMove, planSubdivision, subdivisionName, summarizePastures } from '../../src/server/services/pasture.service';
 
 describe('daysBetween', () => {
   it('conta a diferença exata entre datas, sem interpolar', () => {
@@ -125,5 +125,51 @@ describe('planPastureMove', () => {
       insert: { pastureId: 'p-2', herdGroupId: 'g-1', startedOn: '2026-07-20' },
       noop: false,
     });
+  });
+});
+
+describe('planSubdivision', () => {
+  // Anel pequeno (~11 m de lado) só para validar a mecânica do plano.
+  const ringA = [
+    { lat: -21.122, lng: -45.648 },
+    { lat: -21.122, lng: -45.6479 },
+    { lat: -21.1219, lng: -45.6479 },
+  ];
+  const ringB = ringA.map((point) => ({ lat: point.lat - 0.0002, lng: point.lng }));
+
+  function expectRejection(baseName: string, rings: { lat: number; lng: number }[][], status: number, code: string) {
+    try {
+      planSubdivision(baseName, rings);
+    } catch (error) {
+      expect(error).toBeInstanceOf(ApiError);
+      expect((error as ApiError).status).toBe(status);
+      expect((error as ApiError).code).toBe(code);
+      return;
+    }
+    expect.unreachable('a subdivisão deveria ter sido rejeitada');
+  }
+
+  it('cada anel vira um pasto com nome de linhagem e área medida pelo traçado', () => {
+    const pieces = planSubdivision('Pasto 1', [ringA, ringB]);
+    expect(pieces.map((piece) => piece.name)).toEqual(['Pasto 1.a', 'Pasto 1.b']);
+    for (const piece of pieces) expect(Number(piece.areaHa)).toBeGreaterThan(0);
+    expect(pieces[0].ring).toBe(ringA);
+  });
+
+  it('a linhagem segue o alfabeto sem hierarquia', () => {
+    expect(subdivisionName('Pasto 1', 0)).toBe('Pasto 1.a');
+    expect(subdivisionName('Pasto 1', 2)).toBe('Pasto 1.c');
+  });
+
+  it('exige pelo menos duas áreas novas', () => {
+    expectRejection('Pasto 1', [ringA], 400, 'SUBDIVISION_MIN_RINGS');
+  });
+
+  it('limita a subdivisão guiada a oito áreas por vez', () => {
+    expectRejection('Pasto 1', Array.from({ length: 9 }, () => ringA), 400, 'SUBDIVISION_MAX_RINGS');
+  });
+
+  it('rejeita anel inválido identificando a área', () => {
+    expectRejection('Pasto 1', [ringA, ringA.slice(0, 2)], 400, 'INVALID_RING');
   });
 });

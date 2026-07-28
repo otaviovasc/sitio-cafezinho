@@ -13,6 +13,11 @@ export const categoryLabels: Record<string, string> = {
   ENERGY: 'Energia', ANIMAL_PURCHASE: 'Compra de animal', OTHER: 'Outro',
 };
 
+export const revenueCategoryLabels: Record<string, string> = {
+  MILK_SALE: 'Venda de leite', CALF_SALE: 'Venda de cria', CULL_SALE: 'Descarte',
+  ANIMAL_SALE: 'Venda de animal', OTHER: 'Outra receita',
+};
+
 export const documentLabels: Record<string, string> = {
   INVOICE: 'Nota fiscal', BOLETO: 'Boleto', PAYMENT_RECEIPT: 'Comprovante',
   MILK_NOTEBOOK: 'Caderno de leite', OTHER: 'Outro',

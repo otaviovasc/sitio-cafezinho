@@ -143,6 +143,23 @@ export const feedingEventIntent = z.object({
 });
 export type FeedingEventIntent = z.infer<typeof feedingEventIntent>;
 
+// Pesagem do rebanho: uma lista de animais com seus pesos em kg.
+// Peso é medição pontual — null significa ilegível/não dito, nunca estimativa.
+export const weightMeasurementIntent = z.object({
+  animalLabel: z.string().min(1),
+  weightKg: z.number().positive().nullable(),
+  rawValueText: z.string().nullable(),
+  confidence,
+  notes: z.string().nullable(),
+});
+
+export const weightSessionIntent = z.object({
+  type: z.literal('weight_session'),
+  date: spokenDateSchema,
+  measurements: z.array(weightMeasurementIntent).min(1),
+});
+export type WeightSessionIntent = z.infer<typeof weightSessionIntent>;
+
 // A fala não corresponde a nenhuma ação reconhecida.
 export const unknownIntent = z.object({
   type: z.literal('unknown'),
@@ -158,6 +175,7 @@ export const voiceIntentSchema = z.discriminatedUnion('type', [
   mastitisIntent,
   feedPurchaseIntent,
   feedingEventIntent,
+  weightSessionIntent,
   unknownIntent,
 ]);
 export type VoiceIntent = z.infer<typeof voiceIntentSchema>;

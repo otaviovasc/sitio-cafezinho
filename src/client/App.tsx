@@ -4,10 +4,9 @@ import { AppShell } from './components/AppShell';
 import { LoadingState } from './components/ui';
 import { api } from './lib/api';
 import { VoiceContext } from './lib/voice-context';
-import { RevisarPage } from './pages/RevisarPage';
 import { AnimalDetailPage, AnimalsPage, HerdGroupAnimalsPage, NewAnimalPage } from './pages/AnimalsPage';
-import { DashboardPage } from './pages/DashboardPage';
 import { DocumentsPage } from './pages/DocumentsPage';
+import { GraficosPage } from './pages/GraficosPage';
 import { LoginPage } from './pages/LoginPage';
 import { ImportMilkPage, MilkSessionDetailPage, MilkSessionsPage } from './pages/MilkPages';
 import { NewDailyMilkTotalPage, NewIndividualControlPage } from './pages/MilkCreatePages';
@@ -17,7 +16,6 @@ import { FinancePage, NewRevenuePage, RevenueDetailPage } from './pages/FinanceP
 import { DataSettingsPage } from './pages/DataSettingsPage';
 import { NewPurchasePage, PurchaseDetailPage, PurchasesPage, SupplierDetailPage, SuppliersPage } from './pages/PurchasePages';
 import { NewWeightSessionPage, WeightSessionDetailPage, WeightSessionsPage } from './pages/WeightPages';
-import { PasturesPage } from './pages/PasturesPage';
 import { MilkPricePage } from './pages/MilkPricePage';
 import { NewFeedingEventPage } from './pages/FeedingPages';
 import { GamePage } from './pages/GamePage';
@@ -48,17 +46,17 @@ export function App() {
   if (location.pathname === '/entrar') return <Navigate to="/" replace />;
 
   return <VoiceContext.Provider value={{ voiceEnabled }}><AppShell><Routes>
-    <Route path="/" element={<DashboardPage />} />
-    <Route path="/jogo" element={<GamePage />} />
+    <Route path="/" element={<GamePage />} />
+    <Route path="/jogo" element={<Navigate to="/" replace />} />
     <Route path="/jogo/mapa/editor" element={<Suspense fallback={<div className="page"><LoadingState /></div>}><GameMapEditorPage /></Suspense>} />
-    <Route path="/revisar" element={<RevisarPage />} />
+    <Route path="/revisar" element={<Navigate to="/?caderno=pendencias" replace />} />
+    <Route path="/graficos" element={<GraficosPage />} />
     <Route path="/rebanho" element={<AnimalsPage />} />
-    <Route path="/pastos" element={<PasturesPage />} />
+    <Route path="/pastos" element={<Navigate to="/" replace />} />
     <Route path="/rebanho/novo" element={<NewAnimalPage />} />
     <Route path="/rebanho/lote/:groupId" element={<HerdGroupAnimalsPage />} />
     <Route path="/rebanho/:id" element={<AnimalDetailPage />} />
     <Route path="/producao" element={<MilkSessionsPage />} />
-    <Route path="/producao/nova" element={<Navigate to="/producao/individual/novo" replace />} />
     <Route path="/producao/total/novo" element={<NewDailyMilkTotalPage />} />
     <Route path="/producao/individual/novo" element={<NewIndividualControlPage />} />
     <Route path="/producao/importar" element={<ImportMilkPage />} />
@@ -85,7 +83,6 @@ export function App() {
     <Route path="/documentos" element={<DocumentsPage />} />
     <Route path="/pesos" element={<WeightSessionsPage />} />
     <Route path="/pesos/novo" element={<NewWeightSessionPage />} />
-    <Route path="/pesos/importar" element={<Navigate to="/pesos/novo" replace />} />
     <Route path="/pesos/:id" element={<WeightSessionDetailPage />} />
     <Route path="*" element={<Navigate to="/" replace />} />
   </Routes></AppShell></VoiceContext.Provider>;

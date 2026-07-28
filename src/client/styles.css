@@ -215,6 +215,33 @@ a { color: inherit; text-decoration: none; }
   .game-hud-bottom-left { @apply absolute bottom-3 left-3; }
   .game-hud-bottom-left-raised { @apply absolute bottom-16 left-3; }
   .game-hud-bottom-left-raised-2 { @apply absolute bottom-28 left-3; }
+  .game-hud-bottom-left-raised-3 { @apply absolute bottom-40 left-3; }
+  /* Coluna do topo direito: streak (top-3), som (top-16), "+" de criação
+   * global (top-28) e chip de pendências (top-40) — longe do mic-fab. */
+  .game-hud-create { @apply pointer-events-auto absolute right-3 top-28; }
+  .game-hud-pending { @apply absolute right-3 top-40; }
+  /* Caderno do sítio: folha com cara de caderno de papel — fundo paper,
+   * cantos arredondados, abas como orelhas na mesma linguagem dos chips do
+   * HUD. O dimensionamento fica mais abaixo, DEPOIS de .game-sheet: na mesma
+   * especificidade a última regra vence (o sm:max-w-lg da moldura não pode
+   * encolher o caderno). */
+  .game-notebook-search { background: #fffef9; box-shadow: 0 2px 10px rgb(58 61 53 / 8%); color: var(--game-ink-soft); @apply mb-3 flex items-center gap-2 rounded-full px-4; }
+  .game-notebook-search:focus-within { box-shadow: 0 0 0 2px var(--primary), 0 2px 10px rgb(58 61 53 / 8%); }
+  .game-notebook-search input { background: transparent; color: var(--game-ink); min-height: 2.75rem; @apply w-full text-sm font-bold outline-none; }
+  .game-notebook-search input::placeholder { color: var(--game-ink-soft); }
+  .game-notebook-tabs { @apply -mx-1 mb-3 flex gap-1.5 overflow-x-auto px-1 pb-1; }
+  .game-notebook-tab { background: #fffef9; color: var(--game-ink); min-height: 2.5rem; white-space: nowrap; @apply inline-flex items-center gap-1.5 rounded-t-xl rounded-b-md px-3.5 text-sm font-extrabold transition; }
+  .game-notebook-tab[data-active='true'] { background: var(--primary); color: white; }
+  .game-notebook-tab:focus-visible { @apply outline-none ring-2 ring-[var(--primary)]; }
+  .game-notebook-heading { color: var(--game-ink-soft); @apply text-xs font-bold uppercase tracking-wide; }
+  .game-notebook-empty { color: var(--game-ink-soft); @apply py-2 text-sm; }
+  .game-notebook-subtitle { color: var(--game-ink-soft); @apply mt-0.5 text-sm leading-5; }
+  .game-notebook-fields { background: #fffef9; box-shadow: 0 2px 10px rgb(58 61 53 / 8%); @apply grid gap-1.5 rounded-2xl px-4 py-3; }
+  .game-notebook-fields > div { @apply flex items-baseline justify-between gap-3; }
+  .game-notebook-fields dt { color: var(--game-ink-soft); @apply shrink-0 text-xs font-bold uppercase tracking-wide; }
+  .game-notebook-fields dd { @apply text-right text-sm font-bold; }
+  .game-notebook-link { color: var(--primary-strong, var(--primary)); min-height: 2.75rem; @apply mt-2 inline-flex items-center gap-1.5 text-sm font-extrabold; }
+  .game-notebook-link:focus-visible { @apply outline-none ring-2 ring-[var(--primary)]; }
   /* Loja: fileira de categorias + cartões de item com preço sugerido editável. */
   .game-loja-cats { @apply -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1; }
   .game-loja-cat { background: #fffef9; color: var(--game-ink); min-height: 2.25rem; white-space: nowrap; @apply inline-flex items-center gap-1.5 rounded-full px-3.5 text-sm font-extrabold transition; }
@@ -240,6 +267,14 @@ a { color: inherit; text-decoration: none; }
   .game-cow { animation: game-cow-graze var(--cow-dur, 12s) ease-in-out var(--cow-delay, 0s) infinite alternate; }
   /* Selo "Colher!" pulsando de leve quando a plantação está pronta. */
   .game-ready-badge { animation: game-ready-pulse 2000ms ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+  /* Rótulo de instalação multi-instância (o `name` diferencia cochos etc.). */
+  .game-installation-label { fill: var(--game-ink); font-family: var(--game-font); font-size: 13px; font-weight: 800; text-anchor: middle; opacity: 0.8; paint-order: stroke; stroke: #fffef9; stroke-width: 3px; stroke-linejoin: round; }
+  /* Marcadores no mundo: pill com a pendência + a regra que a gerou. */
+  .game-marker { cursor: pointer; outline: none; }
+  .game-marker-pill { fill: #fffef9; stroke: var(--game-ink); stroke-width: 1.2; opacity: 0.96; filter: drop-shadow(0 3px 6px rgb(58 61 53 / 20%)); }
+  .game-marker-label { fill: var(--game-ink); font-family: var(--game-font); font-size: 12.5px; font-weight: 800; text-anchor: middle; }
+  .game-marker-rule { fill: var(--game-ink); font-family: var(--game-font); font-size: 9.5px; font-weight: 600; text-anchor: middle; opacity: 0.72; }
+  .game-marker:focus-visible .game-marker-pill { stroke: var(--primary); stroke-width: 2.5px; }
   .game-progress { background: rgb(58 61 53 / 10%); @apply h-3 w-full overflow-hidden rounded-full; }
   .game-progress-fill { background: var(--primary); transition: width 600ms ease-out; @apply h-full rounded-full; }
   .game-sheet-backdrop { background: rgb(16 24 18 / 42%); @apply fixed inset-0 z-50 flex items-end justify-center sm:p-5; }
@@ -250,6 +285,24 @@ a { color: inherit; text-decoration: none; }
   .game-sheet-close { color: #6b6e60; @apply ml-auto flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition hover:bg-[rgb(58_61_53_/_8%)]; }
   .game-sheet-close:focus-visible { @apply outline-none ring-2 ring-[var(--primary)]; }
   .game-sheet-body { @apply px-4 py-4 sm:px-5; }
+  /* Caderno: folha grande no desktop (regras depois de .game-sheet para
+   * vencerem o max-w-lg/max-height da moldura na mesma especificidade) e
+   * rolagem INTERNA — cabeçalho, busca e abas ficam fixos; só o conteúdo da
+   * aba rola (`.game-notebook-scroll`), sem encavalar nada por cima. */
+  .game-notebook { max-height: min(92dvh, 48rem); @apply flex flex-col overflow-hidden sm:max-w-2xl; }
+  @media (min-width: 1024px) {
+    .game-notebook { width: min(1100px, 92vw); max-width: none; height: 85dvh; max-height: 85dvh; }
+  }
+  .game-notebook > .game-sheet-body { @apply flex min-h-0 flex-1 flex-col overflow-hidden; }
+  /* Busca e abas ficam fixas: não encolhem no flex e não rolam com o conteúdo. */
+  .game-notebook > .game-sheet-body > .game-notebook-search,
+  .game-notebook > .game-sheet-body > .game-notebook-tabs { @apply shrink-0; }
+  .game-notebook-scroll { @apply min-h-0 flex-1 overflow-y-auto; }
+  /* Chips de filtro das abas do caderno (mesma linguagem dos chips da Loja). */
+  .game-notebook-filters { @apply -mx-1 mb-3 flex flex-wrap gap-1.5 px-1; }
+  .game-notebook-filter { background: #fffef9; color: var(--game-ink); min-height: 2.25rem; white-space: nowrap; @apply inline-flex items-center gap-1.5 rounded-full px-3.5 text-sm font-extrabold transition; }
+  .game-notebook-filter[data-active='true'] { background: var(--primary); color: white; }
+  .game-notebook-filter:focus-visible { @apply outline-none ring-2 ring-[var(--primary)]; }
   .game-sheet-action { background: #fffef9; box-shadow: 0 2px 10px rgb(58 61 53 / 8%); min-height: 64px; text-align: left; @apply flex w-full items-center gap-3 rounded-2xl px-4 py-3 transition; }
   .game-sheet-action:hover { box-shadow: 0 4px 16px rgb(58 61 53 / 14%); transform: translateY(-1px); }
   .game-sheet-action:focus-visible { @apply outline-none ring-2 ring-[var(--primary)]; }
@@ -258,6 +311,14 @@ a { color: inherit; text-decoration: none; }
   .game-sheet-action small { color: #6b6e60; @apply mt-0.5 text-xs leading-4; }
   .game-sheet-back { color: #6b6e60; min-height: 40px; @apply mb-3 inline-flex items-center gap-1.5 rounded-full text-sm font-bold; }
   .game-sheet-back:focus-visible { @apply outline-none ring-2 ring-[var(--primary)]; }
+  /* Controle individual vaca a vaca (folha da mangueira): um cartão por vaca, campo de litros grande. */
+  .game-individual-card { background: #fffef9; box-shadow: 0 2px 10px rgb(58 61 53 / 8%); @apply rounded-2xl px-4 py-4; }
+  .game-individual-name { @apply mb-3 block text-lg font-extrabold tracking-tight; }
+  .game-individual-input { @apply text-2xl font-extrabold; font-variant-numeric: tabular-nums; }
+  /* Histórico de rotação na folha do pasto. */
+  .game-pasture-history-row { background: #fffef9; box-shadow: 0 2px 10px rgb(58 61 53 / 8%); @apply rounded-xl px-3 py-2; }
+  .game-pasture-history-row strong, .game-pasture-history-row small { @apply block; }
+  .game-pasture-history-row small { color: #6b6e60; @apply mt-0.5 text-xs leading-4; }
   .game-editor-layout { @apply grid gap-4 lg:grid-cols-[3fr_2fr]; }
   /* isolation cria stacking context: os panes internos do Leaflet (z-index 400+) não passam por cima de modais/toasts do app. */
   .game-editor-map { border-radius: var(--radius); box-shadow: var(--shadow); background: #d7d2c4; height: min(52dvh, 30rem); isolation: isolate; z-index: 0; @apply w-full overflow-hidden lg:h-[calc(100dvh-16rem)] lg:max-h-none; }

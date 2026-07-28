@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Flame } from 'lucide-react';
+import { BookOpen, ClipboardList, Flame, Plus } from 'lucide-react';
 import { formatLiters } from '../../../domain/format';
 import type { GameState } from '../../../domain/game/state';
 
@@ -11,10 +11,18 @@ function monthLabel(month: string) {
 
 /**
  * HUD do jogo: chips flutuantes ambientados no tabuleiro (nunca painel opaco).
- * Economia real embaixo à esquerda; streak de registro em cima à direita.
+ * Economia real embaixo à esquerda; streak de registro em cima à direita;
+ * Caderno e criação global dão acesso às listas e aos registros do sítio.
  * Valores sempre derivados do servidor — o HUD só exibe.
  */
-export function GameHud({ state }: { state: GameState }) {
+export function GameHud({ state, pendingCount, onOpenNotebook, onOpenPending, onOpenCreate }: {
+  state: GameState;
+  /** Ações aguardando revisão em /api/captures (mesma contagem da aba Pendências). */
+  pendingCount: number;
+  onOpenNotebook: () => void;
+  onOpenPending: () => void;
+  onOpenCreate: () => void;
+}) {
   const { economy, streaks } = state;
   return <>
     <div className="game-hud-chip game-hud-bottom-left" data-testid="hud-economy">
@@ -33,6 +41,17 @@ export function GameHud({ state }: { state: GameState }) {
       {streaks.dailyMilk.current === 0
         ? <span>Registre hoje para começar a sequência</span>
         : <span>{streaks.dailyMilk.current} {streaks.dailyMilk.current === 1 ? 'dia seguido' : 'dias seguidos'}</span>}
+    </div>
+    <button type="button" className="game-hud-chip game-hud-bottom-left-raised-2" data-testid="hud-caderno" aria-label="Abrir o Caderno do sítio" onClick={onOpenNotebook}>
+      <BookOpen size={15} aria-hidden />Caderno
+    </button>
+    {pendingCount > 0 && <button type="button" className="game-hud-chip game-hud-pending" data-testid="hud-pending" aria-label={`${pendingCount} ações aguardando revisão`} onClick={onOpenPending}>
+      <ClipboardList size={15} aria-hidden /><small>Pendências</small>{pendingCount}
+    </button>}
+    <div className="game-hud-create">
+      <button type="button" className="game-zoom-button" data-testid="game-create-menu" aria-label="Registrar algo novo no sítio" onClick={onOpenCreate}>
+        <Plus size={20} aria-hidden />
+      </button>
     </div>
   </>;
 }

@@ -78,6 +78,14 @@ export function LeafletCanvas({ center, zones, installations, draft, drawing, on
           .addTo(overlays);
         L.polygon(points, { color: colors.wood, weight: 3.5, dashArray: '8 6', fillColor: colors.paper, fillOpacity: 0.18 })
           .bindTooltip(zone.name).addTo(overlays);
+      } else if (zone.kind === 'PLOT') {
+        L.polygon(points, {
+          color: colors.crop,
+          weight: 2,
+          dashArray: '6 5',
+          fillColor: colors.crop,
+          fillOpacity: 0.35,
+        }).bindTooltip(zone.name).addTo(overlays);
       } else {
         L.polygon(points, {
           color: colors.meadowEdge,

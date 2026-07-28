@@ -4,11 +4,11 @@ import { ArrowLeft } from 'lucide-react';
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactElement, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 
-const topLevelRoutes = new Set(['/', '/jogo', '/rebanho', '/pastos', '/producao', '/pesos', '/financeiro', '/documentos']);
+const topLevelRoutes = new Set(['/', '/graficos', '/rebanho', '/producao', '/pesos', '/financeiro', '/documentos']);
 
 function backDestination(pathname: string): { to: string; label: string } | null {
   if (topLevelRoutes.has(pathname)) return null;
-  if (pathname === '/mastite') return { to: '/', label: 'Hoje' };
+  if (pathname === '/mastite') return { to: '/graficos', label: 'Gráficos' };
   if (pathname.startsWith('/mastite/')) return { to: '/mastite', label: 'Mastite' };
   if (pathname === '/compras') return { to: '/financeiro', label: 'Financeiro' };
   if (pathname.startsWith('/compras/')) return { to: '/compras', label: 'Compras' };
@@ -19,9 +19,9 @@ function backDestination(pathname: string): { to: string; label: string } | null
   if (pathname.startsWith('/rebanho/')) return { to: '/rebanho', label: 'Rebanho' };
   if (pathname.startsWith('/producao/')) return { to: '/producao', label: 'Produção' };
   if (pathname.startsWith('/pesos/')) return { to: '/pesos', label: 'Peso' };
-  if (pathname === '/configuracoes/dados') return { to: '/', label: 'Hoje' };
-  if (pathname.startsWith('/jogo/')) return { to: '/jogo', label: 'Jogo' };
-  return { to: '/', label: 'Hoje' };
+  if (pathname === '/configuracoes/dados') return { to: '/graficos', label: 'Gráficos' };
+  if (pathname.startsWith('/jogo/')) return { to: '/', label: 'Mapa' };
+  return { to: '/', label: 'Mapa' };
 }
 
 export function PageHeader({ title, subtitle, action, icon: Icon }: { title: string; subtitle?: string; action?: ReactNode; icon?: LucideIcon }) {

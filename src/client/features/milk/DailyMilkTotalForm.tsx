@@ -9,6 +9,7 @@ import { useUnsavedGuard } from '../../hooks/useUnsavedGuard';
 import { api, json } from '../../lib/api';
 import { today } from '../../lib/labels';
 import type { HerdGroup } from '../animals/GroupPicker';
+import type { ReviewSubmit } from '../game/review';
 
 export type DailyMilkTotal = {
   id: string;
@@ -22,24 +23,37 @@ export type DailyMilkTotal = {
   notes: string | null;
 };
 
+/** Pré-preenchimento do modo revisão (payload da ação proposta, já em texto). */
+export type DailyMilkTotalReviewInitial = {
+  productionDate: string;
+  herdGroupId: string;
+  morningLiters: string;
+  afternoonLiters: string;
+  notes: string;
+};
+
 /**
  * Formulário do total diário (rebanho todo ou lote). Sem chave/IA: entrada
  * direta. Um período pode chegar sozinho (manhã agora, tarde depois); exigimos
  * apenas um dos dois. GUARDRAILS barra o claramente impossível por período.
+ * Com `review`, o submit confirma pela pipeline de revisão (commit da ação
+ * proposta) em vez de gravar direto — mesmo formulário, mesma validação.
  */
-export function DailyMilkTotalForm({ initial, onSaved }: {
+export function DailyMilkTotalForm({ initial, reviewInitial, review, onSaved }: {
   initial?: DailyMilkTotal;
+  reviewInitial?: DailyMilkTotalReviewInitial;
+  review?: ReviewSubmit;
   onSaved: (total: DailyMilkTotal) => void;
 }) {
   const { busy, error, run } = useSubmit();
   const { data: groups = [] } = useResource<HerdGroup[]>('/api/herd-groups');
   const form = useForm(
     {
-      productionDate: initial?.productionDate ?? today(),
-      herdGroupId: initial?.herdGroupId ?? '',
-      morningLiters: initial?.morningLiters ?? '',
-      afternoonLiters: initial?.afternoonLiters ?? '',
-      notes: initial?.notes ?? '',
+      productionDate: initial?.productionDate ?? reviewInitial?.productionDate ?? today(),
+      herdGroupId: initial?.herdGroupId ?? reviewInitial?.herdGroupId ?? '',
+      morningLiters: initial?.morningLiters ?? reviewInitial?.morningLiters ?? '',
+      afternoonLiters: initial?.afternoonLiters ?? reviewInitial?.afternoonLiters ?? '',
+      notes: initial?.notes ?? reviewInitial?.notes ?? '',
     },
     {
       productionDate: (value) => (value ? undefined : 'Informe a data da produção.'),
@@ -67,14 +81,19 @@ export function DailyMilkTotalForm({ initial, onSaved }: {
 
   async function persist() {
     const { productionDate, herdGroupId, notes } = form.values;
-    const path = initial ? `/api/daily-milk-totals/${initial.id}` : '/api/daily-milk-totals';
-    const saved = await api<DailyMilkTotal>(path, json(initial ? 'PATCH' : 'POST', {
+    const body = {
       productionDate,
       herdGroupId: herdGroupId || null,
       morningLiters: parsedMorning,
       afternoonLiters: morningOnly ? null : parsedAfternoon,
       notes: notes.trim() || null,
-    }));
+    };
+    if (review) {
+      await review.onCommit(body);
+      return;
+    }
+    const path = initial ? `/api/daily-milk-totals/${initial.id}` : '/api/daily-milk-totals';
+    const saved = await api<DailyMilkTotal>(path, json(initial ? 'PATCH' : 'POST', body));
     onSaved(saved);
   }
 
@@ -94,6 +113,6 @@ export function DailyMilkTotalForm({ initial, onSaved }: {
     </div>
     <Field label="Observação (opcional)"><Textarea className="min-h-12" placeholder="Ex.: medição separada no tanque do lote" value={form.values.notes} onChange={(event) => form.set('notes', event.target.value)} /></Field>
     {previewTotal !== null && <p className="text-sm text-[var(--muted)]">Total calculado: <strong className="text-[var(--text)]">{formatLiters(previewTotal)}</strong></p>}
-    <SubmitBar label={initial ? 'Salvar alteração' : 'Registrar total'} busy={busy} />
+    <SubmitBar label={review?.label ?? (initial ? 'Salvar alteração' : 'Registrar total')} busy={busy} />
   </form>;
 }

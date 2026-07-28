@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, ne } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, ne } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb } from '../../db/client.js';
@@ -7,7 +7,7 @@ import { resolveDailyMilkDay } from '../../domain/daily-milk.js';
 import { summarizeGameEconomy } from '../../domain/game/economy.js';
 import { pointInPolygon, ringError } from '../../domain/game/geometry.js';
 import { growthProgress, growthStage, plantingReadyAt } from '../../domain/game/planting.js';
-import { buildHerdState, type GameMapInstallation, type GameMapState, type GameMapZone, type GamePlanting, type GameState, type MapPoint } from '../../domain/game/state.js';
+import { buildHerdState, type GameMapInstallation, type GameMapState, type GameMapZone, type GameMarker, type GamePlanting, type GameState, type MapPoint } from '../../domain/game/state.js';
 import { computeStreak } from '../../domain/game/streaks.js';
 import { tankLevel } from '../../domain/game/tank.js';
 import { dateKeyInSaoPaulo } from '../../domain/purchases.js';
@@ -30,7 +30,7 @@ const pointSchema = z.object({
 });
 
 const zoneSchema = z.object({
-  kind: z.enum(['PERIMETER', 'PASTURE']),
+  kind: z.enum(['PERIMETER', 'PASTURE', 'PLOT']),
   name: z.string().trim().min(1, 'Dê um nome para a área.').max(120),
   pastureId: z.string().uuid().nullable().optional().default(null),
   ring: z.array(pointSchema).min(3, 'Trace pelo menos 3 pontos.').max(500),
@@ -43,10 +43,13 @@ const zonePatchSchema = z.object({
 });
 
 const installationSchema = z.object({
-  kind: z.enum(['MANGUEIRA', 'DEPOSITO', 'GARAGEM', 'CASA', 'ESTACAO_ALIMENTACAO', 'PLANTACAO']),
+  kind: z.enum(['MANGUEIRA', 'DEPOSITO', 'GARAGEM', 'CASA', 'ESTACAO_ALIMENTACAO', 'BALANCA', 'ENFERMARIA', 'PORTEIRA']),
   name: z.string().trim().min(1).max(120),
   position: pointSchema,
 });
+
+/** Kinds que podem se repetir no mapa (o name diferencia as instâncias). */
+const MULTI_INSTANCE_KINDS = new Set(['ESTACAO_ALIMENTACAO', 'BALANCA', 'ENFERMARIA']);
 
 const installationPatchSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
@@ -112,25 +115,29 @@ function ringInsidePerimeter(perimeterRing: MapPoint[], ring: MapPoint[]): boole
   return ring.every((point) => insidePerimeter(perimeterRing, point));
 }
 
-/** Plantio GROWING no talhão, com insumos e progresso derivado do relógio. */
-async function loadActivePlanting(now: Date): Promise<GamePlanting | null> {
+/** Plantios GROWING nos talhões (um por zona PLOT), com progresso derivado do relógio. */
+async function loadActivePlantings(now: Date): Promise<GamePlanting[]> {
   const db = getDb();
-  const [row] = await db.select().from(plantings).where(eq(plantings.status, 'GROWING')).limit(1);
-  if (!row) return null;
-  const inputRows = await db.select().from(plantingInputs).where(eq(plantingInputs.plantingId, row.id));
-  const durationHours = Number(row.durationHours);
-  const progress = growthProgress(row.plantedAt, durationHours, now);
-  return {
-    id: row.id,
-    installationId: row.installationId,
-    cropName: row.cropName,
-    plantedAt: row.plantedAt.toISOString(),
-    durationHours,
-    readyAt: plantingReadyAt(row.plantedAt, durationHours).toISOString(),
-    progress,
-    stage: growthStage(progress),
-    inputs: inputRows.map((input) => ({ name: input.name, quantity: Number(input.quantity), unit: input.unit })),
-  };
+  const rows = await db.select().from(plantings).where(eq(plantings.status, 'GROWING'));
+  if (!rows.length) return [];
+  const inputRows = await db.select().from(plantingInputs)
+    .where(inArray(plantingInputs.plantingId, rows.map((row) => row.id)));
+  return rows.map((row) => {
+    const durationHours = Number(row.durationHours);
+    const progress = growthProgress(row.plantedAt, durationHours, now);
+    return {
+      id: row.id,
+      zoneId: row.zoneId,
+      cropName: row.cropName,
+      plantedAt: row.plantedAt.toISOString(),
+      durationHours,
+      readyAt: plantingReadyAt(row.plantedAt, durationHours).toISOString(),
+      progress,
+      stage: growthStage(progress),
+      inputs: inputRows.filter((input) => input.plantingId === row.id)
+        .map((input) => ({ name: input.name, quantity: Number(input.quantity), unit: input.unit })),
+    };
+  });
 }
 
 async function assertPastureLinkable(pastureId: string, exceptZoneId?: string) {
@@ -147,9 +154,9 @@ export const gameRoutes = new Hono()
   .get('/game/state', async (c) => {
     c.header('cache-control', 'no-store');
     const db = getDb();
-    const [map, planting, animalRows, assignmentRows, groupRows, dailyRows, collectionRows, priceRows, purchaseRows] = await Promise.all([
+    const [map, plantings, animalRows, assignmentRows, groupRows, dailyRows, collectionRows, priceRows, purchaseRows] = await Promise.all([
       loadMapState(),
-      loadActivePlanting(new Date()),
+      loadActivePlantings(new Date()),
       db.select({ id: animals.id, status: animals.status }).from(animals),
       db.select({ animalId: animalGroupAssignments.animalId, groupId: animalGroupAssignments.groupId })
         .from(animalGroupAssignments).where(isNull(animalGroupAssignments.endedOn)),
@@ -157,7 +164,7 @@ export const gameRoutes = new Hono()
       db.select().from(dailyMilkTotals),
       db.select({ collectionDate: milkCollections.collectionDate, liters: milkCollections.liters }).from(milkCollections),
       db.select({ month: monthlyMilkPrices.month, pricePerLiter: monthlyMilkPrices.pricePerLiter }).from(monthlyMilkPrices),
-      db.select({ purchaseDate: purchases.purchaseDate, status: purchases.status, totalAmount: purchases.totalAmount }).from(purchases),
+      db.select({ purchaseDate: purchases.purchaseDate, status: purchases.status, totalAmount: purchases.totalAmount, dueDate: purchases.dueDate }).from(purchases),
     ]);
     const { herd, unassignedCount } = buildHerdState(animalRows, assignmentRows, groupRows, map.zones);
 
@@ -176,6 +183,41 @@ export const gameRoutes = new Hono()
       collections: computeStreak(collectionRows.map((row) => row.collectionDate), today),
     };
 
+    // Marcadores no mundo: pendências derivadas do estado real (nada gravado),
+    // sempre com a regra que as gerou. Tocar abre a folha correspondente.
+    const markers: GameMarker[] = [];
+    const porteira = map.installations.find((installation) => installation.kind === 'PORTEIRA');
+    if (porteira && todayCollections.length === 0) {
+      markers.push({
+        kind: 'COLLECTION_MISSING',
+        targetType: 'installation',
+        targetId: porteira.id,
+        label: 'Coleta de hoje não registrada',
+        rule: 'Toda tarde o caminhão do laticínio passa pela porteira.',
+      });
+    }
+    for (const planting of plantings) {
+      if (planting.stage !== 'READY') continue;
+      markers.push({
+        kind: 'PLANTING_READY',
+        targetType: 'zone',
+        targetId: planting.zoneId,
+        label: `${planting.cropName} pronto para colher`,
+        rule: 'O ciclo do plantio terminou (duração contada desde o plantio).',
+      });
+    }
+    const casa = map.installations.find((installation) => installation.kind === 'CASA');
+    const hasOverduePurchase = purchaseRows.some((row) => row.status === 'OPEN' && row.dueDate !== null && row.dueDate < today);
+    if (casa && hasOverduePurchase) {
+      markers.push({
+        kind: 'PURCHASE_OVERDUE',
+        targetType: 'installation',
+        targetId: casa.id,
+        label: 'Conta vencida para pagar',
+        rule: 'Compra em aberto vira pendência depois do vencimento.',
+      });
+    }
+
     const state: GameState = {
       map,
       herd,
@@ -190,7 +232,8 @@ export const gameRoutes = new Hono()
       },
       economy,
       streaks,
-      planting,
+      plantings,
+      markers,
     };
     return c.json(state);
   })
@@ -205,11 +248,12 @@ export const gameRoutes = new Hono()
       if (await activePerimeter()) return fail('O sítio já tem um perímetro traçado. Edite ou exclua o atual.', 409, 'PERIMETER_EXISTS');
     } else {
       const perimeter = await activePerimeter();
-      if (!perimeter) return fail('Trace o perímetro do sítio antes dos pastos.', 409, 'PERIMETER_REQUIRED');
+      if (!perimeter) return fail('Trace o perímetro do sítio antes das áreas internas.', 409, 'PERIMETER_REQUIRED');
       if (!ringInsidePerimeter(perimeter.ring as MapPoint[], body.ring)) {
-        return fail('O pasto precisa ficar inteiro dentro do perímetro do sítio.', 400, 'PASTURE_OUTSIDE_PERIMETER');
+        return fail('A área precisa ficar inteira dentro do perímetro do sítio.', 400, 'PASTURE_OUTSIDE_PERIMETER');
       }
-      if (body.pastureId) {
+      if (body.kind === 'PLOT' && body.pastureId) return fail('O talhão não se vincula a um pasto.', 400, 'PLOT_UNLINKED');
+      if (body.kind === 'PASTURE' && body.pastureId) {
         await assertPastureLinkable(body.pastureId);
         // O traçado é a medição oficial da área do pasto (hectares).
         await syncPastureAreaFromRing(body.pastureId, body.ring);
@@ -238,15 +282,16 @@ export const gameRoutes = new Hono()
     if (body.ring) {
       const invalidRing = ringError(body.ring);
       if (invalidRing) return fail(invalidRing, 400, 'INVALID_RING');
-      if (current.kind === 'PASTURE') {
+      if (current.kind !== 'PERIMETER') {
         const perimeter = await activePerimeter();
         if (perimeter && !ringInsidePerimeter(perimeter.ring as MapPoint[], body.ring)) {
-          return fail('O pasto precisa ficar inteiro dentro do perímetro do sítio.', 400, 'PASTURE_OUTSIDE_PERIMETER');
+          return fail('A área precisa ficar inteira dentro do perímetro do sítio.', 400, 'PASTURE_OUTSIDE_PERIMETER');
         }
       }
     }
     if (body.pastureId !== undefined && body.pastureId !== null) {
       if (current.kind === 'PERIMETER') return fail('O perímetro não se vincula a um pasto.', 400, 'PERIMETER_UNLINKED');
+      if (current.kind === 'PLOT') return fail('O talhão não se vincula a um pasto.', 400, 'PLOT_UNLINKED');
       await assertPastureLinkable(body.pastureId, id);
     }
     const [updated] = await db.update(mapZones).set({
@@ -266,9 +311,23 @@ export const gameRoutes = new Hono()
     const [current] = await db.select().from(mapZones).where(eq(mapZones.id, c.req.param('id'))).limit(1);
     if (!current || !current.active) return fail('Área não encontrada.', 404, 'NOT_FOUND');
     if (current.kind === 'PERIMETER') {
-      const [pasture] = await db.select({ id: mapZones.id }).from(mapZones)
-        .where(and(eq(mapZones.kind, 'PASTURE'), eq(mapZones.active, true))).limit(1);
-      if (pasture) return fail('Exclua os pastos antes de excluir o perímetro.', 409, 'PASTURES_EXIST');
+      const [inner] = await db.select({ id: mapZones.id }).from(mapZones)
+        .where(and(ne(mapZones.kind, 'PERIMETER'), eq(mapZones.active, true))).limit(1);
+      if (inner) return fail('Exclua os pastos e talhões antes de excluir o perímetro.', 409, 'PASTURES_EXIST');
+    }
+    if (current.kind === 'PLOT') {
+      // O histórico de plantios é fato de fazenda: nunca apagado em cascata.
+      // Talhão com plantios encerrados é DESATIVADO (some do mapa, histórico
+      // preservado); com plantio crescendo, a saída é colher ou cancelar antes.
+      const [growing] = await db.select({ id: plantings.id }).from(plantings)
+        .where(and(eq(plantings.zoneId, current.id), eq(plantings.status, 'GROWING'))).limit(1);
+      if (growing) return fail('Este talhão tem um plantio crescendo. Colha ou cancele antes de excluir.', 409, 'PLOT_HAS_GROWING');
+      const [planted] = await db.select({ id: plantings.id }).from(plantings)
+        .where(eq(plantings.zoneId, current.id)).limit(1);
+      if (planted) {
+        await db.update(mapZones).set({ active: false, updatedAt: new Date() }).where(eq(mapZones.id, current.id));
+        return c.json({ deleted: true, deactivated: true });
+      }
     }
     await db.delete(mapZones).where(eq(mapZones.id, current.id));
     return c.json({ deleted: true });
@@ -281,9 +340,11 @@ export const gameRoutes = new Hono()
     if (!insidePerimeter(perimeter.ring as MapPoint[], body.position)) {
       return fail('A instalação precisa ficar dentro do perímetro do sítio.', 400, 'INSTALLATION_OUTSIDE_PERIMETER');
     }
-    const [existing] = await db.select({ id: mapInstallations.id }).from(mapInstallations)
-      .where(and(eq(mapInstallations.kind, body.kind), eq(mapInstallations.active, true))).limit(1);
-    if (existing) return fail('Esta instalação já está no mapa. Edite a posição dela.', 409, 'INSTALLATION_EXISTS');
+    if (!MULTI_INSTANCE_KINDS.has(body.kind)) {
+      const [existing] = await db.select({ id: mapInstallations.id }).from(mapInstallations)
+        .where(and(eq(mapInstallations.kind, body.kind), eq(mapInstallations.active, true))).limit(1);
+      if (existing) return fail('Esta instalação já está no mapa. Edite a posição dela.', 409, 'INSTALLATION_EXISTS');
+    }
     const [created] = await db.insert(mapInstallations).values(body).returning();
     return c.json(toInstallation(created), 201);
   })

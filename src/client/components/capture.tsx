@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { Camera, Loader2, Mic, Plus, Square } from 'lucide-react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { ENTRY_TYPES } from '../config/entries';
 import { api, ApiError, json } from '../lib/api';
 import { useVoice } from '../lib/voice-context';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
+import { reviewDestination, type ReviewableAction } from '../features/game/review';
 import { Modal } from './feedback';
 import { useToast } from './feedback-context';
 import { Button, ErrorState, Textarea } from './ui';
@@ -12,6 +13,8 @@ import { Button, ErrorState, Textarea } from './ui';
 function formatSeconds(total: number) {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
+
+type CaptureResult = { captureId: string; actions: ReviewableAction[] };
 
 type SheetMode = 'choose' | 'recording' | 'processing';
 
@@ -41,12 +44,21 @@ function CaptureSheet({ open, onClose }: { open: boolean; onClose: () => void })
     setMode('processing');
     setError('');
     try {
-      await api('/api/captures', body);
+      const result = await api<CaptureResult>('/api/captures', body);
       toast('Captura enviada. Revise quando quiser.');
       setMode('choose');
       setText('');
       onClose();
-      navigate('/revisar');
+      // Destino óbvio: uma única ação pendente abre a folha do fato em modo
+      // revisão, já preenchida. Ambíguo/múltiplo/não reconhecido: caderno na
+      // aba Pendências (fallback).
+      const pending = (result.actions ?? []).filter((action) => action.status === 'NEEDS_REVIEW');
+      const target = pending.length === 1 ? reviewDestination(pending[0]) : null;
+      if (pending.length === 1 && target) {
+        navigate('/', { state: { reviewCaptureId: result.captureId, reviewActionId: pending[0].id } });
+      } else {
+        navigate('/', { state: { openNotebook: 'pendencias' } });
+      }
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : 'Não foi possível processar a captura.');
       setMode('choose');
@@ -82,8 +94,9 @@ function CaptureSheet({ open, onClose }: { open: boolean; onClose: () => void })
   return <Modal open={open} title="Assistente de registros" description="Diga o que aconteceu e o assistente preenche — ou registre direto." onClose={close}>
     {mode === 'processing' ? <div className="flex items-center gap-3 py-8 text-sm text-[var(--muted)]"><Loader2 className="animate-spin" size={20} aria-hidden /> Processando a captura…</div>
       : mode === 'recording' ? <div className="grid justify-items-center gap-4 py-4 text-center">
-        <div className="text-4xl font-bold tabular-nums">{formatSeconds(recorder.seconds)}</div>
-        <p className="text-sm text-[var(--muted)]">Gravando… fale e toque em parar.</p>
+        <div className="text-4xl font-bold tabular-nums" data-testid="capture-recording-timer">{formatSeconds(Math.max(0, recorder.maxSeconds - recorder.seconds))}</div>
+        <p className="text-sm text-[var(--muted)]">Gravando… o tempo mostrado é o que RESTA do limite de {recorder.maxSeconds}s. Fale e toque em parar.</p>
+        {recorder.maxSeconds - recorder.seconds <= 10 && <p className="notice notice-warning text-sm" data-testid="capture-recording-warning">O limite está chegando. Para controles longos (muitas vacas), pare e fotografe a anotação — a foto não tem limite de tempo.</p>}
         <Button variant="danger" onClick={() => recorder.stop()}><Square size={16} aria-hidden /> Parar e enviar</Button>
       </div>
         : <div className="grid gap-5">
@@ -99,6 +112,7 @@ function CaptureSheet({ open, onClose }: { open: boolean; onClose: () => void })
                 </label>
                 <Textarea placeholder="Ou escreva: hoje o primeiro lote tirou 700 litros de manhã… (também vira contexto da foto)" value={text} onChange={(event) => setText(event.target.value)} />
                 <Button variant="secondary" disabled={!text.trim()} onClick={() => void sendText()}>Enviar texto</Button>
+                <p className="text-xs text-[var(--muted)]">Áudio tem limite de {recorder.maxSeconds}s. Controle longo? Fotografe a anotação — a revisão abre vaca a vaca do mesmo jeito.</p>
               </div>
               : <p className="notice notice-info text-sm">Defina <code>OPENROUTER_API_KEY</code> no ambiente para ativar áudio, foto e texto livres. Os registros diretos abaixo funcionam sempre.</p>}
           </section>
@@ -110,17 +124,6 @@ function CaptureSheet({ open, onClose }: { open: boolean; onClose: () => void })
           </section>
         </div>}
   </Modal>;
-}
-
-export function CaptureCard() {
-  const [open, setOpen] = useState(false);
-  return <section className="capture-card">
-    <div className="flex items-center gap-2"><Plus size={20} aria-hidden /><strong className="text-base">Assistente de registros</strong></div>
-    <p className="mt-1"><small>A forma principal de lançar no sistema: fale, fotografe ou registre direto — sempre com revisão antes de virar fato.</small></p>
-    <button type="button" className="capture-action mt-3" onClick={() => setOpen(true)}><Plus size={18} aria-hidden /> Novo registro</button>
-    <Link to="/revisar" className="mt-3 inline-block text-sm font-semibold underline">Ver capturas para revisar</Link>
-    <CaptureSheet open={open} onClose={() => setOpen(false)} />
-  </section>;
 }
 
 export function MicFab() {

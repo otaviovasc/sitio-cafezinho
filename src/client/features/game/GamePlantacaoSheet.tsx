@@ -39,7 +39,8 @@ function InputsList({ inputs, title }: { inputs: GamePlantingInput[]; title: str
  * (mesmo editor de linhas do trato, com saldo por item). Sem estoque, a folha
  * aponta para a Loja. Uso além do saldo pede confirmação (BEYOND_BALANCE).
  */
-function PlantForm({ onPlanted, onOpenLoja }: {
+function PlantForm({ zoneId, onPlanted, onOpenLoja }: {
+  zoneId: string;
   onPlanted: (planting: GamePlanting) => void;
   onOpenLoja: () => void;
 }) {
@@ -77,6 +78,7 @@ function PlantForm({ onPlanted, onOpenLoja }: {
     const duration = Number(durationValue.replace(',', '.'));
     try {
       const planted = await api<GamePlanting>('/api/plantings', json('POST', {
+        zoneId,
         cropName: cropName.trim(),
         durationHours: duration * DURATION_TO_HOURS[durationUnit],
         inputs,
@@ -212,8 +214,11 @@ function HarvestResult({ result, onClose }: { result: HarvestedPlanting; onClose
  * crescimento → colher, com o resumo do que foi gasto vs. colhido. O progresso
  * re-deriva a cada segundo com o mesmo cálculo do servidor.
  */
-export function GamePlantacaoSheet({ open, planting, onClose, onPlanted, onHarvested, onCancelled, onOpenLoja }: {
+export function GamePlantacaoSheet({ open, zoneId, zoneName, planting, onClose, onPlanted, onHarvested, onCancelled, onOpenLoja }: {
   open: boolean;
+  /** Zona PLOT (talhão) dona do ciclo — cada talhão tem o seu. */
+  zoneId: string;
+  zoneName: string;
   planting: GamePlanting | null;
   onClose: () => void;
   onPlanted: (planting: GamePlanting) => void;
@@ -237,12 +242,12 @@ export function GamePlantacaoSheet({ open, planting, onClose, onPlanted, onHarve
   const subtitle = result
     ? 'Colheita registrada.'
     : !planting
-      ? 'Talhão vazio: plante com sementes e insumos.'
+      ? `${zoneName}: talhão vazio — plante com sementes e insumos.`
       : stage === 'READY'
-        ? 'Pronto para colher!'
-        : 'Crescendo no ritmo do relógio.';
+        ? `${zoneName}: pronto para colher!`
+        : `${zoneName}: crescendo no ritmo do relógio.`;
 
-  return <GameSheet open={open} label="Plantação" testid="game-plantacao-sheet" title="Plantação" subtitle={subtitle} onClose={onClose}
+  return <GameSheet open={open} label={`Plantação — ${zoneName}`} testid="game-plantacao-sheet" title="Plantação" subtitle={subtitle} onClose={onClose}
     sprite={<PlantacaoSprite x={32} y={32} size={64} stage={result ? 'EMPTY' : stage === 'EMPTY' ? 'EMPTY' : stage} />}>
     <div className="game-sheet-body">
       {result
@@ -250,7 +255,7 @@ export function GamePlantacaoSheet({ open, planting, onClose, onPlanted, onHarve
         : !planting
           ? <div className="grid gap-3">
             <p className="inline-flex items-center gap-2 text-sm text-[#6b6e60]"><Sprout size={16} aria-hidden /> O plantio usa insumos do Depósito (compre na Loja) e o ciclo corre no relógio — quando terminar, o talhão fica dourado e a colheita libera.</p>
-            <PlantForm onPlanted={onPlanted} onOpenLoja={onOpenLoja} />
+            <PlantForm zoneId={zoneId} onPlanted={onPlanted} onOpenLoja={onOpenLoja} />
           </div>
           : stage === 'READY'
             ? <HarvestForm planting={planting} onHarvested={(harvested) => { setResult(harvested); onHarvested(harvested); }} />

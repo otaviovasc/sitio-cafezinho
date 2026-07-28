@@ -81,5 +81,5 @@ export function useAudioRecorder(maxSeconds = 60) {
     }
   }, [cleanup, maxSeconds, stop]);
 
-  return { recording, seconds, error, start, stop };
+  return { recording, seconds, maxSeconds, error, start, stop };
 }

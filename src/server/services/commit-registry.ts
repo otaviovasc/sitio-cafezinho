@@ -6,6 +6,7 @@ import { GUARDRAILS } from '../../domain/guardrails.js';
 import type { ProposedActionType } from '../../domain/nl/resolve.js';
 import { fail } from '../http/api-error.js';
 import { createDailyMilkTotal } from './daily-milk.service.js';
+import { createWeightSession, weightSessionCreateSchema } from './weight-session.service.js';
 
 type CollectionSource = 'DRIVER_READING' | 'TANK_READING' | 'RECEIPT' | 'OTHER';
 type RevenueCategory = 'MILK_SALE' | 'CALF_SALE' | 'CULL_SALE' | 'ANIMAL_SALE' | 'OTHER';
@@ -235,6 +236,16 @@ const committers: Partial<Record<ProposedActionType, Committer>> = {
       notes,
     }).returning();
     return { recordType: 'mastitis_case', recordId: created.id };
+  },
+
+  // Pesagem falada/fotografada: a revisão linha a linha aconteceu na folha da
+  // balança (revalidada pelo /api/weight-sessions/validate); aqui o payload
+  // revisado vira a sessão real pelo mesmo serviço do POST /api/weight-sessions.
+  WEIGHT_SESSION: async (payload) => {
+    const parsed = weightSessionCreateSchema.safeParse(payload);
+    if (!parsed.success) return fail(parsed.error.issues.map((issue) => issue.message).join('; '), 400, 'INVALID_WEIGHT_SESSION');
+    const created = await createWeightSession(parsed.data);
+    return { recordType: 'weight_session', recordId: created.id };
   },
 };
 

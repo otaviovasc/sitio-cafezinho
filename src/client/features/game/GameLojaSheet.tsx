@@ -19,14 +19,16 @@ import { LojaSprite } from './sprites/LojaSprite';
  * para insumos estocáveis, credita o Depósito (feed_items +
  * feed_purchase_entries) — regra de ouro: nada de moeda fictícia.
  */
-export function GameLojaSheet({ open, onClose, onPurchased }: {
+export function GameLojaSheet({ open, initialCategory = 'sementes', onClose, onPurchased }: {
   open: boolean;
+  /** Categoria inicial da vitrine (a Garagem abre direto em combustível). */
+  initialCategory?: LojaCategoryId;
   onClose: () => void;
   onPurchased: (item: LojaItem) => void;
 }) {
   const { busy, error, run, setError } = useSubmit();
   const inventoryResource = useResource<FeedInventoryRow[]>('/api/feed-inventory');
-  const [category, setCategory] = useState<LojaCategoryId>('sementes');
+  const [category, setCategory] = useState<LojaCategoryId>(initialCategory);
   const [openItemId, setOpenItemId] = useState<string | null>(null);
   /** Quantos pacotes (sacos, frascos…) estão sendo comprados. */
   const [packs, setPacks] = useState('1');

@@ -11,16 +11,20 @@ import {
   resolvePurchase,
   resolveRevenue,
   resolveSpokenDate,
+  resolveWeightSession,
   type ResolvableGroup,
+  type ResolveContext,
 } from '../../src/domain/nl/resolve';
-import type {
-  DailyMilkTotalIntent,
-  IndividualMilkSessionIntent,
-  MastitisIntent,
-  MilkCollectionIntent,
-  PurchaseIntent,
-  RevenueIntent,
-  SpokenDate,
+import {
+  voiceIntentSchema,
+  type DailyMilkTotalIntent,
+  type IndividualMilkSessionIntent,
+  type MastitisIntent,
+  type MilkCollectionIntent,
+  type PurchaseIntent,
+  type RevenueIntent,
+  type SpokenDate,
+  type WeightSessionIntent,
 } from '../../src/domain/nl/intents';
 
 const NOW = new Date('2026-07-17T12:00:00-03:00');
@@ -220,5 +224,52 @@ describe('matchAnimalByLabel — paridade com o casamento exato existente', () =
 
   it('rótulo desconhecido não casa', () => {
     expect(matchAnimalByLabel('Estrela', animals, aliases)).toBeUndefined();
+  });
+});
+
+describe('weight_session — intent e resolvedor', () => {
+  const animals = [
+    { id: 'a1', name: 'Mimosa', tagNumber: null },
+    { id: 'a2', name: 'Estrela', tagNumber: '42' },
+  ];
+  const ctx: ResolveContext = { groups, animals, aliases: [], suppliers: [], feedItems: [] };
+
+  function weightIntent(measurements: WeightSessionIntent['measurements']): WeightSessionIntent {
+    return { type: 'weight_session', date: spoken('hoje', 'hoje'), measurements };
+  }
+
+  it('o schema aceita o intent weight_session com linhas animal+kg', () => {
+    const parsed = voiceIntentSchema.parse({
+      type: 'weight_session',
+      date: { relative: 'hoje', iso: null, rawText: 'hoje' },
+      measurements: [
+        { animalLabel: 'Mimosa', weightKg: 420, rawValueText: '420', confidence: 'HIGH', notes: null },
+        { animalLabel: 'Estrela', weightKg: null, rawValueText: 'ilegível', confidence: 'LOW', notes: null },
+      ],
+    });
+    expect(parsed.type).toBe('weight_session');
+  });
+
+  it('casa animais pelo matching exato e preserva rótulos e valores originais', () => {
+    const resolved = resolveWeightSession(weightIntent([
+      { animalLabel: 'mimosa', weightKg: 420, rawValueText: '420', confidence: 'HIGH', notes: null },
+      { animalLabel: '42', weightKg: 385.5, rawValueText: '385 e meio', confidence: 'HIGH', notes: 'pescoço sujo' },
+    ]), ctx, NOW);
+    expect(resolved.actionType).toBe('WEIGHT_SESSION');
+    expect(resolved.commitStatus).toBe('NEEDS_REVIEW');
+    expect(resolved.resolvedPayload.measuredOn).toBe('2026-07-17');
+    const measurements = resolved.resolvedPayload.measurements as Array<Record<string, unknown>>;
+    expect(measurements[0]).toMatchObject({ rawAnimalLabel: 'mimosa', rawValueText: '420', weightKg: 420, animalId: 'a1', excluded: false });
+    expect(measurements[1]).toMatchObject({ rawAnimalLabel: '42', weightKg: 385.5, animalId: 'a2', notes: 'pescoço sujo' });
+  });
+
+  it('linha sem vínculo ou sem peso fica pendente, nunca inventa animal nem peso', () => {
+    const resolved = resolveWeightSession(weightIntent([
+      { animalLabel: 'Desconhecida', weightKg: null, rawValueText: 'borrado', confidence: 'LOW', notes: null },
+    ]), ctx, NOW);
+    const measurements = resolved.resolvedPayload.measurements as Array<Record<string, unknown>>;
+    expect(measurements[0].animalId).toBeNull();
+    expect(measurements[0].weightKg).toBeNull();
+    expect(measurements[0].rawAnimalLabel).toBe('Desconhecida');
   });
 });

@@ -2,7 +2,7 @@ import { FormEvent, useState } from 'react';
 import { Activity, ArrowLeft, ArrowRightLeft, Banknote, ChartLine, HeartPulse, MapPin, Pencil, Plus, Scale, Tags, Trash2, Upload } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import type { AnimalSex, AnimalStatus } from '../../domain/animal-lifecycle';
-import { allowedNextStatuses, animalStatuses, isLiveStatus, statusAllowedForSex, statusRequiresMilkingGroup } from '../../domain/animal-lifecycle';
+import { allowedNextStatuses, isLiveStatus } from '../../domain/animal-lifecycle';
 import { filterByPeriod, type PeriodDays } from '../../domain/analytics';
 import { formatDate, formatLiters } from '../../domain/format';
 import { formatWeight } from '../../domain/weight';
@@ -12,28 +12,24 @@ import { TimeSeriesChart } from '../components/TimeSeriesChart';
 import { type Attachment } from '../components/AttachmentPanel';
 import { useToast } from '../components/feedback-context';
 import { ConfirmButton, Modal } from '../components/feedback';
-import { Badge, Button, EmptyState, ErrorState, Field, FormErrorSummary, InlineEmpty, Input, PageHeader, ScrollArea, SectionCard, Select, SkeletonList, StatCard, StatusBadge, SubmitBar, Textarea } from '../components/ui';
+import { Badge, Button, EmptyState, ErrorState, Field, InlineEmpty, Input, PageHeader, ScrollArea, SectionCard, SkeletonList, StatCard, StatusBadge } from '../components/ui';
 import { FilterControls } from '../components/FilterControls';
 import { animalStatusDescriptor, milkMeasurementStatusDescriptor, missingGroupDescriptor } from '../lib/status';
+import { AnimalForm } from '../features/animals/AnimalForm';
 import { AnimalGroupChangeForm } from '../features/animals/AnimalGroupChangeForm';
 import { AnimalStatusChangeForm } from '../features/animals/AnimalStatusChangeForm';
 import { AnimalWeightPanel, type AnimalWeight } from '../features/animals/AnimalWeightPanel';
 import { BulkAnimalForm } from '../features/animals/BulkAnimalForm';
-import { GroupPicker, type HerdGroup } from '../features/animals/GroupPicker';
+import { type HerdGroup } from '../features/animals/GroupPicker';
 import { HerdGroupForm } from '../features/animals/HerdGroupForm';
-import { milkingGroupRoutines, nonMilkingGroupRoutines } from '../features/animals/group-routines';
 import { ReproductiveEventForm, type ReproductiveEvent } from '../features/animals/ReproductiveEventForm';
 import { AnimalCycleSection } from '../features/animals/detail/AnimalCycleSection';
 import { AnimalMastitisSection } from '../features/animals/detail/AnimalMastitisSection';
 import { AnimalExitsSection } from '../features/animals/detail/AnimalExitsSection';
-import { MovePastureForm } from '../features/pastures/MovePastureForm';
 import type { PastureSummary } from '../features/pastures/types';
-import { useForm } from '../hooks/useForm';
 import { useResource } from '../hooks/useResource';
-import { useSubmit } from '../hooks/useSubmit';
-import { useUnsavedGuard } from '../hooks/useUnsavedGuard';
 import { api, json } from '../lib/api';
-import { animalSexLabels, animalStatusLabels, milkingRoutineLabels, today } from '../lib/labels';
+import { animalSexLabels, milkingRoutineLabels, today } from '../lib/labels';
 
 type Alias = { id: string; alias: string };
 type CurrentGroup = Pick<HerdGroup, 'id' | 'name' | 'milkingRoutine'>;
@@ -163,10 +159,9 @@ export function HerdGroupAnimalsPage() {
   const { groupId = '' } = useParams();
   const isUnassigned = groupId === 'sem-lote';
   const [search, setSearch] = useState('');
-  const [showPastureForm, setShowPastureForm] = useState(false);
   const { data, loading, error, reload } = useResource<Animal[]>('/api/animals');
   const { data: groups } = useResource<HerdGroup[]>('/api/herd-groups');
-  const { data: pastures = [], reload: reloadPastures } = useResource<PastureSummary[]>('/api/pastures');
+  const { data: pastures = [] } = useResource<PastureSummary[]>('/api/pastures');
   const group = groups?.find((item) => item.id === groupId) ?? null;
   const pasture = (pastures ?? []).find((item) => item.currentOccupancy?.herdGroupId === groupId) ?? null;
   const normalizedSearch = search.trim().toLocaleLowerCase('pt-BR');
@@ -183,12 +178,9 @@ export function HerdGroupAnimalsPage() {
 
   return <div className="page">
     <PageHeader icon={CowHead} title={title} subtitle={subtitle} action={<div className="flex flex-wrap gap-2">
-      {!isUnassigned && group && <Button variant="secondary" onClick={() => setShowPastureForm(true)}><MapPin size={17} aria-hidden />Mover pasto</Button>}
+      {!isUnassigned && group && <Link className="button button-secondary" to="/"><MapPin size={17} aria-hidden />Gerenciar pastos no mapa</Link>}
       <Link className="button button-secondary" to="/rebanho"><ArrowLeft size={17} aria-hidden />Todos os lotes</Link>
     </div>} />
-    <Modal open={showPastureForm} title={`Pasto de ${group?.name ?? 'lote'}`} onClose={() => setShowPastureForm(false)}>
-      {group && <MovePastureForm group={group} pastures={pastures ?? []} onCancel={() => setShowPastureForm(false)} onSaved={async () => { await reloadPastures(); setShowPastureForm(false); }} />}
-    </Modal>
     <FilterControls search={{ value: search, onChange: setSearch, placeholder: 'Nome, brinco ou alias' }} />
     <div className="mt-5" data-testid="herd-group-animals">
       {loading ? <SkeletonList rows={6} /> : error ? <ErrorState message={error} retry={reload} /> : !filtered.length
@@ -196,85 +188,6 @@ export function HerdGroupAnimalsPage() {
         : <AnimalRows animals={filtered} />}
     </div>
   </div>;
-}
-
-function AnimalForm({ initial, onSaved }: { initial?: AnimalDetail; onSaved?: () => void | Promise<void> }) {
-  const toast = useToast();
-  const navigate = useNavigate();
-  const { busy, error, run } = useSubmit();
-  const { data: herd = [] } = useResource<Animal[]>('/api/animals');
-  const form = useForm(
-    {
-      name: initial?.name ?? '',
-      tagNumber: initial?.tagNumber ?? '',
-      sex: 'FEMALE' as AnimalSex,
-      status: (initial?.status ?? 'LACTATING') as AnimalStatus,
-      groupId: '',
-      changedOn: today(),
-      damId: '',
-      sireId: '',
-      notes: initial?.notes ?? '',
-    },
-    {
-      name: (value, all) => (!value.trim() && !all.tagNumber.trim() ? 'Informe o nome ou o número do brinco.' : undefined),
-      groupId: (value, all) => (!initial && statusRequiresMilkingGroup(all.status) && !value ? 'Selecione o lote de ordenha.' : undefined),
-      changedOn: (value) => (!initial && !value ? 'Informe a data inicial.' : undefined),
-    },
-  );
-  useUnsavedGuard(form.dirty);
-  const { sex, status } = form.values;
-  const statusOptions = animalStatuses.filter((candidate) => isLiveStatus(candidate) && statusAllowedForSex(candidate, sex));
-  const dams = (herd ?? []).filter((animal) => animal.sex === 'FEMALE' && isLiveStatus(animal.status));
-  const sires = (herd ?? []).filter((animal) => animal.status === 'BULL');
-
-  function changeSex(next: AnimalSex) {
-    form.set('sex', next);
-    if (!statusAllowedForSex(form.values.status, next)) {
-      const fallback = animalStatuses.find((candidate) => isLiveStatus(candidate) && statusAllowedForSex(candidate, next));
-      if (fallback) changeStatus(fallback);
-    }
-  }
-
-  function changeStatus(next: AnimalStatus) {
-    form.set('status', next);
-    // Lote escolhido para outra rotina não é reaproveitado (ordenha × sem ordenha).
-    form.set('groupId', '');
-  }
-
-  async function persist() {
-    const { name, tagNumber, sex: animalSexValue, status: statusValue, groupId, changedOn, damId, sireId, notes } = form.values;
-    const body = initial
-      ? { name: name.trim() || null, tagNumber: tagNumber.trim() || null, notes: notes.trim() || null }
-      : { name: name.trim() || null, tagNumber: tagNumber.trim() || null, sex: animalSexValue, status: statusValue, groupId: groupId || null, damId: damId || null, sireId: sireId || null, changedOn, notes: notes.trim() || null };
-    const saved = await api<{ id: string }>(initial ? `/api/animals/${initial.id}` : '/api/animals', json(initial ? 'PATCH' : 'POST', body));
-    toast(initial ? 'Identificação atualizada' : 'Animal cadastrado');
-    if (initial && onSaved) await onSaved(); else navigate(`/rebanho/${saved.id}`);
-  }
-
-  return <form className="page-narrow grid gap-5" noValidate onSubmit={(event) => { event.preventDefault(); if (form.validate()) void run(persist); }}>
-    {error && <ErrorState message={error} />}
-    <FormErrorSummary errors={form.visibleErrors} />
-    <SectionCard><div className="grid gap-4">
-      <Field label="Nome" hint="Informe o nome ou o brinco." error={form.error('name')}><Input value={form.values.name} onChange={(event) => form.set('name', event.target.value)} onBlur={() => form.blur('name')} autoFocus /></Field>
-      <Field label="Número do brinco" hint="Pode ser usado no lugar do nome."><Input inputMode="numeric" value={form.values.tagNumber} onChange={(event) => { form.set('tagNumber', event.target.value); form.blur('name'); }} /></Field>
-      {!initial && <>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Sexo"><Select value={sex} onChange={(event) => changeSex(event.target.value as AnimalSex)} required>{Object.entries(animalSexLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select></Field>
-          <Field label="Situação inicial"><Select value={status} onChange={(event) => changeStatus(event.target.value as AnimalStatus)}>{statusOptions.map((value) => <option key={value} value={value}>{animalStatusLabels[value]}</option>)}</Select></Field>
-        </div>
-        <Field label="Data inicial" error={form.error('changedOn')}><Input type="date" value={form.values.changedOn} max={today()} onChange={(event) => form.set('changedOn', event.target.value)} onBlur={() => form.blur('changedOn')} required /></Field>
-        {statusRequiresMilkingGroup(status)
-          ? <GroupPicker label="Lote de ordenha" routines={milkingGroupRoutines} value={form.values.groupId} fieldError={form.error('groupId')} onChange={(value) => form.set('groupId', value)} />
-          : <GroupPicker label="Lote (sem ordenha)" routines={nonMilkingGroupRoutines} required={false} value={form.values.groupId} fieldError={form.error('groupId')} onChange={(value) => form.set('groupId', value)} />}
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Mãe (opcional)" hint="Somente fêmeas vivas do rebanho."><Select value={form.values.damId} onChange={(event) => form.set('damId', event.target.value)}><option value="">Não informada</option>{dams.map((animal) => <option key={animal.id} value={animal.id}>{animalName(animal)}</option>)}</Select></Field>
-          <Field label="Pai (opcional)" hint="Somente touros vivos do rebanho."><Select value={form.values.sireId} onChange={(event) => form.set('sireId', event.target.value)}><option value="">Não informado</option>{sires.map((animal) => <option key={animal.id} value={animal.id}>{animalName(animal)}</option>)}</Select></Field>
-        </div>
-      </>}
-      <Field label="Observações"><Textarea value={form.values.notes} onChange={(event) => form.set('notes', event.target.value)} /></Field>
-    </div></SectionCard>
-    <SubmitBar label={initial ? 'Salvar alterações' : 'Salvar animal'} busy={busy} />
-  </form>;
 }
 
 export function NewAnimalPage() {

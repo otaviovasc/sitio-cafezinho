@@ -13,7 +13,10 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await expect(page.getByText('Senha incorreta.')).toBeVisible();
   await page.getByLabel('Senha', { exact: true }).fill(process.env.APP_PASSWORD ?? 'senha-local-segura');
   await page.getByRole('button', { name: 'Entrar' }).click();
-  await expect(page.getByRole('heading', { name: 'Hoje', exact: true })).toBeVisible();
+  // A home é o jogo; o conteúdo do "Hoje" mora na aba Hoje do Caderno.
+  await expect(page.getByTestId('game-root')).toBeVisible();
+  await page.goto('/?caderno=hoje');
+  await expect(page.getByTestId('game-notebook')).toBeVisible();
   const operationDate = await page.evaluate(async () => (await fetch('/api/dashboard').then((response) => response.json()) as { date: string }).date);
   await expect(page.getByText('Visão mensal')).toBeVisible();
   await expect(page.getByText('Resumo de hoje')).toBeVisible();
@@ -553,7 +556,14 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await expect(page.getByText(`${feedCatalogName} atualizado`, { exact: true })).toBeVisible();
 
   const unmockOcrReview = await mockOcrFeedPurchaseReview(page);
+  // /revisar virou redirect para o Caderno na aba Pendências; a revisão abre a
+  // folha do fato a partir do detalhe da captura.
   await page.goto('/revisar');
+  await expect(page.getByTestId('game-notebook')).toBeVisible();
+  await page.getByTestId('game-notebook-item-captureAction-action-ocr-visual').click();
+  await page.getByTestId('game-notebook-review-open').click();
+  await expect(page.getByTestId('game-deposito-sheet')).toBeVisible();
+  await expect(page.getByTestId('game-sheet-review-badge')).toBeVisible();
   await expect(page.getByLabel('Nome do item')).toHaveValue('POWERLAC 120 P');
   await expect(page.getByRole('button', { name: 'Confirmar compra' })).toBeDisabled();
   await page.screenshot({ path: testInfo.outputPath('revisao-ocr-pendencias.png'), fullPage: true });

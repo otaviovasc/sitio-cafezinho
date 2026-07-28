@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, notInArray } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb } from '../../db/client.js';
@@ -68,7 +68,7 @@ async function persistCapture(base: CaptureBase, interpretation: InterpretResult
   });
 }
 
-async function refreshCaptureStatus(captureId: string) {
+export async function refreshCaptureStatus(captureId: string) {
   const remaining = await getDb().select({ id: proposedActions.id }).from(proposedActions)
     .where(and(eq(proposedActions.captureId, captureId), eq(proposedActions.status, 'NEEDS_REVIEW'))).limit(1);
   await getDb().update(captures)
@@ -131,7 +131,9 @@ export const captureRoutes = new Hono()
     return c.json({ captureId: capture.id, transcript: capture.transcript, status: capture.status, actions }, 201);
   })
   .get('/captures', async (c) => {
-    const rows = await getDb().select().from(captures).where(ne(captures.status, 'DISMISSED')).orderBy(desc(captures.createdAt)).limit(200);
+    // Só pendências reais: capturas com todas as ações resolvidas (REVIEWED)
+    // ou descartadas saem da fila de revisão.
+    const rows = await getDb().select().from(captures).where(notInArray(captures.status, ['DISMISSED', 'REVIEWED'])).orderBy(desc(captures.createdAt)).limit(200);
     const ids = rows.map((row) => row.id);
     const actions = ids.length
       ? await getDb().select().from(proposedActions).where(inArray(proposedActions.captureId, ids)).orderBy(asc(proposedActions.createdAt))

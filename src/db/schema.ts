@@ -71,8 +71,11 @@ export const proposedActionStatus = pgEnum('proposed_action_status', ['NEEDS_REV
 // polígonos em lat/lng traçados uma vez sobre satélite. Zonas de pasto são o
 // desenho de um pasto real (tabela pastures); o lote exibido dentro deriva da
 // ocupação real (pasture_occupancies), nunca de vínculo próprio da zona.
-export const mapZoneKind = pgEnum('map_zone_kind', ['PERIMETER', 'PASTURE']);
-export const mapInstallationKind = pgEnum('map_installation_kind', ['MANGUEIRA', 'DEPOSITO', 'GARAGEM', 'CASA', 'ESTACAO_ALIMENTACAO', 'PLANTACAO']);
+export const mapZoneKind = pgEnum('map_zone_kind', ['PERIMETER', 'PASTURE', 'PLOT']);
+// PLANTACAO não é mais instalação: virou zona de terra (PLOT) na migração 0020.
+// ESTACAO_ALIMENTACAO é o Cocho (rótulo novo, valor preservado para não
+// quebrar dados). COCHO/BALANCA/ENFERMARIA são multi-instância (name diferencia).
+export const mapInstallationKind = pgEnum('map_installation_kind', ['MANGUEIRA', 'DEPOSITO', 'GARAGEM', 'CASA', 'ESTACAO_ALIMENTACAO', 'BALANCA', 'ENFERMARIA', 'PORTEIRA']);
 
 // Plantação: ciclo real de roça (plantio com insumos → crescimento por relógio
 // → colheita). O progresso nunca é armazenado — deriva de planted_at +
@@ -546,8 +549,9 @@ export const mapZones = pgTable('map_zones', {
   check('map_zones_perimeter_unlinked', sql`${table.kind} != 'PERIMETER' or ${table.pastureId} is null`),
 ]);
 
-// Instalações do mapa (MVP: só MANGUEIRA tem ações; enum amplo é a costura
-// para Depósito/Garagem/Casa). `position` = { lat, lng }.
+// Instalações do mapa: pontos com função (MANGUEIRA, DEPOSITO, CASA, GARAGEM,
+// PORTEIRA únicos; COCHO/BALANCA/ENFERMARIA multi-instância — o `name`
+// diferencia e aparece no rótulo). `position` = { lat, lng }.
 export const mapInstallations = pgTable('map_installations', {
   id: uuid('id').primaryKey().defaultRandom(),
   kind: mapInstallationKind('kind').notNull(),
@@ -556,7 +560,8 @@ export const mapInstallations = pgTable('map_installations', {
   active: boolean('active').notNull().default(true),
   ...auditColumns,
 }, (table) => [
-  uniqueIndex('map_installations_kind_unique').on(table.kind).where(sql`${table.active}`),
+  uniqueIndex('map_installations_singleton_kind_unique').on(table.kind)
+    .where(sql`${table.active} and ${table.kind} in ('MANGUEIRA', 'DEPOSITO', 'GARAGEM', 'CASA', 'PORTEIRA')`),
 ]);
 
 // Catálogo de alimentos (nome PT-BR + unidade canônica). Toneladas viram KG no
@@ -608,11 +613,11 @@ export const feedingEventItems = pgTable('feeding_event_items', {
   check('feeding_event_items_positive', sql`${table.quantity} > 0`),
 ]);
 
-// Um ciclo de plantio no talhão da Plantação. Só um GROWING por instalação;
-// a colheita registra o que saiu (quantidade + unidade livres).
+// Um ciclo de plantio num talhão (zona PLOT do mapa). Só um GROWING por
+// talhão; a colheita registra o que saiu (quantidade + unidade livres).
 export const plantings = pgTable('plantings', {
   id: uuid('id').primaryKey().defaultRandom(),
-  installationId: uuid('installation_id').notNull().references(() => mapInstallations.id, { onDelete: 'cascade' }),
+  zoneId: uuid('zone_id').notNull().references(() => mapZones.id, { onDelete: 'cascade' }),
   cropName: text('crop_name').notNull(),
   plantedAt: timestamp('planted_at', { withTimezone: true }).notNull().defaultNow(),
   durationHours: numeric('duration_hours', { precision: 10, scale: 3 }).notNull(),
@@ -623,8 +628,8 @@ export const plantings = pgTable('plantings', {
   notes: text('notes'),
   ...auditColumns,
 }, (table) => [
-  uniqueIndex('plantings_growing_unique').on(table.installationId).where(sql`${table.status} = 'GROWING'`),
-  index('plantings_installation_idx').on(table.installationId),
+  uniqueIndex('plantings_growing_unique').on(table.zoneId).where(sql`${table.status} = 'GROWING'`),
+  index('plantings_zone_idx').on(table.zoneId),
   check('plantings_duration_positive', sql`${table.durationHours} > 0`),
 ]);
 

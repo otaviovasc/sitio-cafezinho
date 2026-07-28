@@ -2,6 +2,15 @@
 
 Padrões obrigatórios do app. Toda tela nova (e as existentes, à medida que forem tocadas) segue estes padrões. Referência viva: `src/client/pages/MilkCollectionPages.tsx` (`MilkCollectionForm`).
 
+## O jogo é o shell
+
+Desde a fase 6, `/` é o jogo e ele é a superfície central: **visualizar, criar e editar acontece nas folhas do jogo e no Caderno**, nunca em páginas novas do app. Para qualquer superfície nova:
+
+- Use o kit do jogo (`docs/game-design.md`, seção "Game UI kit"): `GameSheet`/`GameEntitySheet` para entidades, aba ou seção do `GameNotebook` para listas, estilos `.game-*` e cores via tokens — nunca uma moldura ou paleta ad hoc.
+- Página clássica (`.page` + `PageHeader`) só se justifica para **gráficos e auditoria**; nesse caso ela entra no hub `/graficos` e nos destinos de "voltar" (`components/ui.tsx`).
+- O menu do `AppShell` é mínimo (Mapa, Caderno, Gráficos) e não cresce: funcionalidade nova ganha lugar no jogo, não item de menu.
+- Formulários dentro das folhas usam as mesmas peças de sempre (abaixo) — o kit muda a moldura, não a disciplina de formulário.
+
 ## Formulários
 
 Um formulário padrão combina quatro peças:

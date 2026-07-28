@@ -2,7 +2,7 @@ import { and, asc, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb } from '../../db/client.js';
-import { animalAliases, animalGroupAssignments, animals, animalStatusEvents, attachments, dailyMilkTotals, herdGroups, milkMeasurements, milkSessions } from '../../db/schema.js';
+import { animalAliases, animalGroupAssignments, animals, animalStatusEvents, attachments, dailyMilkTotals, herdGroups, milkMeasurements, milkSessions, proposedActions } from '../../db/schema.js';
 import { canRegisterAnimalFromMeasurement, identityFromRawAnimalLabel } from '../../domain/animal-registration.js';
 import { decimalString, normalizeLabel } from '../../domain/format.js';
 import { resolveDailyMilkByDate } from '../../domain/daily-milk.js';
@@ -12,6 +12,7 @@ import { estimateSplit } from '../../domain/milk.js';
 import { fail } from '../http/api-error.js';
 import { decimalInput, optionalText, readJson, validate } from '../http/validation.js';
 import { createMilkSession, loadMilkingHerdOnDate, mergeMilkSession } from '../services/milk-session.service.js';
+import { refreshCaptureStatus } from './captures.routes.js';
 
 const measurementBaseSchema = z.object({
   animalId: z.string().uuid().nullable().optional(),
@@ -62,6 +63,28 @@ const bulkRegisterAnimalsSchema = z.object({
   path: ['measurementIds'],
   message: 'Não repita a mesma linha.',
 });
+
+// O handoff da revisão (/revisar → /producao/importar) informa a ação proposta
+// de origem para que ela saia de NEEDS_REVIEW quando a importação salvar.
+const importSessionSchema = sessionSchema.extend({
+  sourceCaptureId: z.string().uuid().optional(),
+  sourceActionId: z.string().uuid().optional(),
+});
+
+async function resolveSourceAction(sourceCaptureId: string | undefined, sourceActionId: string | undefined, sessionId: string) {
+  if (!sourceCaptureId || !sourceActionId) return;
+  const [updated] = await getDb().update(proposedActions).set({
+    status: 'CONFIRMED',
+    committedRecordType: 'milk_session',
+    committedRecordId: sessionId,
+    updatedAt: new Date(),
+  }).where(and(
+    eq(proposedActions.id, sourceActionId),
+    eq(proposedActions.captureId, sourceCaptureId),
+    eq(proposedActions.status, 'NEEDS_REVIEW'),
+  )).returning({ id: proposedActions.id });
+  if (updated) await refreshCaptureStatus(sourceCaptureId);
+}
 
 export const milkRoutes = new Hono()
   .get('/milk-sessions', async (c) => {
@@ -352,13 +375,15 @@ export const milkRoutes = new Hono()
     return c.json({ sessionDate: parsed.sessionDate, sourceMode: parsed.sourceMode, measurements, missingAnimals, sessionIssues, sessionWarnings, existingSession });
   })
   .post('/import/milk-session', async (c) => {
-    const body = validate(sessionSchema, await readJson(c));
+    const { sourceCaptureId, sourceActionId, ...body } = validate(importSessionSchema, await readJson(c));
     const [sameDate] = await getDb().select({ id: milkSessions.id }).from(milkSessions).where(eq(milkSessions.sessionDate, body.sessionDate)).limit(1);
     if (sameDate) {
       const merged = await mergeMilkSession(sameDate.id, { ...body, source: 'IMPORT', title: body.title || 'Controle importado' });
+      await resolveSourceAction(sourceCaptureId, sourceActionId, merged.id);
       return c.json(merged);
     }
     const created = await createMilkSession({ ...body, source: 'IMPORT', title: body.title || 'Controle importado' });
+    await resolveSourceAction(sourceCaptureId, sourceActionId, created.id);
     return c.json(created, 201);
   })
   .post('/milk-sessions', async (c) => {

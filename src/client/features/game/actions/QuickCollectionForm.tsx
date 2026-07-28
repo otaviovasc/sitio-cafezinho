@@ -7,6 +7,7 @@ import { useForm } from '../../../hooks/useForm';
 import { useSubmit } from '../../../hooks/useSubmit';
 import { api, json, ApiError } from '../../../lib/api';
 import { today } from '../../../lib/labels';
+import type { ReviewSubmit } from '../review';
 
 export type MilkCollectionSaved = { id: string; collectionDate: string; liters: string };
 
@@ -14,12 +15,18 @@ export type MilkCollectionSaved = { id: string; collectionDate: string; liters: 
  * Coleta do laticínio direto da mangueira: data + litros retirados. Grava o
  * fato real em /api/milk-collections; a possível duplicata (mesma data e
  * volume) usa o erro real do endpoint, com confirmação explícita.
+ * Com `review`, o submit confirma pela pipeline de revisão (commit da ação
+ * proposta) em vez de gravar direto — o humano já revisou a duplicata.
  */
-export function QuickCollectionForm({ onSaved }: { onSaved: (collection: MilkCollectionSaved) => void }) {
+export function QuickCollectionForm({ initial, review, onSaved }: {
+  initial?: { collectionDate: string; liters: string; notes: string };
+  review?: ReviewSubmit;
+  onSaved: (collection: MilkCollectionSaved) => void;
+}) {
   const { busy, error, run, setError } = useSubmit();
   const [possibleDuplicate, setPossibleDuplicate] = useState(false);
   const form = useForm(
-    { collectionDate: today(), liters: '', notes: '' },
+    { collectionDate: initial?.collectionDate ?? today(), liters: initial?.liters ?? '', notes: initial?.notes ?? '' },
     {
       collectionDate: (value) => (value ? undefined : 'Informe a data da coleta.'),
       liters: (value) => {
@@ -34,12 +41,17 @@ export function QuickCollectionForm({ onSaved }: { onSaved: (collection: MilkCol
   async function persist(confirmDuplicate: boolean) {
     setPossibleDuplicate(false);
     try {
-      const saved = await api<MilkCollectionSaved>('/api/milk-collections', json('POST', {
+      const body = {
         collectionDate: form.values.collectionDate,
         liters: parseDecimal(form.values.liters),
         notes: form.values.notes.trim() || null,
         confirmPossibleDuplicate: confirmDuplicate,
-      }));
+      };
+      if (review) {
+        await review.onCommit(body);
+        return;
+      }
+      const saved = await api<MilkCollectionSaved>('/api/milk-collections', json('POST', body));
       onSaved(saved);
     } catch (cause) {
       if (cause instanceof ApiError && cause.code === 'POSSIBLE_DUPLICATE') setPossibleDuplicate(true);
@@ -60,7 +72,7 @@ export function QuickCollectionForm({ onSaved }: { onSaved: (collection: MilkCol
     </div>
     <Field label="Observação (opcional)"><Textarea className="min-h-12" placeholder="Ex.: leitura do motorista" value={form.values.notes} onChange={(event) => form.set('notes', event.target.value)} /></Field>
     <SubmitBar
-      label="Registrar coleta"
+      label={review?.label ?? 'Registrar coleta'}
       busy={busy}
       secondary={possibleDuplicate && <Button variant="secondary" type="button" disabled={busy} onClick={() => { setError(''); void run(() => persist(true)); }}>Era outra coleta — registrar mesmo assim</Button>}
     />

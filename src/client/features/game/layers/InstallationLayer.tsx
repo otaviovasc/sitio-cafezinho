@@ -1,33 +1,24 @@
 import type { KeyboardEvent } from 'react';
 import type { GameProjection } from '../../../../domain/game/projection';
 import type { GameMapInstallation } from '../../../../domain/game/state';
-import { DepositoSprite } from '../sprites/DepositoSprite';
-import { EstacaoAlimentacaoSprite } from '../sprites/EstacaoAlimentacaoSprite';
-import { GaragemSprite } from '../sprites/GaragemSprite';
-import { MangueiraSprite } from '../sprites/MangueiraSprite';
-import { PlantacaoSprite, type PlantacaoStage } from '../sprites/PlantacaoSprite';
+import { INSTALLATION_REGISTRY } from '../installations.registry';
 import { TankGauge } from '../sprites/TankGauge';
 import { TruckSprite } from '../sprites/TruckSprite';
-import { gameTokens } from '../tokens';
 
 export type TruckState = 'idle' | 'driving';
 
-/** Instalações com folha de ações; GARAGEM e CASA são decorativas. */
-const ACTIONABLE_KINDS = new Set(['MANGUEIRA', 'DEPOSITO', 'ESTACAO_ALIMENTACAO', 'PLANTACAO']);
-
 /**
- * Instalações do tabuleiro. As que têm ações são botões SVG de verdade
- * (Enter/Espaço funcionam) com hit-area generosa; as decorativas são só
- * sprite. O caminhão do laticínio atravessa a base do mapa quando
- * `truckState` vira "driving".
+ * Instalações do tabuleiro, dirigidas pelo INSTALLATION_REGISTRY (sem switch
+ * por kind): cada kind declara sprite, tamanho e se é acionável. As acionáveis
+ * são botões SVG de verdade (Enter/Espaço funcionam) com hit-area generosa;
+ * multi-instância exibe o `name` como rótulo. O caminhão do laticínio entra e
+ * sai PELA PORTEIRA quando ela existe no mapa (senão, atravessa a base).
  */
-export function InstallationLayer({ installations, projection, tankLevel, truckState, plantingStage = 'EMPTY', onTruckDone, onSelect }: {
+export function InstallationLayer({ installations, projection, tankLevel, truckState, onTruckDone, onSelect }: {
   installations: GameMapInstallation[];
   projection: GameProjection;
   tankLevel: number;
   truckState: TruckState;
-  /** Estágio do talhão da Plantação (EMPTY = sem plantio ativo). */
-  plantingStage?: PlantacaoStage;
   onTruckDone: () => void;
   onSelect: (installation: GameMapInstallation) => void;
 }) {
@@ -38,39 +29,22 @@ export function InstallationLayer({ installations, projection, tankLevel, truckS
     }
   }
 
-  function sprite(installation: GameMapInstallation, point: { x: number; y: number }) {
-    switch (installation.kind) {
-      case 'MANGUEIRA':
-        return <>
-          <MangueiraSprite x={point.x} y={point.y} size={96} />
-          <TankGauge x={point.x + 66} y={point.y - 14} level={tankLevel} />
-        </>;
-      case 'DEPOSITO':
-        return <DepositoSprite x={point.x} y={point.y} size={84} />;
-      case 'ESTACAO_ALIMENTACAO':
-        return <EstacaoAlimentacaoSprite x={point.x} y={point.y} size={84} />;
-      case 'PLANTACAO':
-        return <>
-          <PlantacaoSprite x={point.x} y={point.y} size={92} stage={plantingStage} />
-          {plantingStage === 'READY' && <g className="game-ready-badge" transform={`translate(${point.x} ${point.y - 58})`}>
-            <rect x="-32" y="-13" width="64" height="26" rx="13" fill="#fffef9" stroke={gameTokens.colors.cropRipe} strokeWidth="1.5" />
-            <text className="game-badge-text" y="1">Colher! 🌾</text>
-          </g>}
-        </>;
-      case 'GARAGEM':
-        return <GaragemSprite x={point.x} y={point.y} size={80} />;
-      default:
-        return null;
-    }
-  }
+  // A rota do caminhão passa pela porteira (ela é a entrada/saída do sítio).
+  const porteira = installations.find((installation) => installation.kind === 'PORTEIRA') ?? null;
+  const roadY = porteira ? projection.toLocal(porteira.position).y : projection.height - 26;
 
-  const roadY = projection.height - 26;
   return <g>
     {installations.map((installation) => {
+      const entry = INSTALLATION_REGISTRY[installation.kind];
+      if (!entry) return null;
       const point = projection.toLocal(installation.position);
-      const content = sprite(installation, point);
-      if (!content) return null;
-      if (!ACTIONABLE_KINDS.has(installation.kind)) {
+      const Sprite = entry.sprite;
+      const content = <>
+        <Sprite x={point.x} y={point.y} size={entry.spriteSize} />
+        {entry.withTank && <TankGauge x={point.x + 66} y={point.y - 14} level={tankLevel} />}
+        {entry.multiInstance && <text className="game-installation-label" x={point.x} y={point.y + entry.spriteSize / 2 + 12}>{installation.name}</text>}
+      </>;
+      if (!entry.actionable) {
         return <g key={installation.id} data-testid={`game-installation-${installation.kind.toLowerCase()}`} role="img" aria-label={installation.name}>
           {content}
         </g>;

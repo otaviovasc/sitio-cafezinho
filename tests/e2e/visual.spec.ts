@@ -26,7 +26,7 @@ async function captureTallPage(page: Page, path: string) {
 test('captura estados principais sem rolagem horizontal', async ({ page }, testInfo) => {
   await login(page);
   const routes = [
-    ['dashboard', '/'],
+    ['dashboard', '/?caderno=hoje'],
     ['producao', '/producao'],
     ['rebanho', '/rebanho'],
     ['pesos', '/pesos'],
@@ -59,8 +59,12 @@ test('captura estados principais sem rolagem horizontal', async ({ page }, testI
   }
 
   const unmockOcrReview = await mockOcrFeedPurchaseReview(page);
+  // /revisar virou redirect para o Caderno na aba Pendências.
   await page.goto('/revisar');
-  await expect(page.getByRole('heading', { name: 'Revisar' })).toBeVisible();
+  await expect(page.getByTestId('game-notebook')).toBeVisible();
+  await page.getByTestId('game-notebook-item-captureAction-action-ocr-visual').click();
+  await page.getByTestId('game-notebook-review-open').click();
+  await expect(page.getByTestId('game-deposito-sheet')).toBeVisible();
   await expect(page.getByLabel('Nome do item')).toHaveValue('POWERLAC 120 P');
   await expect(page.getByLabel('Unidade de controle')).toHaveValue('KG');
   await expect(page.getByRole('button', { name: 'Confirmar compra' })).toBeDisabled();
