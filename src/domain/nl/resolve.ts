@@ -229,9 +229,11 @@ export function resolveDailyMilkTotal(
  */
 export function resolveIndividualMilkSession(
   intent: IndividualMilkSessionIntent,
+  groups: ResolvableGroup[] = [],
   now = new Date(),
 ): ResolvedAction {
   const sessionDate = resolveSpokenDate(intent.date, now);
+  const groupResolution = resolveHerdGroup(intent.scopeLabel, groups);
   const measurements = intent.measurements.map((row) => {
     const total = row.totalLiters
       ?? (row.morningLiters !== null || row.afternoonLiters !== null ? (row.morningLiters ?? 0) + (row.afternoonLiters ?? 0) : null);
@@ -250,9 +252,15 @@ export function resolveIndividualMilkSession(
     actionType: 'INDIVIDUAL_MILK_SESSION',
     rawIntent: intent,
     resolvedPayload: {
-      import: { sessionDate, sourceMode: 'SEPARATE_MORNING_AFTERNOON', measurements },
+      import: {
+        sessionDate,
+        herdGroupId: groupResolution.group?.id ?? null,
+        herdGroupLabel: intent.scopeLabel,
+        sourceMode: 'SEPARATE_MORNING_AFTERNOON',
+        measurements,
+      },
     },
-    issues: [],
+    issues: groupResolution.issues,
     commitStatus: 'NEEDS_REVIEW',
   };
 }
@@ -576,7 +584,7 @@ export function resolveWeightSession(intent: WeightSessionIntent, ctx: ResolveCo
 export function resolveIntent(intent: VoiceIntent, ctx: ResolveContext, now = new Date()): ResolvedAction {
   switch (intent.type) {
     case 'daily_milk_total': return resolveDailyMilkTotal(intent, ctx.groups, now);
-    case 'individual_milk_session': return resolveIndividualMilkSession(intent, now);
+    case 'individual_milk_session': return resolveIndividualMilkSession(intent, ctx.groups, now);
     case 'milk_collection': return resolveMilkCollection(intent, now);
     case 'revenue': return resolveRevenue(intent, now);
     case 'purchase': return resolvePurchase(intent, ctx.suppliers, now);

@@ -160,12 +160,19 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await expect(page).toHaveURL(/\/producao\/[0-9a-f-]+$/);
   await expect(page.getByRole('heading', { name: new RegExp(`Controle de ${manualControlDate.split('-').reverse().join('/')}`) })).toBeVisible();
 
-  // Uma captura do Assistente completa o controle da data com outro lote.
+  // Uma captura do Assistente completa o controle da mesma data e lote.
   // A vaca nova pode ter nome/lote corrigidos e é vinculada à linha sem sair da revisão.
   const importedCowLabel = `Vaca do lote 2 ${suffix}`;
   const correctedCowName = `Aurora ${suffix}`;
+  const lote1Id = await page.evaluate(async () => {
+    const groups = await fetch('/api/herd-groups').then((response) => response.json()) as Array<{ id: string; name: string }>;
+    return groups.find((group) => group.name === 'Lote 1')?.id;
+  });
+  expect(lote1Id).toBeTruthy();
   const assistantImport = JSON.stringify({
     sessionDate: manualControlDate,
+    herdGroupId: lote1Id,
+    herdGroupLabel: 'Lote 1',
     sourceMode: 'SEPARATE_MORNING_AFTERNOON',
     measurements: [{
       rawAnimalLabel: importedCowLabel,
@@ -184,7 +191,7 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
     window.location.reload();
   }, assistantImport);
   await expect(page.getByText(importedCowLabel, { exact: true }).first()).toBeVisible();
-  await expect(page.getByText('Este controle diário já existe')).toBeVisible();
+  await expect(page.getByText('Este controle do lote já existe')).toBeVisible();
   await page.getByRole('button', { name: 'Cadastrar como nova' }).click();
   await expect(page.getByLabel('Nome')).toHaveValue(importedCowLabel);
   await page.getByLabel('Nome').fill(correctedCowName);
@@ -212,11 +219,22 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
 
   // Se a vaca já foi medida, a revisão exige uma decisão direta. Ao usar a
   // nova medição, a anterior continua preservada como excluída.
+  const replacementAnimalName = await page.evaluate(async ({ date, herdGroupId }) => {
+    const sessions = await fetch('/api/milk-sessions').then((response) => response.json()) as Array<{ id: string; sessionDate: string; herdGroupId: string | null }>;
+    const session = sessions.find((item) => item.sessionDate === date && item.herdGroupId === herdGroupId);
+    const detail = await fetch(`/api/milk-sessions/${session?.id}`).then((response) => response.json()) as {
+      measurements: Array<{ animalName: string | null; status: string }>;
+    };
+    return detail.measurements.find((measurement) => measurement.status === 'CONFIRMED' && measurement.animalName)?.animalName;
+  }, { date: manualControlDate, herdGroupId: lote1Id });
+  expect(replacementAnimalName).toBeTruthy();
   const replacementImport = JSON.stringify({
     sessionDate: manualControlDate,
+    herdGroupId: lote1Id,
+    herdGroupLabel: 'Lote 1',
     sourceMode: 'SEPARATE_MORNING_AFTERNOON',
     measurements: [{
-      rawAnimalLabel: 'Caruja',
+      rawAnimalLabel: replacementAnimalName,
       rawValueText: '7 + 7',
       morningLiters: 7,
       afternoonLiters: 7,
@@ -234,16 +252,17 @@ test('fluxos centrais do sítio', async ({ page }, testInfo) => {
   await expect(page.getByText('Medição já registrada para este animal')).toBeVisible();
   await page.getByRole('button', { name: 'Usar nova medição' }).click();
   await page.getByRole('button', { name: 'Adicionar ao controle existente' }).click();
-  const carujaVersions = await page.evaluate(async (date) => {
-    const sessions = await fetch('/api/milk-sessions').then((response) => response.json()) as Array<{ id: string; sessionDate: string }>;
-    const session = sessions.find((item) => item.sessionDate === date);
+  await expect(page).toHaveURL(/\/producao\/[0-9a-f-]+$/);
+  const replacementVersions = await page.evaluate(async ({ date, herdGroupId, animalName }) => {
+    const sessions = await fetch('/api/milk-sessions').then((response) => response.json()) as Array<{ id: string; sessionDate: string; herdGroupId: string | null }>;
+    const session = sessions.find((item) => item.sessionDate === date && item.herdGroupId === herdGroupId);
     const detail = await fetch(`/api/milk-sessions/${session?.id}`).then((response) => response.json()) as {
       measurements: Array<{ animalName: string | null; totalLiters: string | null; status: string }>;
     };
-    return detail.measurements.filter((measurement) => measurement.animalName === 'Caruja');
-  }, manualControlDate);
-  expect(carujaVersions.some((measurement) => measurement.status === 'EXCLUDED')).toBe(true);
-  expect(carujaVersions.some((measurement) => measurement.status === 'CONFIRMED' && Number(measurement.totalLiters) === 14)).toBe(true);
+    return detail.measurements.filter((measurement) => measurement.animalName === animalName);
+  }, { date: manualControlDate, herdGroupId: lote1Id, animalName: replacementAnimalName });
+  expect(replacementVersions.some((measurement) => measurement.status === 'EXCLUDED')).toBe(true);
+  expect(replacementVersions.some((measurement) => measurement.status === 'CONFIRMED' && Number(measurement.totalLiters) === 14)).toBe(true);
 
   // Revisão de transcrição (caminho do Assistente/OCR): criada via API e revisada no detalhe.
   const importDate = testInfo.project.name === 'desktop-1440' ? '2026-07-11' : '2026-07-12';

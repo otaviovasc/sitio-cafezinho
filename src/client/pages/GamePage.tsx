@@ -17,6 +17,7 @@ import { GameNotebook, type NotebookSheetTarget, type NotebookTab } from '../fea
 import { GamePastureSheet } from '../features/game/GamePastureSheet';
 import { GamePlantacaoSheet } from '../features/game/GamePlantacaoSheet';
 import { GameShell } from '../features/game/GameShell';
+import { IndividualMilkReviewWorkspace, type IndividualMilkRelatedReview } from '../features/milk/IndividualMilkReviewWorkspace';
 import { INSTALLATION_REGISTRY, type InstallationSheetKey } from '../features/game/installations.registry';
 import { InstallationLayer, type TruckState } from '../features/game/layers/InstallationLayer';
 import { MarkerLayer } from '../features/game/layers/MarkerLayer';
@@ -75,6 +76,7 @@ export function GamePage() {
   const [truckState, setTruckState] = useState<TruckState>('idle');
   // Revisão pós-IA contextual: a ação proposta aberta na folha do fato.
   const [review, setReview] = useState<{ action: ReviewableAction } | null>(null);
+  const [individualReview, setIndividualReview] = useState<IndividualMilkRelatedReview | null>(null);
   // Relógio dos talhões: re-deriva os estágios periodicamente para as culturas
   // crescerem na tela sem recarregar o estado.
   const [plantingClock, setPlantingClock] = useState(() => Date.now());
@@ -107,6 +109,15 @@ export function GamePage() {
       setSelectedPlot(null);
       setSelectedGroup(null);
       setSelectedPasture(null);
+      if (action.actionType === 'INDIVIDUAL_MILK_SESSION') {
+        const query = new URLSearchParams({ captureId, actionId: action.id });
+        const related = await api<IndividualMilkRelatedReview>(`/api/import/milk-session/related?${query}`);
+        setReview(null);
+        setOpenSheet(null);
+        setIndividualReview(related);
+        return;
+      }
+      setIndividualReview(null);
       setReview({ action });
       setOpenSheet(target);
     } catch {
@@ -139,6 +150,7 @@ export function GamePage() {
 
   function handleReviewDone(outcome: ReviewOutcome) {
     setReview(null);
+    setIndividualReview(null);
     setOpenSheet(null);
     toast(outcome === 'committed' ? 'Registro confirmado' : 'Captura descartada');
     if (outcome === 'committed') audio.play('success');
@@ -278,6 +290,11 @@ export function GamePage() {
         a revisão pós-IA também abre a folha do fato sem perímetro traçado. */}
     {!loading && !error && data && <>
       <GameActionSheet open={openSheet === 'mangueira'} state={data} review={reviewFor('mangueira')} initialView={mangueiraView} onClose={() => { setOpenSheet(null); setReview(null); setMangueiraView(undefined); }} onRegistered={handleRegistered} />
+      {individualReview && <IndividualMilkReviewWorkspace
+        review={individualReview}
+        onClose={() => setIndividualReview(null)}
+        onDone={handleReviewDone}
+      />}
       {openSheet === 'deposito' && <GameDepositoSheet open review={reviewFor('deposito')} onClose={() => { setOpenSheet(null); setReview(null); }} onOpenLoja={() => setOpenSheet('loja')} />}
       {openSheet === 'loja' && <GameLojaSheet
         open

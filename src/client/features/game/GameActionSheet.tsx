@@ -4,7 +4,6 @@ import type { GameState } from '../../../domain/game/state';
 import { formatLiters } from '../../../domain/format';
 import { DailyMilkTotalForm } from '../milk/DailyMilkTotalForm';
 import { FeedingEventForm } from '../feeding/FeedingEventForm';
-import { ImportMilkReview } from '../milk/ImportMilkReview';
 import { QuickCollectionForm } from './actions/QuickCollectionForm';
 import { IndividualControlFlow } from './actions/IndividualControlFlow';
 import { GameSheet } from './GameSheet';
@@ -12,7 +11,7 @@ import { GameReviewNotice } from './GameReviewNotice';
 import { commitReviewAction, type SheetReview } from './review';
 import { MangueiraSprite } from './sprites/MangueiraSprite';
 
-type SheetView = 'menu' | 'dailyTotal' | 'collection' | 'milkingFeed' | 'individual' | 'individualReview';
+type SheetView = 'menu' | 'dailyTotal' | 'collection' | 'milkingFeed' | 'individual';
 export type SheetResult = 'dailyTotal' | 'collection' | 'milkingFeed' | 'individual';
 /** Sub-views de registro que podem ser pedidas de fora (ex.: aba Produção do caderno). */
 export type MangueiraView = 'dailyTotal' | 'collection' | 'individual';
@@ -20,7 +19,6 @@ export type MangueiraView = 'dailyTotal' | 'collection' | 'individual';
 /** Sub-view da folha no modo revisão, pelo tipo da ação proposta. */
 function reviewView(actionType: string): SheetView {
   if (actionType === 'MILK_COLLECTION') return 'collection';
-  if (actionType === 'INDIVIDUAL_MILK_SESSION') return 'individualReview';
   if (actionType === 'FEEDING_EVENT') return 'milkingFeed';
   return 'dailyTotal';
 }
@@ -131,14 +129,6 @@ export function GameActionSheet({ open, state, review, initialView, onClose, onR
         />
         : <FeedingEventForm context="MILKING" onSaved={() => onRegistered('milkingFeed')} />)}
       {view === 'individual' && <IndividualControlFlow today={today.date} onSaved={() => onRegistered('individual')} />}
-      {view === 'individualReview' && review && <div data-testid="game-individual-review">
-        <ImportMilkReview
-          prefillJson={JSON.stringify(payload.import ?? {})}
-          sourceCaptureId={review.action.captureId}
-          sourceActionId={review.action.id}
-          onSaved={() => review.onDone('committed')}
-        />
-      </div>}
     </div>}
   </GameSheet>;
 }

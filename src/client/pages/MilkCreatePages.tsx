@@ -7,6 +7,7 @@ import { ParsedDecimalInput } from '../components/form-controls';
 import { useToast } from '../components/feedback-context';
 import { Button, EmptyState, ErrorState, Field, FormErrorSummary, Input, PageHeader, ScrollArea, SectionCard, SkeletonList, SubmitBar } from '../components/ui';
 import { DailyMilkTotalForm } from '../features/milk/DailyMilkTotalForm';
+import { GroupPicker } from '../features/animals/GroupPicker';
 import { ExistingMilkSessionConflict } from '../features/milk/ExistingMilkSessionConflict';
 import { findMilkSessionByDate } from '../features/milk/findMilkSessionByDate';
 import { useResource } from '../hooks/useResource';
@@ -38,7 +39,8 @@ export function NewIndividualControlPage() {
   const toast = useToast();
   const { busy, error, run } = useSubmit();
   const [date, setDate] = useState(today());
-  const { data: herd, loading, error: herdError, reload } = useResource<HerdMember[]>(`/api/milking-herd?date=${date}`);
+  const [herdGroupId, setHerdGroupId] = useState('');
+  const { data: herd, loading, error: herdError, reload } = useResource<HerdMember[]>(`/api/milking-herd?date=${date}&herdGroupId=${herdGroupId}`);
   const [values, setValues] = useState<Record<string, RowValue>>({});
   const [errors, setErrors] = useState<Record<string, RowError>>({});
   const [existingSession, setExistingSession] = useState<{ id: string; sessionDate: string } | null>(null);
@@ -86,10 +88,10 @@ export function NewIndividualControlPage() {
     });
     let created;
     try {
-      created = await api<{ id: string }>('/api/milk-sessions', json('POST', { sessionDate: date, inputMode: 'SEPARATE_MORNING_AFTERNOON', measurements }));
+      created = await api<{ id: string }>('/api/milk-sessions', json('POST', { sessionDate: date, herdGroupId, inputMode: 'SEPARATE_MORNING_AFTERNOON', measurements }));
     } catch (cause) {
       if (cause instanceof ApiError && cause.code === 'SESSION_DATE_EXISTS') {
-        const session = await findMilkSessionByDate(date);
+        const session = await findMilkSessionByDate(date, herdGroupId);
         if (session) {
           setExistingSession(session);
           return;
@@ -114,11 +116,19 @@ export function NewIndividualControlPage() {
         onCancel={() => setExistingSession(null)}
       />}
       <SectionCard>
-        <Field label="Data do controle" hint="A lista abaixo é o rebanho em lactação e em ordenha nessa data.">
+        <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Data do controle" hint="A lista abaixo respeita o lote válido nessa data.">
           <Input type="date" value={date} max={today()} onChange={(event) => { setDate(event.target.value); setValues({}); setErrors({}); setExistingSession(null); }} />
         </Field>
+        <GroupPicker
+          label="Lote medido"
+          value={herdGroupId}
+          routines={['MORNING_AND_AFTERNOON', 'MORNING_ONLY']}
+          onChange={(groupId) => { setHerdGroupId(groupId); setValues({}); setErrors({}); setExistingSession(null); }}
+        />
+        </div>
       </SectionCard>
-      {loading ? <SkeletonList rows={5} /> : herdError ? <ErrorState message={herdError} retry={reload} /> : !herd?.length
+      {!herdGroupId ? null : loading ? <SkeletonList rows={5} /> : herdError ? <ErrorState message={herdError} retry={reload} /> : !herd?.length
         ? <EmptyState title="Nenhuma vaca em lactação em lote de ordenha nesta data" description="Cadastre animais em lactação e em um lote de ordenha, ou importe uma transcrição pelo Assistente." action={<Link className="button button-secondary" to="/rebanho">Abrir rebanho</Link>} />
         : <form noValidate onSubmit={(event) => { event.preventDefault(); if (validate(herd)) void run(() => persist(herd)); }}>
           <SectionCard title={`Vacas em lactação · ${herd.length}`} action={<span className="text-xs text-[var(--muted)]">{filled}/{herd.length} preenchidas</span>}>

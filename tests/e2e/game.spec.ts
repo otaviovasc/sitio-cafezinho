@@ -1,5 +1,6 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Route } from '@playwright/test';
 import { clearGameMap, createGameMapFixture, login } from './helpers';
+import { mockIndividualMilkReview } from './individual-milk-review-fixture';
 
 test.describe('jogo — fundação', () => {
   test('API do jogo exige sessão', async ({ request }) => {
@@ -35,6 +36,72 @@ test.describe('jogo — fundação', () => {
     await expect(page.getByTestId('game-root')).toBeVisible();
     expect(editorChunkRequests).toEqual([]);
   });
+});
+
+test('revisão individual reúne duas capturas numa área clara e responsiva', async ({ page }, testInfo) => {
+  await login(page);
+  const source = await mockIndividualMilkReview(page);
+  await page.goto('/');
+  await page.evaluate(({ captureId, actionId }) => {
+    window.history.replaceState({
+      ...window.history.state,
+      usr: { reviewCaptureId: captureId, reviewActionId: actionId },
+    }, '', window.location.href);
+    window.location.reload();
+  }, source);
+
+  const workspace = page.getByTestId('individual-milk-review-workspace');
+  await expect(workspace).toBeVisible();
+  await expect(page.getByText('2 capturas reunidas')).toBeVisible();
+  await expect(page.getByText('Períodos combinados automaticamente')).toBeVisible();
+  await expect(page.getByText('A imagem desta captura antiga não foi armazenada.')).toBeVisible();
+  await expect(page.getByAltText('Anotação original da captura 1')).toBeVisible();
+  const viewport = page.viewportSize()!;
+  const box = await workspace.boundingBox();
+  expect(box).not.toBeNull();
+  if (viewport.width >= 1000) expect(box!.width).toBeGreaterThan(1000);
+  else expect(box!.width).toBeLessThanOrEqual(viewport.width);
+  const layout = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    clientWidth: document.documentElement.clientWidth,
+  }));
+  expect(layout.scrollWidth).toBe(layout.clientWidth);
+  await page.screenshot({ path: testInfo.outputPath('revisao-controle-individual.png'), fullPage: false, animations: 'disabled' });
+});
+
+test('assistente envia duas imagens em paralelo e mantém ambas visíveis', async ({ page }) => {
+  await login(page);
+  const waiting: Route[] = [];
+  await page.route('**/api/captures', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    waiting.push(route);
+    if (waiting.length < 2) return;
+    await Promise.all(waiting.map((pending, index) => pending.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        captureId: `${index + 1}1111111-1111-4111-8111-111111111111`,
+        actions: [{
+          id: `${index + 1}2222222-2222-4222-8222-222222222222`,
+          captureId: `${index + 1}1111111-1111-4111-8111-111111111111`,
+          actionType: 'INDIVIDUAL_MILK_SESSION',
+          status: 'NEEDS_REVIEW',
+          resolvedPayload: {},
+        }],
+      }),
+    })));
+  });
+  await page.goto('/');
+  await page.getByLabel('Assistente de registros — novo registro').click();
+  const input = page.locator('input[type="file"][multiple]');
+  await input.setInputFiles([
+    { name: 'manha.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('manha') },
+    { name: 'tarde.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('tarde') },
+  ]);
+  await expect.poll(() => waiting.length).toBe(2);
+  await expect(page.getByText('manha.jpg')).toBeVisible();
+  await expect(page.getByText('tarde.jpg')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Revisar imagens juntas' })).toBeVisible();
 });
 
 test.describe('jogo — editor de mapa', () => {

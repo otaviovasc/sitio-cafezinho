@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseMilkImport } from '../../src/domain/import';
-import { matchAnimalByLabel } from '../../src/domain/nl/matching';
+import { matchAnimalByLabel, suggestAnimalByLabel } from '../../src/domain/nl/matching';
 import {
   extractLotNumber,
   resolveDailyMilkTotal,
@@ -140,15 +140,17 @@ describe('resolveIndividualMilkSession — Exemplo 3', () => {
     const intent: IndividualMilkSessionIntent = {
       type: 'individual_milk_session',
       date: spoken('ontem', 'ontem'),
+      scopeLabel: 'primeiro lote',
       measurements: [
         { animalLabel: 'Mimosa', morningLiters: 7, afternoonLiters: null, totalLiters: 7, rawValueText: '7 litros', confidence: 'HIGH', notes: null },
         { animalLabel: 'Cocada', morningLiters: 9.5, afternoonLiters: null, totalLiters: 9.5, rawValueText: '9 e meio', confidence: 'HIGH', notes: null },
       ],
     };
-    const resolved = resolveIndividualMilkSession(intent, NOW);
+    const resolved = resolveIndividualMilkSession(intent, groups, NOW);
     const importObject = (resolved.resolvedPayload as { import: unknown }).import;
     const parsed = parseMilkImport(JSON.stringify(importObject));
     expect(parsed.sessionDate).toBe('2026-07-16');
+    expect(parsed.herdGroupId).toBe('g1');
     expect(parsed.sourceMode).toBe('SEPARATE_MORNING_AFTERNOON');
     expect(parsed.measurements).toHaveLength(2);
     expect(parsed.measurements[0].rawAnimalLabel).toBe('Mimosa');
@@ -224,6 +226,38 @@ describe('matchAnimalByLabel — paridade com o casamento exato existente', () =
 
   it('rótulo desconhecido não casa', () => {
     expect(matchAnimalByLabel('Estrela', animals, aliases)).toBeUndefined();
+  });
+});
+
+describe('suggestAnimalByLabel — contexto do lote sem inventar vínculo', () => {
+  const animals = [
+    { id: 'a307', name: null, tagNumber: '307' },
+    { id: 'a503', name: null, tagNumber: '503' },
+    { id: 'alambuja', name: 'Lambuja', tagNumber: null },
+    { id: 'amanjuba', name: 'Manjuba', tagNumber: null },
+    { id: 'apelanza', name: 'Pelanza', tagNumber: null },
+  ];
+
+  it('reconhece o brinco dentro de uma anotação adicional', () => {
+    expect(suggestAnimalByLabel('503 branca', animals, [], animals)).toMatchObject({
+      animal: { id: 'a503' },
+      kind: 'CONTEXTUAL_TAG',
+    });
+  });
+
+  it('oferece sugestão única para erro curto de OCR dentro do lote', () => {
+    expect(suggestAnimalByLabel('Manfuba', animals, [], animals)).toMatchObject({
+      animal: { id: 'amanjuba' },
+      kind: 'FUZZY',
+    });
+    expect(suggestAnimalByLabel('Relanza', animals, [], animals)).toMatchObject({
+      animal: { id: 'apelanza' },
+      kind: 'FUZZY',
+    });
+  });
+
+  it('não força um rótulo distante para algum animal do lote', () => {
+    expect(suggestAnimalByLabel('Fusão', animals, [], animals)).toBeUndefined();
   });
 });
 

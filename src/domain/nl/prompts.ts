@@ -31,7 +31,7 @@ const ACTIONS = `Tipos de ação suportados:
    Deixe morningLiters ou afternoonLiters em null quando o período não foi dito.
 
 2) "individual_milk_session" — leitura vaca a vaca (controle individual).
-   Campos: type, date, measurements[] com { animalLabel, morningLiters, afternoonLiters, totalLiters, rawValueText, confidence, notes }.
+   Campos: type, date, scopeLabel (rótulo do lote como escrito/falado, ou null), measurements[] com { animalLabel, morningLiters, afternoonLiters, totalLiters, rawValueText, confidence, notes }.
    Preencha só os valores ditos; deixe os demais em null.
 
 3) "milk_collection" — coleta do laticínio (volume retirado).
@@ -68,7 +68,7 @@ JSON: { "intents": [
 
 Fala: "Produção individual de ontem, primeiro lote de manhã. Mimosa 7 litros, Cocada 9 litros e meio."
 JSON: { "intents": [
-  { "type": "individual_milk_session", "date": { "relative": "ontem", "iso": null, "rawText": "ontem" }, "measurements": [
+  { "type": "individual_milk_session", "date": { "relative": "ontem", "iso": null, "rawText": "ontem" }, "scopeLabel": "primeiro lote", "measurements": [
     { "animalLabel": "Mimosa", "morningLiters": 7, "afternoonLiters": null, "totalLiters": 7, "rawValueText": "7 litros", "confidence": "HIGH", "notes": null },
     { "animalLabel": "Cocada", "morningLiters": 9.5, "afternoonLiters": null, "totalLiters": 9.5, "rawValueText": "9 litros e meio", "confidence": "HIGH", "notes": null }
   ] }

@@ -4,6 +4,7 @@ import { Button } from '../../components/ui';
 export type MilkSessionReference = {
   id: string;
   sessionDate: string;
+  herdGroupId?: string | null;
 };
 
 export function ExistingMilkSessionConflict({

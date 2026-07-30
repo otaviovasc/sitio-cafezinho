@@ -214,12 +214,18 @@ export const animalWeights = pgTable('animal_weights', {
 export const milkSessions = pgTable('milk_sessions', {
   id: uuid('id').primaryKey().defaultRandom(),
   sessionDate: date('session_date').notNull(),
+  herdGroupId: uuid('herd_group_id').references(() => herdGroups.id, { onDelete: 'restrict' }),
   title: text('title'),
   inputMode: milkInputMode('input_mode').notNull(),
   source: milkSource('source').notNull(),
   notes: text('notes'),
   ...auditColumns,
-}, (table) => [index('milk_sessions_date_idx').on(table.sessionDate)]);
+}, (table) => [
+  index('milk_sessions_date_idx').on(table.sessionDate),
+  index('milk_sessions_group_idx').on(table.herdGroupId),
+  uniqueIndex('milk_sessions_date_group_unique').on(table.sessionDate, table.herdGroupId).where(sql`${table.herdGroupId} is not null`),
+  uniqueIndex('milk_sessions_date_whole_herd_unique').on(table.sessionDate).where(sql`${table.herdGroupId} is null`),
+]);
 
 export const milkMeasurements = pgTable('milk_measurements', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -497,6 +503,31 @@ export const proposedActions = pgTable('proposed_actions', {
 }, (table) => [
   index('proposed_actions_capture_idx').on(table.captureId),
   index('proposed_actions_status_idx').on(table.status),
+]);
+
+// Uma medição consolidada pode vir de várias fotos/áudios. Cada fonte conserva
+// o rótulo e o valor originais sem duplicar o fato final do animal.
+export const milkMeasurementSources = pgTable('milk_measurement_sources', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  milkMeasurementId: uuid('milk_measurement_id').notNull().references(() => milkMeasurements.id, { onDelete: 'cascade' }),
+  captureId: uuid('capture_id').references(() => captures.id, { onDelete: 'set null' }),
+  proposedActionId: uuid('proposed_action_id').references(() => proposedActions.id, { onDelete: 'set null' }),
+  rawAnimalLabel: text('raw_animal_label').notNull(),
+  rawValueText: text('raw_value_text'),
+  morningLiters: numeric('morning_liters', { precision: 10, scale: 2 }),
+  afternoonLiters: numeric('afternoon_liters', { precision: 10, scale: 2 }),
+  totalLiters: numeric('total_liters', { precision: 10, scale: 2 }),
+  confidence: measurementConfidence('confidence').notNull(),
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index('milk_measurement_sources_measurement_idx').on(table.milkMeasurementId),
+  index('milk_measurement_sources_capture_idx').on(table.captureId),
+  check('milk_measurement_sources_non_negative', sql`
+    (${table.totalLiters} is null or ${table.totalLiters} >= 0) and
+    (${table.morningLiters} is null or ${table.morningLiters} >= 0) and
+    (${table.afternoonLiters} is null or ${table.afternoonLiters} >= 0)
+  `),
 ]);
 
 // Pasto é entidade real da fazenda (não confundir com a zona desenhada no

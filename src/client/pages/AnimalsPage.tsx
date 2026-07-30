@@ -22,6 +22,8 @@ import { AnimalWeightPanel, type AnimalWeight } from '../features/animals/Animal
 import { BulkAnimalForm } from '../features/animals/BulkAnimalForm';
 import { type HerdGroup } from '../features/animals/GroupPicker';
 import { HerdGroupForm } from '../features/animals/HerdGroupForm';
+import { IndividualProductionHistory } from '../features/animals/IndividualProductionHistory';
+import type { IndividualProductionSummary } from '../features/animals/individual-production';
 import { ReproductiveEventForm, type ReproductiveEvent } from '../features/animals/ReproductiveEventForm';
 import { AnimalCycleSection } from '../features/animals/detail/AnimalCycleSection';
 import { AnimalMastitisSection } from '../features/animals/detail/AnimalMastitisSection';
@@ -45,14 +47,15 @@ type Animal = {
   aliases: Alias[];
   currentGroup: CurrentGroup | null;
   latestWeight: null | { weightKg: string; measuredAt: string };
-  latestProduction: null | { totalLiters: string; sessionDate: string };
+  latestProduction: IndividualProductionSummary | Pick<IndividualProductionSummary, 'totalLiters' | 'sessionDate'> | null;
+  latestProductions?: IndividualProductionSummary[];
 };
 type GroupHistory = { id: string; groupId: string; groupName: string; milkingRoutine: string; startedOn: string; endedOn: string | null; notes: string | null };
 type StatusHistory = { id: string; previousStatus: AnimalStatus | null; status: AnimalStatus; changedOn: string; notes: string | null };
 type AnimalMastitisCase = { id: string; detectedAt: string; status: string; observedSigns: string | null; withdrawalEndsAt: string | null; milkDiscardRequired: boolean; actions: Array<{ id: string; scheduledFor: string; actionDescription: string; completedAt: string | null; cancelledAt: string | null }> };
 type AnimalExit = { id: string; status: string; changedOn: string; exitType: string | null; reason: string | null; buyerName: string | null; weightKg: string | null; amount: string | null; revenueId: string | null; notes: string | null; attachments: Attachment[] };
 type AnimalRevenue = { id: string; revenueDate: string; description: string; amount: string; status: string };
-export type AnimalDetail = Omit<Animal, 'latestWeight' | 'latestProduction'> & {
+export type AnimalDetail = Omit<Animal, 'latestWeight' | 'latestProduction' | 'latestProductions'> & {
   weights: AnimalWeight[];
   history: Array<{ id: string; sessionDate: string; morningLiters: string | null; afternoonLiters: string | null; totalLiters: string; status: string }>;
   groupHistory: GroupHistory[];
@@ -65,6 +68,20 @@ export type AnimalDetail = Omit<Animal, 'latestWeight' | 'latestProduction'> & {
 };
 
 function animalName(animal: Pick<Animal, 'name' | 'tagNumber'>) { return animal.name || `Brinco ${animal.tagNumber}`; }
+function productionsOf(animal: Animal) {
+  if (animal.latestProductions) return animal.latestProductions;
+  if (!animal.latestProduction) return [];
+  if ('morningLiters' in animal.latestProduction) return [animal.latestProduction];
+  return [{
+    id: `latest-${animal.id}`,
+    sessionDate: animal.latestProduction.sessionDate,
+    herdGroupId: null,
+    herdGroupName: null,
+    morningLiters: null,
+    afternoonLiters: null,
+    totalLiters: animal.latestProduction.totalLiters,
+  }];
+}
 
 /** Linhas reutilizáveis da lista de animais (tabela no desktop, cartões no mobile). */
 function AnimalRows({ animals: rows }: { animals: Animal[] }) {
@@ -73,8 +90,8 @@ function AnimalRows({ animals: rows }: { animals: Animal[] }) {
     : <StatusBadge descriptor={missingGroupDescriptor(animal.status)} />;
   return <SectionCard>
     <ScrollArea label="Lista do rebanho" className="max-h-[42rem]">
-      <div className="hidden lg:block"><table className="data-table"><thead><tr><th>Animal</th><th>Ciclo</th><th>Lote</th><th>Último controle</th><th>Último peso</th></tr></thead><tbody>{rows.map((animal) => <tr key={animal.id}><td colSpan={5} className="p-0"><Link aria-label={`Abrir histórico de ${animalName(animal)}`} className="grid grid-cols-[1.35fr_1fr_1.2fr_1fr_1fr] items-center gap-3 border-b border-[var(--border)] px-3 py-3 text-[var(--text)] transition hover:bg-[var(--surface-strong)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--primary)]" to={`/rebanho/${animal.id}`}><span className="min-w-0"><strong className="text-[var(--primary)]">{animalName(animal)}</strong>{animal.name && animal.tagNumber && <span className="block text-xs text-[var(--muted)]">Brinco {animal.tagNumber}</span>}</span><StatusBadge descriptor={animalStatusDescriptor(animal.status)} />{groupCell(animal)}<span className="text-sm">{animal.latestProduction ? <><strong>{formatLiters(animal.latestProduction.totalLiters)}</strong><span className="block text-xs text-[var(--muted)]">{formatDate(animal.latestProduction.sessionDate)}</span></> : '—'}</span><span className="text-sm">{animal.latestWeight ? <><strong>{formatWeight(animal.latestWeight.weightKg)}</strong><span className="block text-xs text-[var(--muted)]">{new Date(animal.latestWeight.measuredAt).toLocaleDateString('pt-BR')}</span></> : '—'}</span></Link></td></tr>)}</tbody></table></div>
-      <div className="lg:hidden">{rows.map((animal) => <Link aria-label={`Abrir histórico de ${animalName(animal)}`} className="block border-b border-[var(--border)] px-1 py-4 text-[var(--text)] transition last:border-b-0 hover:bg-[var(--surface-strong)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--primary)]" to={`/rebanho/${animal.id}`} key={animal.id}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><strong className="block truncate text-[var(--primary)]">{animalName(animal)}</strong><span className="text-sm text-[var(--muted)]">{animal.currentGroup?.name ?? ''}{animal.name && animal.tagNumber ? `${animal.currentGroup ? ' · ' : ''}Brinco ${animal.tagNumber}` : ''}</span>{!animal.currentGroup && <span className="mt-1 block"><StatusBadge descriptor={missingGroupDescriptor(animal.status)} /></span>}</div><StatusBadge descriptor={animalStatusDescriptor(animal.status)} /></div><div className="mt-3 grid grid-cols-2 gap-2 text-sm"><div><span className="block text-xs text-[var(--muted)]">Último controle</span><strong>{animal.latestProduction ? formatLiters(animal.latestProduction.totalLiters) : 'Sem medição'}</strong></div><div><span className="block text-xs text-[var(--muted)]">Último peso</span><strong>{animal.latestWeight ? formatWeight(animal.latestWeight.weightKg) : 'Sem pesagem'}</strong></div></div></Link>)}</div>
+      <div className="hidden lg:block"><table className="data-table"><thead><tr><th>Animal</th><th>Ciclo</th><th>Lote</th><th>2 últimos controles</th><th>Último peso</th></tr></thead><tbody>{rows.map((animal) => <tr key={animal.id}><td colSpan={5} className="p-0"><Link aria-label={`Abrir histórico de ${animalName(animal)}`} className="grid grid-cols-[1.2fr_0.85fr_1fr_1.8fr_0.8fr] items-center gap-3 border-b border-[var(--border)] px-3 py-3 text-[var(--text)] transition hover:bg-[var(--surface-strong)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--primary)]" to={`/rebanho/${animal.id}`}><span className="min-w-0"><strong className="text-[var(--primary)]">{animalName(animal)}</strong>{animal.name && animal.tagNumber && <span className="block text-xs text-[var(--muted)]">Brinco {animal.tagNumber}</span>}</span><StatusBadge descriptor={animalStatusDescriptor(animal.status)} />{groupCell(animal)}<IndividualProductionHistory productions={productionsOf(animal)} /><span className="text-sm">{animal.latestWeight ? <><strong>{formatWeight(animal.latestWeight.weightKg)}</strong><span className="block text-xs text-[var(--muted)]">{new Date(animal.latestWeight.measuredAt).toLocaleDateString('pt-BR')}</span></> : '—'}</span></Link></td></tr>)}</tbody></table></div>
+      <div className="lg:hidden">{rows.map((animal) => <Link aria-label={`Abrir histórico de ${animalName(animal)}`} className="block border-b border-[var(--border)] px-1 py-4 text-[var(--text)] transition last:border-b-0 hover:bg-[var(--surface-strong)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--primary)]" to={`/rebanho/${animal.id}`} key={animal.id}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><strong className="block truncate text-[var(--primary)]">{animalName(animal)}</strong><span className="text-sm text-[var(--muted)]">{animal.currentGroup?.name ?? ''}{animal.name && animal.tagNumber ? `${animal.currentGroup ? ' · ' : ''}Brinco ${animal.tagNumber}` : ''}</span>{!animal.currentGroup && <span className="mt-1 block"><StatusBadge descriptor={missingGroupDescriptor(animal.status)} /></span>}</div><StatusBadge descriptor={animalStatusDescriptor(animal.status)} /></div><div className="mt-3 grid gap-3 text-sm sm:grid-cols-2"><div><span className="mb-0.5 block text-xs text-[var(--muted)]">2 últimos controles</span><IndividualProductionHistory productions={productionsOf(animal)} /></div><div><span className="block text-xs text-[var(--muted)]">Último peso</span><strong>{animal.latestWeight ? formatWeight(animal.latestWeight.weightKg) : 'Sem pesagem'}</strong></div></div></Link>)}</div>
     </ScrollArea>
   </SectionCard>;
 }

@@ -20,6 +20,8 @@ import type { Animal } from './MilkSessionMeasurementList';
 
 type Preview = {
   sessionDate: string;
+  herdGroupId: string | null;
+  herdGroupName?: string | null;
   sourceMode: string;
   sessionIssues: string[];
   sessionWarnings?: string[];
@@ -31,7 +33,7 @@ type Preview = {
     measurementCount: number;
     measurements: ExistingMeasurement[];
   };
-  measurements: Array<{ rawAnimalLabel: string; rawValueText?: string | null; morningLiters: number | null; afternoonLiters: number | null; totalLiters: number | null; confidence: string; status: string; notes?: string | null; animalId: string | null; matchedAnimal: Animal | null; milkingRoutine: MilkingRoutine | null; mergeDecision: 'ADD' | 'KEEP_EXISTING' | 'REPLACE_EXISTING' | null; existingMeasurement: ExistingMeasurement | null; issues: string[] }>;
+  measurements: Array<{ rawAnimalLabel: string; rawValueText?: string | null; morningLiters: number | null; afternoonLiters: number | null; totalLiters: number | null; confidence: string; status: string; notes?: string | null; animalId: string | null; matchedAnimal: Animal | null; milkingRoutine: MilkingRoutine | null; mergeDecision: 'ADD' | 'COMPLETE_EXISTING' | 'KEEP_EXISTING' | 'REPLACE_EXISTING' | null; existingMeasurement: ExistingMeasurement | null; issues: string[]; sources?: Array<Record<string, unknown>> }>;
 };
 
 type ExistingMeasurement = {
@@ -57,10 +59,11 @@ type ExistingMeasurement = {
  * origem (sourceCaptureId/sourceActionId). Usada pela página de importação
  * (fallback) e pela folha da mangueira em modo revisão.
  */
-export function ImportMilkReview({ prefillJson, sourceCaptureId, sourceActionId, onSaved }: {
+export function ImportMilkReview({ prefillJson, sourceCaptureId, sourceActionId, sourceActions, onSaved }: {
   prefillJson: string;
   sourceCaptureId?: string;
   sourceActionId?: string;
+  sourceActions?: Array<{ captureId: string; actionId: string }>;
   onSaved: (sessionId: string, merged: boolean) => void;
 }) {
   const toast = useToast();
@@ -120,12 +123,15 @@ export function ImportMilkReview({ prefillJson, sourceCaptureId, sourceActionId,
     const row = preview.measurements[index];
     const issues = row.issues.filter((issue) => issue !== 'Animal não encontrado por nome, brinco ou alias exato.'
       && issue !== 'Este animal já possui uma medição ativa no controle desta data.');
-    if (existingMeasurement) issues.push('Este animal já possui uma medição ativa no controle desta data.');
+    const canCompleteExisting = Boolean(existingMeasurement)
+      && !(row.morningLiters !== null && existingMeasurement?.morningLiters !== null)
+      && !(row.afternoonLiters !== null && existingMeasurement?.afternoonLiters !== null);
+    if (existingMeasurement && !canCompleteExisting) issues.push('Este animal já possui uma medição ativa no controle desta data.');
     update(index, {
       animalId,
       matchedAnimal: selected,
       existingMeasurement,
-      mergeDecision: existingMeasurement ? null : 'ADD',
+      mergeDecision: existingMeasurement ? canCompleteExisting ? 'COMPLETE_EXISTING' : null : 'ADD',
       status: row.status === 'EXCLUDED' ? 'EXCLUDED' : 'NEEDS_REVIEW',
       issues,
     });
@@ -141,8 +147,10 @@ export function ImportMilkReview({ prefillJson, sourceCaptureId, sourceActionId,
         sessionDate: preview.sessionDate,
         inputMode: preview.sourceMode === 'UNKNOWN' ? 'MIXED' : preview.sourceMode,
         title: 'Controle importado',
+        herdGroupId: preview.herdGroupId,
         sourceCaptureId,
         sourceActionId,
+        sourceActions,
         measurements: preview.measurements.map(({ matchedAnimal: _matchedAnimal, milkingRoutine: _milkingRoutine, issues: _issues, existingMeasurement: _existingMeasurement, ...measurement }) => measurement),
       }));
       toast(created.merged ? 'Medições adicionadas ao controle existente' : 'Controle individual importado');
@@ -150,7 +158,7 @@ export function ImportMilkReview({ prefillJson, sourceCaptureId, sourceActionId,
     } catch (cause) {
       if (cause instanceof ApiError && cause.code === 'SESSION_DATE_EXISTS') {
         try {
-          const session = await findMilkSessionByDate(preview.sessionDate);
+          const session = await findMilkSessionByDate(preview.sessionDate, preview.herdGroupId);
           if (session) {
             setExistingSession(session);
             return;
@@ -201,6 +209,7 @@ export function ImportMilkReview({ prefillJson, sourceCaptureId, sourceActionId,
   const bulkCandidates = preview.measurements.map((row, index) => ({ ...row, index })).filter(canRegisterAnimalFromMeasurement);
   const invalidMeasurementCount = preview.measurements.filter((row) => row.status !== 'EXCLUDED' && row.totalLiters === null).length;
   const unresolvedMergeCount = preview.measurements.filter((row) => row.status !== 'EXCLUDED' && row.existingMeasurement && !row.mergeDecision).length;
+  const automaticMergeCount = preview.measurements.filter((row) => row.status !== 'EXCLUDED' && row.mergeDecision === 'COMPLETE_EXISTING').length;
 
   return <div className="grid gap-5">
     {error && <ErrorState message={error} />}
@@ -210,10 +219,15 @@ export function ImportMilkReview({ prefillJson, sourceCaptureId, sourceActionId,
       onCancel={() => setExistingSession(null)}
     />}
     <SectionCard title="Revisar o controle">
+      <p className="mb-3 text-sm text-[var(--muted)]"><strong>{formatDate(preview.sessionDate)}</strong>{preview.herdGroupName ? ` · ${preview.herdGroupName}` : ''}</p>
       {preview.existingSession && <div className="notice notice-info mb-4">
-        <strong>Este controle diário já existe</strong>
-        <p className="mt-1 text-sm">As linhas revisadas serão adicionadas ao controle de {formatDate(preview.sessionDate)}, que já tem {preview.existingSession.measurementCount} medição(ões) ativa(s). Nada será apagado silenciosamente.</p>
+        <strong>Este controle do lote já existe</strong>
+        <p className="mt-1 text-sm">As novas linhas ou períodos serão combinados com o controle de {formatDate(preview.sessionDate)}, que já tem {preview.existingSession.measurementCount} medição(ões) ativa(s). Nada será apagado silenciosamente.</p>
         <Button className="mt-2" variant="secondary" onClick={() => navigate(`/producao/${preview.existingSession?.id}`)}>Abrir controle existente</Button>
+      </div>}
+      {automaticMergeCount > 0 && <div className="notice notice-info mb-4">
+        <strong>Períodos combinados automaticamente</strong>
+        <p className="mt-1 text-sm">{automaticMergeCount} {automaticMergeCount === 1 ? 'animal recebeu' : 'animais receberam'} o período que faltava, sem substituir o valor já registrado.</p>
       </div>}
       <div className="mb-4 grid grid-cols-3 gap-3"><StatCard label="Confirmadas" value={preview.measurements.filter((row) => row.status === 'CONFIRMED').length} /><StatCard label="A revisar" value={preview.measurements.filter((row) => row.status === 'NEEDS_REVIEW').length} /><StatCard label="Sem medição" value={preview.missingAnimals.length} /></div>
       {preview.sessionIssues.length > 0 && <div className="notice notice-error mb-4"><strong>Corrija antes de salvar</strong><ul className="mt-1 list-disc pl-5">{preview.sessionIssues.map((issue) => <li key={issue}>{issue}</li>)}</ul></div>}
@@ -235,7 +249,8 @@ export function ImportMilkReview({ prefillJson, sourceCaptureId, sourceActionId,
       <ScrollArea label="Linhas da revisão do controle" className="mt-4 max-h-[46rem]">
         <div className="grid gap-3">{visibleRows.map(({ row, index }) => {
           const selectedAnimal = animals?.find((animal) => animal.id === row.animalId) ?? row.matchedAnimal;
-          const hasMergeConflict = row.status !== 'EXCLUDED' && Boolean(row.existingMeasurement);
+          const completesExisting = row.status !== 'EXCLUDED' && row.mergeDecision === 'COMPLETE_EXISTING';
+          const hasMergeConflict = row.status !== 'EXCLUDED' && Boolean(row.existingMeasurement) && !completesExisting;
           return <ReviewCard
             key={`${row.rawAnimalLabel}-${index}`}
             accent={row.status === 'EXCLUDED' ? 'dismissed' : row.status === 'CONFIRMED' ? 'ok' : 'action'}
@@ -268,12 +283,14 @@ export function ImportMilkReview({ prefillJson, sourceCaptureId, sourceActionId,
               <Field label="Tarde (L)"><ParsedDecimalInput suffix="L" value={row.afternoonLiters} onValueChange={(value) => updatePeriod(index, 'afternoonLiters', value)} /></Field>
               <Field label="Total (L)" hint="Recalculado pela manhã e tarde" error={row.status !== 'EXCLUDED' && row.totalLiters === null ? 'Informe manhã ou tarde, ou exclua a linha.' : undefined}><ParsedDecimalInput suffix="L" value={row.totalLiters} onValueChange={() => undefined} readOnly aria-readonly /></Field>
             </div>
-            {row.existingMeasurement && row.status !== 'EXCLUDED' && <div className="notice notice-warning mt-3">
-              <strong>Medição já registrada para este animal</strong>
+            {row.existingMeasurement && row.status !== 'EXCLUDED' && <div className={`notice ${completesExisting ? 'notice-info' : 'notice-warning'} mt-3`}>
+              <strong>{completesExisting ? 'Períodos combinados automaticamente' : 'Medição já registrada para este animal'}</strong>
               <p className="mt-1 text-sm">Existente: {row.existingMeasurement.totalLiters === null ? 'sem total' : formatLiters(row.existingMeasurement.totalLiters)}
                 {row.existingMeasurement.morningLiters !== null ? ` · manhã ${formatLiters(row.existingMeasurement.morningLiters)}` : ''}
                 {row.existingMeasurement.afternoonLiters !== null ? ` · tarde ${formatLiters(row.existingMeasurement.afternoonLiters)}` : ''}.</p>
-              <p className="mt-1 text-xs">Escolha uma das ações abaixo. “Usar nova medição” preserva a anterior como excluída.</p>
+              <p className="mt-1 text-xs">{completesExisting
+                ? 'O período novo será acrescentado à medição deste animal; a origem de cada valor continuará preservada.'
+                : 'Escolha uma das ações abaixo. “Usar nova medição” preserva a anterior como excluída.'}</p>
             </div>}
             {registeringRowIndex === index && <div className="mt-3"><QuickAnimalForm
               key={`${index}-${row.rawAnimalLabel}`}

@@ -8,6 +8,7 @@ import { useToast } from '../../../components/feedback-context';
 import { ErrorState, Field, Input, SkeletonList } from '../../../components/ui';
 import { ExistingMilkSessionConflict } from '../../milk/ExistingMilkSessionConflict';
 import { findMilkSessionByDate } from '../../milk/findMilkSessionByDate';
+import { GroupPicker } from '../../animals/GroupPicker';
 import { useResource } from '../../../hooks/useResource';
 import { useSubmit } from '../../../hooks/useSubmit';
 import { api, ApiError, json } from '../../../lib/api';
@@ -29,7 +30,8 @@ export function IndividualControlFlow({ today, onSaved }: { today: string; onSav
   const navigate = useNavigate();
   const { busy, error, run } = useSubmit();
   const [date, setDate] = useState(today);
-  const { data: herd, loading, error: herdError, reload } = useResource<HerdMember[]>(`/api/milking-herd?date=${date}`);
+  const [herdGroupId, setHerdGroupId] = useState('');
+  const { data: herd, loading, error: herdError, reload } = useResource<HerdMember[]>(`/api/milking-herd?date=${date}&herdGroupId=${herdGroupId}`);
   const [values, setValues] = useState<Record<string, RowValue>>({});
   const [rowError, setRowError] = useState('');
   const [index, setIndex] = useState(0);
@@ -87,10 +89,10 @@ export function IndividualControlFlow({ today, onSaved }: { today: string; onSav
     });
     await run(async () => {
       try {
-        await api<{ id: string }>('/api/milk-sessions', json('POST', { sessionDate: date, inputMode: 'SEPARATE_MORNING_AFTERNOON', measurements }));
+        await api<{ id: string }>('/api/milk-sessions', json('POST', { sessionDate: date, herdGroupId, inputMode: 'SEPARATE_MORNING_AFTERNOON', measurements }));
       } catch (cause) {
         if (cause instanceof ApiError && cause.code === 'SESSION_DATE_EXISTS') {
-          const session = await findMilkSessionByDate(date);
+          const session = await findMilkSessionByDate(date, herdGroupId);
           if (session) {
             setExistingSession(session);
             return;
@@ -116,7 +118,19 @@ export function IndividualControlFlow({ today, onSaved }: { today: string; onSav
     <Field label="Data do controle" hint="A fila é o rebanho em lactação e em lote de ordenha nessa data.">
       <Input type="date" value={date} max={today} onChange={(event) => setDate(event.target.value)} />
     </Field>
-    {loading ? <SkeletonList rows={3} /> : herdError ? <ErrorState message={herdError} retry={reload} /> : !members.length
+    <GroupPicker
+      label="Lote medido"
+      value={herdGroupId}
+      routines={['MORNING_AND_AFTERNOON', 'MORNING_ONLY']}
+      onChange={(groupId) => {
+        setHerdGroupId(groupId);
+        setValues({});
+        setRowError('');
+        setIndex(0);
+        setExistingSession(null);
+      }}
+    />
+    {!herdGroupId ? null : loading ? <SkeletonList rows={3} /> : herdError ? <ErrorState message={herdError} retry={reload} /> : !members.length
       ? <p className="game-notebook-empty">Nenhuma vaca em lactação em lote de ordenha nesta data.</p>
       : current && <>
         <p className="game-notebook-heading" data-testid="game-individual-progress">Vaca {index + 1} de {members.length} · {filledCount} preenchidas</p>

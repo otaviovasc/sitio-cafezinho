@@ -12,6 +12,7 @@ import { AnimalGroupChangeForm } from '../animals/AnimalGroupChangeForm';
 import { AnimalStatusChangeForm } from '../animals/AnimalStatusChangeForm';
 import { HerdGroupForm } from '../animals/HerdGroupForm';
 import { ReproductiveEventForm } from '../animals/ReproductiveEventForm';
+import { individualProductionLabel, type IndividualProductionSummary } from '../animals/individual-production';
 import { MastitisCaseForm } from '../health/mastitis';
 import { TodayPanel } from '../dashboard/TodayPanel';
 import type { HerdGroup } from '../animals/GroupPicker';
@@ -39,7 +40,8 @@ type AnimalRow = {
   aliases: { id: string; alias: string }[];
   currentGroup: { id: string; name: string } | null;
   latestWeight: { weightKg: string; measuredAt: string } | null;
-  latestProduction: { totalLiters: string; sessionDate: string } | null;
+  latestProduction: IndividualProductionSummary | Pick<IndividualProductionSummary, 'totalLiters' | 'sessionDate'> | null;
+  latestProductions?: IndividualProductionSummary[];
 };
 type DailyTotalRow = { id: string; productionDate: string; herdGroupName: string | null; morningLiters: string | null; afternoonLiters: string | null; totalLiters: string | null };
 type SessionRow = { id: string; sessionDate: string; title: string | null; confirmedTotal: string; confirmedCount: number; reviewCount: number };
@@ -103,6 +105,28 @@ const TABS: { slug: NotebookTab; label: string; icon: ReactNode }[] = [
 
 function displayName(animal: Pick<AnimalRow, 'name' | 'tagNumber'>) {
   return animal.name || `Brinco ${animal.tagNumber}`;
+}
+
+function productionsOf(animal: AnimalRow) {
+  if (animal.latestProductions) return animal.latestProductions;
+  if (!animal.latestProduction) return [];
+  if ('morningLiters' in animal.latestProduction) return [animal.latestProduction];
+  return [{
+    id: `latest-${animal.id}`,
+    sessionDate: animal.latestProduction.sessionDate,
+    herdGroupId: null,
+    herdGroupName: null,
+    morningLiters: null,
+    afternoonLiters: null,
+    totalLiters: animal.latestProduction.totalLiters,
+  }];
+}
+
+function animalListSubtitle(animal: AnimalRow) {
+  const identity = `${animal.tagNumber ? `Brinco ${animal.tagNumber} · ` : ''}${animal.currentGroup?.name ?? 'Sem lote'}`;
+  const productions = productionsOf(animal);
+  if (!productions.length) return `${identity} · Sem medição individual`;
+  return `${identity} · ${productions.map(individualProductionLabel).join(' | ')}`;
 }
 
 function excerpt(text: string, max = 90) {
@@ -205,6 +229,7 @@ function describeDetail(detail: Exclude<NotebookDetail, { type: 'group' }>): Det
   switch (detail.type) {
     case 'animal': {
       const { row } = detail;
+      const productions = productionsOf(row);
       return {
         title: displayName(row),
         subtitle: row.name && row.tagNumber ? `Brinco ${row.tagNumber}` : undefined,
@@ -213,7 +238,11 @@ function describeDetail(detail: Exclude<NotebookDetail, { type: 'group' }>): Det
           { label: 'Sexo', value: animalSexLabels[row.sex] ?? row.sex },
           { label: 'Lote', value: row.currentGroup?.name ?? 'Sem lote' },
           { label: 'Última pesagem', value: row.latestWeight ? `${Number(row.latestWeight.weightKg).toLocaleString('pt-BR')} kg em ${dateOf(row.latestWeight.measuredAt)}` : 'Nunca pesado' },
-          { label: 'Último controle', value: row.latestProduction ? `${formatLiters(row.latestProduction.totalLiters)} em ${dateOf(row.latestProduction.sessionDate)}` : 'Sem controle' },
+          ...productions.map((production, index) => ({
+            label: index === 0 ? 'Último controle' : 'Controle anterior',
+            value: individualProductionLabel(production),
+          })),
+          ...(!productions.length ? [{ label: 'Últimos controles', value: 'Sem medição individual' }] : []),
         ],
         link: { to: `/rebanho/${row.id}`, label: 'Abrir ficha completa' },
       };
@@ -583,7 +612,7 @@ export function GameNotebook({ open, initialTab, startInCreate, onClose, onOpenI
     const entries: { group: string; detail: NotebookDetail; title: string; subtitle: string; badge?: StatusDescriptor; haystack: string }[] = [];
     for (const row of animals.data ?? []) {
       const title = displayName(row);
-      const subtitle = `${row.tagNumber ? `Brinco ${row.tagNumber} · ` : ''}${row.currentGroup?.name ?? 'Sem lote'}`;
+      const subtitle = animalListSubtitle(row);
       entries.push({ group: 'Animais', detail: { type: 'animal', row }, title, subtitle, badge: animalStatusDescriptor(row.status), haystack: normalizeLabel(`${title} ${row.tagNumber ?? ''} ${row.aliases.map((alias) => alias.alias).join(' ')}`) });
     }
     for (const row of totals.data ?? []) entries.push({ group: 'Produção', detail: { type: 'dailyTotal', row }, title: `Produção de ${dateOf(row.productionDate)}`, subtitle: row.herdGroupName ?? 'Rebanho todo', haystack: normalizeLabel(`producao ${row.productionDate} ${row.herdGroupName ?? 'rebanho todo'}`) });
@@ -776,7 +805,7 @@ export function GameNotebook({ open, initialTab, startInCreate, onClose, onOpenI
           <NotebookSection title="Animais">
             {activeGroups.length >= 2 && <FilterChips label="Filtrar animais por lote" testidPrefix="game-notebook-rebanho-filter" value={filterOf('rebanho')} onChange={(slug) => setFilter('rebanho', slug)} options={[{ slug: 'todos', label: 'Todos os lotes' }, ...activeGroups.map((group) => ({ slug: group.id, label: group.name }))]} />}
             <NotebookPanel state={{ ...animals, data: visibleAnimals }} empty={(animals.data ?? []).length ? 'Nenhum animal neste lote.' : 'Nenhum animal cadastrado ainda.'}>{(rows) => <>
-            {rows.map((row) => <NotebookRow key={row.id} detail={{ type: 'animal', row }} title={displayName(row)} subtitle={`${row.tagNumber ? `Brinco ${row.tagNumber} · ` : ''}${row.currentGroup?.name ?? 'Sem lote'}`} badge={animalStatusDescriptor(row.status)} onOpen={setDetail} />)}
+            {rows.map((row) => <NotebookRow key={row.id} detail={{ type: 'animal', row }} title={displayName(row)} subtitle={animalListSubtitle(row)} badge={animalStatusDescriptor(row.status)} onOpen={setDetail} />)}
           </>}</NotebookPanel></NotebookSection>
         </div>}
 

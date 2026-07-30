@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Camera, Loader2, Mic, Plus, Square } from 'lucide-react';
+import { Camera, CheckCircle2, Loader2, Mic, Plus, Square, XCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { ENTRY_TYPES } from '../config/entries';
 import { api, ApiError, json } from '../lib/api';
@@ -15,6 +15,13 @@ function formatSeconds(total: number) {
 }
 
 type CaptureResult = { captureId: string; actions: ReviewableAction[] };
+type DocumentJob = {
+  id: string;
+  filename: string;
+  status: 'PROCESSING' | 'DONE' | 'ERROR';
+  result?: CaptureResult;
+  error?: string;
+};
 
 type SheetMode = 'choose' | 'recording' | 'processing';
 
@@ -26,12 +33,15 @@ function CaptureSheet({ open, onClose }: { open: boolean; onClose: () => void })
   const [mode, setMode] = useState<SheetMode>('choose');
   const [text, setText] = useState('');
   const [error, setError] = useState('');
+  const [documentJobs, setDocumentJobs] = useState<DocumentJob[]>([]);
+  const processingDocuments = documentJobs.some((job) => job.status === 'PROCESSING');
 
   function close() {
-    if (mode === 'processing') return;
+    if (mode === 'processing' || processingDocuments) return;
     setMode('choose');
     setText('');
     setError('');
+    setDocumentJobs([]);
     onClose();
   }
 
@@ -84,11 +94,49 @@ function CaptureSheet({ open, onClose }: { open: boolean; onClose: () => void })
     await submit(json('POST', { text: text.trim() }));
   }
 
-  async function sendDocument(file: File) {
+  async function sendDocument(file: File, jobId: string) {
     const form = new FormData();
     form.append('document', file);
     if (text.trim()) form.append('context', text.trim());
-    await submit({ method: 'POST', body: form });
+    try {
+      const result = await api<CaptureResult>('/api/captures', { method: 'POST', body: form });
+      setDocumentJobs((jobs) => jobs.map((job) => job.id === jobId ? { ...job, status: 'DONE', result } : job));
+    } catch (cause) {
+      setDocumentJobs((jobs) => jobs.map((job) => job.id === jobId ? {
+        ...job,
+        status: 'ERROR',
+        error: cause instanceof ApiError ? cause.message : 'Não foi possível processar esta imagem.',
+      } : job));
+    }
+  }
+
+  function sendDocuments(files: File[]) {
+    const jobs = files.map((file, index) => ({
+      id: `${Date.now()}-${index}-${file.name}`,
+      filename: file.name,
+      status: 'PROCESSING' as const,
+      file,
+    }));
+    setError('');
+    setDocumentJobs((current) => [...current, ...jobs.map(({ file: _file, ...job }) => job)]);
+    for (const job of jobs) void sendDocument(job.file, job.id);
+  }
+
+  function reviewDocuments() {
+    const firstPending = documentJobs.flatMap((job) => {
+      const result = job.result;
+      if (!result) return [];
+      return result.actions.filter((action) => action.status === 'NEEDS_REVIEW')
+        .map((action) => ({ captureId: result.captureId, action }));
+    })[0];
+    setDocumentJobs([]);
+    setText('');
+    onClose();
+    if (firstPending) {
+      navigate('/', { state: { reviewCaptureId: firstPending.captureId, reviewActionId: firstPending.action.id } });
+    } else {
+      navigate('/', { state: { openNotebook: 'pendencias' } });
+    }
   }
 
   return <Modal open={open} title="Assistente de registros" description="Diga o que aconteceu e o assistente preenche — ou registre direto." onClose={close}>
@@ -107,9 +155,28 @@ function CaptureSheet({ open, onClose }: { open: boolean; onClose: () => void })
               ? <div className="grid gap-2">
                 <button type="button" className="button button-primary w-full" data-autofocus onClick={() => void record()}><Mic size={18} aria-hidden /> Falar</button>
                 <label className="button button-secondary w-full cursor-pointer">
-                  <Camera size={18} aria-hidden /> Foto ou documento
-                  <input type="file" accept="image/*,application/pdf" capture="environment" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void sendDocument(file); }} />
+                  <Camera size={18} aria-hidden /> Fotos ou documentos
+                  <input type="file" multiple accept="image/*,application/pdf" className="hidden" onChange={(event) => {
+                    const files = Array.from(event.target.files ?? []);
+                    event.target.value = '';
+                    if (files.length) sendDocuments(files);
+                  }} />
                 </label>
+                {documentJobs.length > 0 && <div className="grid gap-2" aria-live="polite">
+                  {documentJobs.map((job) => <div key={job.id} className="flex min-h-11 items-center gap-2 rounded-xl border border-[var(--line)] px-3 py-2 text-sm">
+                    {job.status === 'PROCESSING'
+                      ? <Loader2 className="shrink-0 animate-spin" size={17} aria-hidden />
+                      : job.status === 'DONE'
+                        ? <CheckCircle2 className="shrink-0 text-[var(--ok)]" size={17} aria-hidden />
+                        : <XCircle className="shrink-0 text-[var(--danger)]" size={17} aria-hidden />}
+                    <span className="min-w-0 flex-1 truncate">{job.filename}</span>
+                    <small className="text-[var(--muted)]">{job.status === 'PROCESSING' ? 'Lendo…' : job.status === 'DONE' ? 'Pronta' : job.error}</small>
+                  </div>)}
+                  {!processingDocuments && documentJobs.some((job) => job.status === 'DONE') && <Button onClick={reviewDocuments}>
+                    Revisar {documentJobs.filter((job) => job.status === 'DONE').length > 1 ? 'imagens juntas' : 'imagem'}
+                  </Button>}
+                  <p className="text-xs text-[var(--muted)]">Você pode escolher mais arquivos enquanto os anteriores são lidos. Controles da mesma data e lote serão reunidos automaticamente.</p>
+                </div>}
                 <Textarea placeholder="Ou escreva: hoje o primeiro lote tirou 700 litros de manhã… (também vira contexto da foto)" value={text} onChange={(event) => setText(event.target.value)} />
                 <Button variant="secondary" disabled={!text.trim()} onClick={() => void sendText()}>Enviar texto</Button>
                 <p className="text-xs text-[var(--muted)]">Áudio tem limite de {recorder.maxSeconds}s. Controle longo? Fotografe a anotação — a revisão abre vaca a vaca do mesmo jeito.</p>

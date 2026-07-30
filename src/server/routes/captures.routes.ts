@@ -1,14 +1,17 @@
 import { Buffer } from 'node:buffer';
-import { and, asc, desc, eq, inArray, notInArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, notInArray } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb } from '../../db/client.js';
-import { animalAliases, animals, captures, feedItems, herdGroups, proposedActions, suppliers } from '../../db/schema.js';
+import { animalAliases, animals, attachments, captures, feedItems, herdGroups, proposedActions, suppliers } from '../../db/schema.js';
+import { sha256 as hashFile } from '../../domain/files.js';
 import { requireDocumentQuantityReview, resolveIntent, type ResolveContext } from '../../domain/nl/resolve.js';
 import { fail } from '../http/api-error.js';
 import { readJson, validate } from '../http/validation.js';
 import { commitProposedAction } from '../services/commit-registry.js';
 import { getLlmProvider, type InterpretResult } from '../services/llm.js';
+import { ALLOWED_MIME, MAX_FILE_SIZE } from '../storage/file-storage.js';
+import { getStorage } from '../storage/storage.factory.js';
 
 const ALLOWED_AUDIO_MIME = new Set([
   'audio/webm', 'audio/ogg', 'audio/mp4', 'audio/mpeg', 'audio/wav', 'audio/x-wav', 'audio/aac', 'audio/x-m4a', 'audio/m4a',
@@ -21,6 +24,12 @@ type CaptureBase = {
   sttRaw?: unknown;
   ocrSummary?: string | null;
   sttModel?: string | null;
+  document?: {
+    buffer: Buffer;
+    filename: string;
+    mimeType: string;
+    sizeBytes: number;
+  };
 };
 
 async function loadResolveContext(): Promise<ResolveContext> {
@@ -40,32 +49,76 @@ async function persistCapture(base: CaptureBase, interpretation: InterpretResult
     const action = resolveIntent(intent, ctx);
     return base.inputKind === 'DOCUMENT' ? requireDocumentQuantityReview(action) : action;
   });
-  return getDb().transaction(async (tx) => {
-    const [capture] = await tx.insert(captures).values({
-      inputKind: base.inputKind,
-      status: 'NEEDS_REVIEW',
-      transcript: base.transcript,
-      sttRaw: base.sttRaw ?? null,
-      ocrSummary: base.ocrSummary ?? null,
-      interpretRaw: interpretation.raw ?? null,
-      sttModel: base.sttModel ?? null,
-      interpretModel: interpretation.model,
-      tokensUsed: interpretation.tokensUsed,
-      latencyMs,
-    }).returning();
-    const actions = resolved.length
-      ? await tx.insert(proposedActions).values(resolved.map((action) => ({
-        captureId: capture.id,
-        actionType: action.actionType,
-        rawIntent: action.rawIntent,
-        resolvedPayload: action.resolvedPayload,
-        issues: action.issues,
-        commitStatus: action.commitStatus,
-        status: 'NEEDS_REVIEW' as const,
-      }))).returning()
-      : [];
-    return { capture, actions };
-  });
+  const storage = base.document ? getStorage() : null;
+  let stored: Awaited<ReturnType<NonNullable<typeof storage>['upload']>> | null = null;
+  let reusedAttachmentId: string | null = null;
+  if (base.document && storage) {
+    const sha256 = hashFile(base.document.buffer);
+    const [duplicate] = await getDb().select({ id: attachments.id }).from(attachments).where(and(
+      eq(attachments.sha256, sha256),
+      isNull(attachments.deletedAt),
+      eq(attachments.storageStatus, 'AVAILABLE'),
+    )).limit(1);
+    reusedAttachmentId = duplicate?.id ?? null;
+    if (!reusedAttachmentId) {
+      try {
+        stored = await storage.upload({
+          buffer: base.document.buffer,
+          filename: base.document.filename,
+          mimeType: base.document.mimeType,
+        });
+      } catch {
+        return fail('Não foi possível armazenar a imagem original. Verifique a configuração e tente novamente.', 503, 'STORAGE_FAILED');
+      }
+    }
+  }
+  try {
+    return await getDb().transaction(async (tx) => {
+      let documentAttachmentId = reusedAttachmentId;
+      if (base.document && storage && stored) {
+        const [documentAttachment] = await tx.insert(attachments).values({
+          originalFilename: base.document.filename,
+          mimeType: base.document.mimeType,
+          sizeBytes: base.document.sizeBytes,
+          sha256: hashFile(base.document.buffer),
+          storageProvider: storage.kind,
+          storageFileId: stored.fileId,
+          storageFolderId: stored.folderId,
+          storageStatus: 'AVAILABLE',
+          documentType: 'MILK_NOTEBOOK',
+        }).returning({ id: attachments.id });
+        documentAttachmentId = documentAttachment.id;
+      }
+      const [capture] = await tx.insert(captures).values({
+        inputKind: base.inputKind,
+        status: 'NEEDS_REVIEW',
+        transcript: base.transcript,
+        sttRaw: base.sttRaw ?? null,
+        ocrSummary: base.ocrSummary ?? null,
+        interpretRaw: interpretation.raw ?? null,
+        sttModel: base.sttModel ?? null,
+        interpretModel: interpretation.model,
+        tokensUsed: interpretation.tokensUsed,
+        latencyMs,
+        documentAttachmentId,
+      }).returning();
+      const actions = resolved.length
+        ? await tx.insert(proposedActions).values(resolved.map((action) => ({
+          captureId: capture.id,
+          actionType: action.actionType,
+          rawIntent: action.rawIntent,
+          resolvedPayload: action.resolvedPayload,
+          issues: action.issues,
+          commitStatus: action.commitStatus,
+          status: 'NEEDS_REVIEW' as const,
+        }))).returning()
+        : [];
+      return { capture, actions };
+    });
+  } catch (error) {
+    if (storage && stored) await storage.delete(stored.fileId).catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function refreshCaptureStatus(captureId: string) {
@@ -111,10 +164,22 @@ export const captureRoutes = new Hono()
         });
         base = { inputKind: 'AUDIO', transcript: result.text, sttRaw: result.raw, sttModel: result.model };
       } else if (document instanceof File) {
+        if (!ALLOWED_MIME.has(document.type)) return fail('Envie JPEG, PNG, WebP ou PDF.');
+        if (document.size > MAX_FILE_SIZE) return fail('O arquivo deve ter no máximo 15 MB.', 413, 'FILE_TOO_LARGE');
         const hint = typeof form.get('context') === 'string' ? String(form.get('context')) : undefined;
         const buffer = Buffer.from(await document.arrayBuffer());
         const result = await provider.ocr({ buffer, filename: document.name || 'documento', mimeType: document.type || 'application/octet-stream' }, hint);
-        base = { inputKind: 'DOCUMENT', transcript: result.text, ocrSummary: result.text };
+        base = {
+          inputKind: 'DOCUMENT',
+          transcript: result.text,
+          ocrSummary: result.text,
+          document: {
+            buffer,
+            filename: document.name || 'documento',
+            mimeType: document.type,
+            sizeBytes: document.size,
+          },
+        };
       } else {
         return fail('Envie um áudio, um documento ou um texto.', 400, 'NO_INPUT');
       }

@@ -25,6 +25,7 @@ import { decimalString, normalizeLabel, parseDecimal } from '../../domain/format
 import { reproductiveOutcomes, summarizeReproduction } from '../../domain/reproduction.js';
 import { fail } from '../http/api-error.js';
 import { optionalText, readJson, validate } from '../http/validation.js';
+import { collectLatestProductionsByAnimal } from '../services/animal-production-summary.js';
 
 const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
 const statusSchema = z.enum(animalStatuses);
@@ -224,17 +225,37 @@ export const animalRoutes = new Hono()
       db.select({ animalId: animalWeights.animalId, weightKg: animalWeights.weightKg, measuredAt: animalWeights.measuredAt })
         .from(animalWeights).where(and(isNotNull(animalWeights.animalId), eq(animalWeights.status, 'CONFIRMED'), isNotNull(animalWeights.weightKg)))
         .orderBy(desc(animalWeights.measuredAt)),
-      db.select({ animalId: milkMeasurements.animalId, totalLiters: milkMeasurements.totalLiters, sessionDate: milkSessions.sessionDate })
-        .from(milkMeasurements).innerJoin(milkSessions, eq(milkMeasurements.milkSessionId, milkSessions.id))
-        .where(and(isNotNull(milkMeasurements.animalId), eq(milkMeasurements.status, 'CONFIRMED')))
-        .orderBy(desc(milkSessions.sessionDate)),
+      db.select({
+        id: milkMeasurements.id,
+        animalId: milkMeasurements.animalId,
+        sessionDate: milkSessions.sessionDate,
+        herdGroupId: milkSessions.herdGroupId,
+        herdGroupName: herdGroups.name,
+        morningLiters: milkMeasurements.morningLiters,
+        afternoonLiters: milkMeasurements.afternoonLiters,
+        totalLiters: milkMeasurements.totalLiters,
+      }).from(milkMeasurements)
+        .innerJoin(milkSessions, eq(milkMeasurements.milkSessionId, milkSessions.id))
+        .leftJoin(herdGroups, eq(milkSessions.herdGroupId, herdGroups.id))
+        .where(and(
+          isNotNull(milkMeasurements.animalId),
+          eq(milkMeasurements.status, 'CONFIRMED'),
+          or(
+            isNotNull(milkMeasurements.morningLiters),
+            isNotNull(milkMeasurements.afternoonLiters),
+            isNotNull(milkMeasurements.totalLiters),
+          ),
+        ))
+        .orderBy(desc(milkSessions.sessionDate), desc(milkMeasurements.createdAt)),
     ]);
+    const latestProductionsByAnimal = collectLatestProductionsByAnimal(production);
     return c.json(rows.map((animal) => ({
       ...animal,
       aliases: aliases.filter((alias) => alias.animalId === animal.id),
       currentGroup: groups.find((group) => group.animalId === animal.id) ?? null,
       latestWeight: weights.find((weight) => weight.animalId === animal.id) ?? null,
-      latestProduction: production.find((measurement) => measurement.animalId === animal.id) ?? null,
+      latestProduction: latestProductionsByAnimal.get(animal.id)?.[0] ?? null,
+      latestProductions: latestProductionsByAnimal.get(animal.id) ?? [],
     })));
   })
   .post('/animals', async (c) => {

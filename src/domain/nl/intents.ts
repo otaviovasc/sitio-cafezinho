@@ -47,6 +47,7 @@ export const individualMilkMeasurementIntent = z.object({
 export const individualMilkSessionIntent = z.object({
   type: z.literal('individual_milk_session'),
   date: spokenDateSchema,
+  scopeLabel: z.string().nullable().default(null),
   measurements: z.array(individualMilkMeasurementIntent).min(1),
 });
 export type IndividualMilkSessionIntent = z.infer<typeof individualMilkSessionIntent>;

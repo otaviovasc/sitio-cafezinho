@@ -148,6 +148,13 @@
       "when": 1784646720000,
       "tag": "0020_farm_world",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1785441000000,
+      "tag": "0021_individual_milk_capture_merge",
+      "breakpoints": true
     }
   ]
 }
