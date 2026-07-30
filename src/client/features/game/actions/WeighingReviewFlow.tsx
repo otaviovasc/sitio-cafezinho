@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react';
-import { Check } from 'lucide-react';
+import { Check, Plus } from 'lucide-react';
+import { canRegisterAnimalFromMeasurement } from '../../../../domain/animal-registration';
 import { formatWeight } from '../../../../domain/weight';
 import { ParsedDecimalInput } from '../../../components/form-controls';
-import { ErrorState, Field, Select, SkeletonList } from '../../../components/ui';
+import { useToast } from '../../../components/feedback-context';
+import { Button, ErrorState, Field, Select, SkeletonList } from '../../../components/ui';
 import { useResource } from '../../../hooks/useResource';
 import { api, json } from '../../../lib/api';
 import { today } from '../../../lib/labels';
+import { BulkRegisterFromLabels, type BulkCreatedAnimal } from '../../animals/BulkRegisterFromLabels';
+import type { HerdGroup } from '../../animals/GroupPicker';
 import { commitReviewAction, type ReviewableAction } from '../review';
 
 type Animal = { id: string; name: string | null; tagNumber: string | null };
@@ -35,8 +39,10 @@ function animalLabel(animal: Animal | ReviewRow['matchedAnimal']) {
  * /api/weight-sessions/validate (casamento exato, peso anterior, variação e
  * demais inconsistências — o mesmo validador da importação de pesagem), o
  * usuário corrige linha a linha e o Confirmar grava pelo commit da ação
- * proposta (pipeline de revisão). Linhas sem vínculo/excluídas ficam
- * preservadas e nunca criam animal.
+ * proposta (pipeline de revisão). Linhas legíveis sem vínculo podem virar
+ * cadastros em massa (BulkRegisterFromLabels, um lote/situação para todas e
+ * rematch automático) por confirmação humana; linhas excluídas nunca criam
+ * animal e permanecem preservadas.
  */
 export function WeighingReviewFlow({ action, onCommitted }: {
   action: ReviewableAction;
@@ -44,10 +50,13 @@ export function WeighingReviewFlow({ action, onCommitted }: {
 }) {
   const payload = action.resolvedPayload ?? {};
   const measuredOn = typeof payload.measuredOn === 'string' ? payload.measuredOn : today();
+  const toast = useToast();
   const [rows, setRows] = useState<ReviewRow[] | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const { data: animals } = useResource<Animal[]>('/api/animals');
+  const [showBulkRegister, setShowBulkRegister] = useState(false);
+  const [lastGroupId, setLastGroupId] = useState('');
+  const { data: animals, reload: reloadAnimals } = useResource<Animal[]>('/api/animals');
 
   useEffect(() => {
     const draftRows = Array.isArray(payload.measurements) ? payload.measurements as Array<Record<string, unknown>> : [];
@@ -96,6 +105,26 @@ export function WeighingReviewFlow({ action, onCommitted }: {
     });
   }
 
+  async function handleBulkCreated(created: BulkCreatedAnimal[], group: HerdGroup | null) {
+    const createdByIndex = new Map(created.map((item) => [item.index, item.animal]));
+    const remaining = (rows ?? []).filter((row, index) => !createdByIndex.has(index) && canRegisterAnimalFromMeasurement(row)).length;
+    setRows((current) => current?.map((row, index) => {
+      const animal = createdByIndex.get(index);
+      if (!animal) return row;
+      return {
+        ...row,
+        animalId: animal.id,
+        matchedAnimal: { id: animal.id, name: animal.name, tagNumber: animal.tagNumber },
+        status: row.weightKg !== null ? 'CONFIRMED' as const : 'NEEDS_REVIEW' as const,
+        issues: row.issues.filter((issue) => issue !== 'Animal não encontrado por nome, brinco ou alias exato.'),
+      };
+    }) ?? current);
+    if (group) setLastGroupId(group.id);
+    setShowBulkRegister(false);
+    await reloadAnimals(false);
+    toast(`${created.length} ${created.length === 1 ? 'vaca cadastrada e vinculada' : 'vacas cadastradas e vinculadas'}${remaining ? ` · restam ${remaining} sem vínculo` : ''}`);
+  }
+
   async function confirm() {
     if (!rows) return;
     setBusy(true);
@@ -119,10 +148,20 @@ export function WeighingReviewFlow({ action, onCommitted }: {
   const activeRows = rows.filter((row) => row.status !== 'EXCLUDED');
   const confirmedCount = rows.filter((row) => row.status === 'CONFIRMED').length;
   const pendingCount = activeRows.length - confirmedCount;
+  const bulkCandidates = rows.map((row, index) => ({ ...row, index })).filter(canRegisterAnimalFromMeasurement);
 
   return <div className="grid gap-3" data-testid="game-weighing-review">
     {error && <ErrorState message={error} />}
     <p className="game-notebook-heading">Pesagem de {measuredOn.split('-').reverse().join('/')} · {confirmedCount} confirmada(s){pendingCount > 0 ? ` · ${pendingCount} a revisar` : ''}</p>
+    {bulkCandidates.length > 0 && !showBulkRegister && <Button data-testid="game-weighing-bulk-register" onClick={() => setShowBulkRegister(true)}><Plus size={17} aria-hidden />Cadastrar {bulkCandidates.length} {bulkCandidates.length === 1 ? 'vaca' : 'vacas'} sem vínculo</Button>}
+    {showBulkRegister && <BulkRegisterFromLabels
+      date={measuredOn}
+      rows={bulkCandidates}
+      defaultGroupId={lastGroupId}
+      testIdPrefix="game-weighing-bulk"
+      onCancel={() => setShowBulkRegister(false)}
+      onCreated={handleBulkCreated}
+    />}
     {rows.map((row, index) => <div key={`${row.rawAnimalLabel}-${index}`} className="game-individual-card" data-testid={`game-weighing-review-row-${index}`}>
       <div className="flex items-center justify-between gap-2">
         <strong className="game-individual-name">{row.rawAnimalLabel}</strong>

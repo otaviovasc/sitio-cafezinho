@@ -11,11 +11,11 @@ import { useToast } from '../../components/feedback-context';
 
 export type CreatedAnimal = { id: string; name: string | null; tagNumber: string | null; status: AnimalStatus };
 
-export function QuickAnimalForm({ initialDate = today(), initialName = '', onCreated, onCancel }: { initialDate?: string; initialName?: string; onCreated: (animal: CreatedAnimal) => void | Promise<void>; onCancel: () => void }) {
+export function QuickAnimalForm({ initialDate = today(), initialName = '', initialGroupId = '', onCreated, onCancel }: { initialDate?: string; initialName?: string; initialGroupId?: string; onCreated: (animal: CreatedAnimal, context: { groupId: string | null }) => void | Promise<void>; onCancel: () => void }) {
   const toast = useToast();
   const { busy, error, run } = useSubmit();
   const form = useForm(
-    { name: initialName, tagNumber: '', sex: 'FEMALE' as AnimalSex, status: 'LACTATING' as AnimalStatus, groupId: '', changedOn: initialDate },
+    { name: initialName, tagNumber: '', sex: 'FEMALE' as AnimalSex, status: 'LACTATING' as AnimalStatus, groupId: initialGroupId, changedOn: initialDate },
     {
       name: (value, all) => (!value.trim() && !all.tagNumber.trim() ? 'Informe o nome ou o número do brinco.' : undefined),
       groupId: (value, all) => (statusRequiresMilkingGroup(all.status) && !value ? 'Selecione o lote de ordenha.' : undefined),
@@ -50,7 +50,7 @@ export function QuickAnimalForm({ initialDate = today(), initialName = '', onCre
       notes: 'Cadastrado durante a revisão de um controle individual.',
     }));
     toast('Animal cadastrado');
-    await onCreated(created);
+    await onCreated(created, { groupId: groupId || null });
   }
 
   return <form className="grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--background)] p-4" noValidate onSubmit={(event) => { event.preventDefault(); if (form.validate()) void run(persist); }}>

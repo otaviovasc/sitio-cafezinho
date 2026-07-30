@@ -435,7 +435,9 @@ mapa:
 | `game-notebook-pending-marker-{kind}` | Pendência derivada do mundo na aba Pendências (`collection-missing`, `purchase-overdue`, `planting-ready`) | — |
 | `game-sheet-review-badge` / `game-sheet-review-dismiss` | Aviso "Vindo do assistente" no modo revisão da folha e botão Descartar | — |
 | `game-individual-review` | Revisão linha a linha do controle individual por IA na mangueira | — |
+| `import-bulk-register` / `import-bulk-panel` / `import-bulk-line-{i}` / `import-bulk-confirm` | Cadastro em massa das linhas sem vínculo na revisão do controle (um lote para todas, rematch automático) | — |
 | `game-weighing-review` / `game-weighing-review-row-{i}` / `game-weighing-review-save` | Revisão da pesagem por IA na balança (revalidada pelo `/api/weight-sessions/validate`) | — |
+| `game-weighing-bulk-register` / `game-weighing-bulk-panel` / `game-weighing-bulk-line-{i}` / `game-weighing-bulk-confirm` | Cadastro em massa das linhas sem vínculo na revisão da pesagem | — |
 | `game-notebook-review-open` / `game-notebook-review-dismiss` | Ações "Revisar na folha" e "Descartar captura" no detalhe de pendência do caderno | — |
 | `graficos-hub` | Página-hub `/graficos` (gráficos + registros e auditoria fora do jogo) | — |
 | `capture-recording-timer` / `capture-recording-warning` | Contagem regressiva do limite de 60s e aviso final no gravador do assistente | — |
@@ -614,7 +616,12 @@ sem revisão humana.
 - **Controle individual por IA:** a revisão linha a linha vive na mangueira
   (`game-individual-review`) pelo `ImportMilkReview` (extraído de
   `ImportMilkPage`, que virou wrapper fino e segue como rota de fallback em
-  `/producao/importar`): matching exato, QuickAnimalForm inline, decisões de
+  `/producao/importar`): matching exato, cadastro em massa das linhas sem
+  vínculo (`import-bulk-*` — `BulkRegisterFromLabels`, confiança OK marcada e
+  baixa confiança desmarcada por padrão, UM lote para todas com default no
+  lote mais frequente do controle, POST /api/animals/bulk e rematch
+  automático), QuickAnimalForm linha a linha (memoriza o último lote usado na
+  revisão), decisões de
   merge; a gravação é o `POST /api/import/milk-session`, que confirma a ação
   de origem (fase 0). As 3 telas viraram 1 folha.
 - **Pesagem por voz/foto (intent WEIGHT_SESSION):** novo intent de verdade —
@@ -627,6 +634,9 @@ sem revisão humana.
   balança (`game-weighing-review`): as linhas interpretadas são REVALIDADAS
   pelo `POST /api/weight-sessions/validate` — o endpoint ganhou chamador real
   (decisão: manter, não remover) — e o Confirmar commita o payload revisado.
+  Linhas sem vínculo podem virar cadastros em massa (`game-weighing-bulk-*`,
+  mesmo `BulkRegisterFromLabels`, com situação escolhível) por confirmação
+  humana.
 - **/revisar:** na fase 6 virou redirect para `/?caderno=pendencias` — a fila
   de revisão vive na aba Pendências do Caderno, e cada pendência abre a folha
   do fato pelo detalhe (`game-notebook-review-open`). A página e o botão
