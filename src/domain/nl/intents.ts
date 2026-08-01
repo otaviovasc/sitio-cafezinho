@@ -52,6 +52,7 @@ export const individualMilkSessionIntent = z.object({
   // coluna sem cabeçalho seja promovida silenciosamente a manhã ou tarde.
   period: z.enum(['MORNING', 'AFTERNOON']).nullable().optional(),
   sourceDocumentOrdinals: z.array(z.number().int().positive()).optional(),
+  metadataConflicts: z.array(z.enum(['DATE', 'GROUP', 'PERIOD'])).optional(),
   measurements: z.array(individualMilkMeasurementIntent).min(1),
 });
 export type IndividualMilkSessionIntent = z.infer<typeof individualMilkSessionIntent>;

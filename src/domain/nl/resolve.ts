@@ -232,13 +232,15 @@ export function resolveIndividualMilkSession(
   groups: ResolvableGroup[] = [],
   now = new Date(),
 ): ResolvedAction {
-  const dateRequired = !(intent.date.relative || (intent.date.iso && /^\d{4}-\d{2}-\d{2}$/.test(intent.date.iso)));
+  const metadataConflicts = new Set(intent.metadataConflicts ?? []);
+  const dateMissing = !(intent.date.relative || (intent.date.iso && /^\d{4}-\d{2}-\d{2}$/.test(intent.date.iso)));
+  const dateRequired = dateMissing || metadataConflicts.has('DATE');
   const sessionDate = dateRequired ? '' : resolveSpokenDate(intent.date, now);
   const groupResolution = resolveHerdGroup(intent.scopeLabel, groups);
   const period = intent.period ?? null;
   const sourceDocumentOrdinals = intent.sourceDocumentOrdinals ?? [];
-  const groupRequired = !intent.scopeLabel?.trim() || !groupResolution.group;
-  const periodRequired = period === null;
+  const groupRequired = !intent.scopeLabel?.trim() || !groupResolution.group || metadataConflicts.has('GROUP');
+  const periodRequired = period === null || metadataConflicts.has('PERIOD');
   const measurements = intent.measurements.map((row) => {
     const periodValue = row.totalLiters;
     const morningLiters = row.morningLiters ?? (period === 'MORNING' ? periodValue : null);
@@ -258,9 +260,12 @@ export function resolveIndividualMilkSession(
     };
   });
   const issues = [...groupResolution.issues];
-  if (dateRequired) issues.push('Informe a data deste controle individual.');
-  if (!intent.scopeLabel?.trim()) issues.push('Informe o lote deste controle individual.');
-  if (periodRequired) issues.push('Informe se este controle é da manhã ou da tarde.');
+  if (metadataConflicts.has('DATE')) issues.push('A data informada no contexto diverge do cabeçalho da foto. Confirme a data correta.');
+  else if (dateMissing) issues.push('Informe a data deste controle individual.');
+  if (metadataConflicts.has('GROUP')) issues.push('O lote informado no contexto diverge do cabeçalho da foto. Confirme o lote correto.');
+  else if (!intent.scopeLabel?.trim()) issues.push('Informe o lote deste controle individual.');
+  if (metadataConflicts.has('PERIOD')) issues.push('O período informado no contexto diverge do cabeçalho da foto. Confirme manhã ou tarde.');
+  else if (period === null) issues.push('Informe se este controle é da manhã ou da tarde.');
   return {
     actionType: 'INDIVIDUAL_MILK_SESSION',
     rawIntent: intent,

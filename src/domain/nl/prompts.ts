@@ -19,6 +19,7 @@ Regras invioláveis:
 - Se algo estiver ambíguo ou incerto, ainda assim registre o que foi dito e marque confidence MEDIUM ou LOW; nunca descarte.
 - Datas: preencha "relative" com "hoje", "ontem" ou "anteontem" quando a pessoa disser isso; preencha "iso" (AAAA-MM-DD) só quando uma data explícita for dita. Sempre copie o trecho original em "rawText".
 - Em entradas com vários documentos, cada trecho começa com [Documento N]. Use essa numeração em sourceDocumentOrdinals. Não misture listas de lote, data ou período diferentes em uma única sessão.
+- O contexto do usuário e o cabeçalho visível da foto são evidências independentes. Se divergirem sobre data, lote ou período, não escolha silenciosamente: preserve a leitura, use confidence LOW nas linhas afetadas e liste "DATE", "GROUP" ou "PERIOD" em metadataConflicts para exigir confirmação humana.
 - "Mesma data", "mesmo lote" e expressões equivalentes no contexto do usuário podem herdar o valor da foto anterior. Se não houver informação, devolva null; não use a data de hoje como palpite.`;
 
 const OUTPUT_CONTRACT = `Responda SOMENTE com um objeto JSON válido, sem Markdown, no formato:
@@ -33,7 +34,7 @@ const ACTIONS = `Tipos de ação suportados:
    Deixe morningLiters ou afternoonLiters em null quando o período não foi dito.
 
 2) "individual_milk_session" — leitura vaca a vaca (controle individual).
-   Campos: type, date, scopeLabel (rótulo do lote como escrito/falado, ou null), period ("MORNING", "AFTERNOON" ou null), sourceDocumentOrdinals (números dos documentos que originaram a lista), measurements[] com { animalLabel, morningLiters, afternoonLiters, totalLiters, rawValueText, confidence, notes }.
+   Campos: type, date, scopeLabel (rótulo do lote como escrito/falado, ou null), period ("MORNING", "AFTERNOON" ou null), sourceDocumentOrdinals (números dos documentos que originaram a lista), metadataConflicts (lista opcional com "DATE", "GROUP" ou "PERIOD" quando contexto e foto divergirem), measurements[] com { animalLabel, morningLiters, afternoonLiters, totalLiters, rawValueText, confidence, notes }.
    Preencha só os valores ditos; deixe os demais em null. Se o período geral estiver claro, coloque cada valor somente no campo daquele período.
 
 3) "milk_collection" — coleta do laticínio (volume retirado).

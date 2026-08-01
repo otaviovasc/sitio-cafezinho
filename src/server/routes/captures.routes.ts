@@ -36,6 +36,13 @@ const MAX_DOCUMENTS = 10;
 const DOCUMENT_CONCURRENCY = 3;
 export const MAX_CAPTURE_MULTIPART_BYTES = 50 * 1024 * 1024;
 
+export function buildDocumentOcrContext(userContext: string, ordinal: number, total: number): string {
+  const context = userContext.trim()
+    ? `Contexto geral informado pelo usuário:\n${userContext.trim()}\n\n`
+    : '';
+  return `Esta é a Foto ${ordinal} de ${total}.\n\n${context}Leia o cabeçalho visível desta foto e a lista de animais. Se data, lote ou período visível divergir do contexto geral, transcreva as duas evidências e não esconda a divergência.`;
+}
+
 type CaptureWarning = {
   code: 'OCR_FAILED' | 'STORAGE_FAILED' | 'AUDIO_FAILED' | 'INTERPRETATION_FAILED';
   message: string;
@@ -397,7 +404,7 @@ export const captureRoutes = new Hono()
               buffer: document.buffer,
               filename: document.filename,
               mimeType: document.mimeType,
-            }, userContext || undefined);
+            }, buildDocumentOcrContext(userContext, document.ordinal, inputDocuments.length));
             return {
               ...document,
               sha256: hashFile(document.buffer),

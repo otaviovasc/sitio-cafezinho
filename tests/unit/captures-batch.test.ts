@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  buildDocumentOcrContext,
   captureMultipartSizeIssue,
   interpretationFallbackForReview,
   mapWithConcurrency,
@@ -46,6 +47,17 @@ describe('mapWithConcurrency', () => {
 
   it('aceita uma lista vazia', async () => {
     await expect(mapWithConcurrency([], 3, async (item) => item)).resolves.toEqual([]);
+  });
+});
+
+describe('contexto individual do OCR', () => {
+  it('identifica a posição da foto e manda preservar conflitos visíveis', () => {
+    expect(buildDocumentOcrContext(
+      'primeira e segunda foto são lote 1; terceira é lote 2',
+      1,
+      3,
+    )).toContain('Esta é a Foto 1 de 3');
+    expect(buildDocumentOcrContext('contexto', 1, 3)).toContain('não esconda a divergência');
   });
 });
 

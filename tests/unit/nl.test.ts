@@ -215,6 +215,37 @@ describe('resolveIndividualMilkSession — Exemplo 3', () => {
       sourceDocumentOrdinals: [3],
     });
   });
+
+  it('obriga confirmação quando o contexto do usuário contradiz o cabeçalho da foto', () => {
+    const intent: IndividualMilkSessionIntent = {
+      type: 'individual_milk_session',
+      date: { relative: null, iso: '2026-07-28', rawText: '28/07/26' },
+      scopeLabel: 'lote 1',
+      period: 'MORNING',
+      sourceDocumentOrdinals: [1],
+      metadataConflicts: ['GROUP', 'PERIOD'],
+      measurements: [
+        { animalLabel: 'Mimosa', morningLiters: 7, afternoonLiters: null, totalLiters: 7, rawValueText: '7', confidence: 'HIGH', notes: null },
+      ],
+    };
+
+    const resolved = resolveIndividualMilkSession(intent, groups, NOW);
+    const imported = (resolved.resolvedPayload as {
+      import: {
+        metadataReview: { dateRequired: boolean; groupRequired: boolean; periodRequired: boolean };
+      };
+    }).import;
+
+    expect(imported.metadataReview).toEqual({
+      dateRequired: false,
+      groupRequired: true,
+      periodRequired: true,
+    });
+    expect(resolved.issues).toEqual(expect.arrayContaining([
+      'O lote informado no contexto diverge do cabeçalho da foto. Confirme o lote correto.',
+      'O período informado no contexto diverge do cabeçalho da foto. Confirme manhã ou tarde.',
+    ]));
+  });
 });
 
 describe('resolvers de registro — mapeamento de rótulos falados', () => {

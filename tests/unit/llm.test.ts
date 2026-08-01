@@ -111,7 +111,11 @@ describe('OpenRouterProvider.interpret', () => {
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    const firstBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     const repairBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(firstBody.max_completion_tokens).toBe(16_000);
+    expect(repairBody.max_completion_tokens).toBe(16_000);
+    expect(firstBody.reasoning).toEqual({ effort: 'minimal', exclude: true });
     expect(repairBody.messages.at(-1).content).toContain('Corrija a resposta anterior');
   });
 

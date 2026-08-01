@@ -241,6 +241,8 @@ export class OpenRouterProvider implements LlmProvider {
           model: this.config.intentModel,
           messages,
           temperature: 0,
+          max_completion_tokens: 16_000,
+          reasoning: { effort: 'minimal', exclude: true },
           ...(responseFormat ? { response_format: responseFormat } : {}),
         }),
       });
