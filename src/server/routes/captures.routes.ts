@@ -16,10 +16,15 @@ import {
 } from '../../db/schema.js';
 import { sha256 as hashFile } from '../../domain/files.js';
 import { requireDocumentQuantityReview, resolveIntent, type ResolveContext } from '../../domain/nl/resolve.js';
-import { fail } from '../http/api-error.js';
+import { ApiError, fail } from '../http/api-error.js';
 import { readJson, validate } from '../http/validation.js';
 import { commitProposedAction } from '../services/commit-registry.js';
-import { getLlmProvider, type InterpretResult } from '../services/llm.js';
+import {
+  getLlmProvider,
+  LlmInterpretationError,
+  LlmRequestError,
+  type InterpretResult,
+} from '../services/llm.js';
 import { ALLOWED_MIME, MAX_FILE_SIZE } from '../storage/file-storage.js';
 import { getStorage } from '../storage/storage.factory.js';
 
@@ -32,10 +37,27 @@ const DOCUMENT_CONCURRENCY = 3;
 export const MAX_CAPTURE_MULTIPART_BYTES = 50 * 1024 * 1024;
 
 type CaptureWarning = {
-  code: 'OCR_FAILED' | 'STORAGE_FAILED' | 'AUDIO_FAILED';
+  code: 'OCR_FAILED' | 'STORAGE_FAILED' | 'AUDIO_FAILED' | 'INTERPRETATION_FAILED';
   message: string;
   documentOrdinal?: number;
 };
+
+export function interpretationFallbackForReview(error: unknown): InterpretResult | null {
+  if (!(error instanceof ApiError) || !['INTERPRET_INVALID', 'LLM_FAILED'].includes(error.code)) return null;
+  return {
+    intents: [{
+      type: 'unknown',
+      reason: 'A leitura automática não pôde ser organizada. Confira as fotos e faça o registro manualmente.',
+    }],
+    raw: error instanceof LlmInterpretationError ? error.raw : null,
+    model: error instanceof LlmInterpretationError
+      ? error.model
+      : error instanceof LlmRequestError
+        ? error.diagnostics.model
+        : 'unavailable',
+    tokensUsed: error instanceof LlmInterpretationError ? error.tokensUsed : null,
+  };
+}
 
 type CaptureDocumentBase = {
   buffer: Buffer;
@@ -348,7 +370,7 @@ export const captureRoutes = new Hono()
           console.warn(JSON.stringify({
             level: 'warn',
             event: 'capture_audio_transcription_failed',
-            detail: error instanceof Error ? error.message : 'falha desconhecida',
+            code: error instanceof ApiError ? error.code : 'UNKNOWN',
           }));
           multipartWarnings.push({
             code: 'AUDIO_FAILED',
@@ -385,12 +407,11 @@ export const captureRoutes = new Hono()
               ocrStatus: 'AVAILABLE' as const,
             };
           } catch (error) {
-            const detail = error instanceof Error ? error.message : 'falha desconhecida';
             console.warn(JSON.stringify({
               level: 'warn',
               event: 'capture_document_ocr_failed',
               documentOrdinal: document.ordinal,
-              detail,
+              code: error instanceof ApiError ? error.code : 'UNKNOWN',
             }));
             ocrWarnings.push({
               code: 'OCR_FAILED',
@@ -433,10 +454,38 @@ export const captureRoutes = new Hono()
     if (!base.transcript.trim()) return fail('Não consegui entender o conteúdo. Tente de novo.', 422, 'EMPTY_TRANSCRIPT');
 
     const startedAt = Date.now();
-    const interpretation = await provider.interpret(base.transcript, {
-      lotNames: ctx.groups.map((group) => group.name),
-      feedItemNames: ctx.feedItems.filter((item) => item.active).map((item) => item.name),
-    });
+    let interpretation: InterpretResult;
+    try {
+      interpretation = await provider.interpret(base.transcript, {
+        lotNames: ctx.groups.map((group) => group.name),
+        feedItemNames: ctx.feedItems.filter((item) => item.active).map((item) => item.name),
+      });
+    } catch (error) {
+      const fallback = base.inputKind === 'DOCUMENT' ? interpretationFallbackForReview(error) : null;
+      if (!fallback) throw error;
+      const interpretationError = error instanceof LlmInterpretationError ? error : null;
+      const requestError = error instanceof LlmRequestError ? error : null;
+      console.warn(JSON.stringify({
+        level: 'warn',
+        event: 'capture_interpretation_failed',
+        requestId: c.res.headers.get('x-request-id'),
+        code: error instanceof ApiError ? error.code : 'UNKNOWN',
+        inputKind: base.inputKind,
+        documentCount: base.documents?.length ?? 0,
+        transcriptLength: base.transcript.length,
+        model: interpretationError?.model ?? requestError?.diagnostics.model ?? null,
+        attempts: interpretationError?.diagnostics.attempts ?? [],
+        providerFailure: requestError?.diagnostics ?? null,
+      }));
+      interpretation = fallback;
+      base.ocrWarnings = [
+        ...(base.ocrWarnings ?? []),
+        {
+          code: 'INTERPRETATION_FAILED',
+          message: 'As fotos e suas leituras foram preservadas, mas não consegui organizar os registros. Revise a pendência ou registre manualmente.',
+        },
+      ];
+    }
     const { capture, documents, actions, warnings } = await persistCapture(base, interpretation, ctx, Date.now() - startedAt);
     const ocrWarnings = base.ocrWarnings ?? [];
     return c.json({

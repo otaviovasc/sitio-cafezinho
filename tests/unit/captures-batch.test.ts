@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   captureMultipartSizeIssue,
+  interpretationFallbackForReview,
   mapWithConcurrency,
   MAX_CAPTURE_MULTIPART_BYTES,
   prepareDocumentStorage,
 } from '../../src/server/routes/captures.routes';
+import { ApiError } from '../../src/server/http/api-error';
+import { LlmInterpretationError, LlmRequestError } from '../../src/server/services/llm';
 
 function document(ordinal: number) {
   return {
@@ -116,5 +119,56 @@ describe('storage best-effort da captura', () => {
     expect(upload).toHaveBeenCalledTimes(2);
     expect(result.prepared.map((item) => item.stored?.fileId)).toEqual(['foto-1.jpg', 'foto-2.jpg']);
     expect(result.warnings).toEqual([]);
+  });
+});
+
+describe('fallback de interpretação da captura', () => {
+  it('preserva uma captura de fotos como pendência desconhecida após duas respostas inválidas', () => {
+    const error = new LlmInterpretationError(
+      {
+        model: 'modelo-teste',
+        attempts: [{
+          failureKind: 'INVALID_JSON',
+          contentLength: 100,
+          finishReason: 'length',
+          issueCodes: [],
+          issuePaths: [],
+        }],
+      },
+      { resposta: 'original' },
+      'modelo-teste',
+      123,
+    );
+
+    expect(interpretationFallbackForReview(error)).toEqual({
+      intents: [{
+        type: 'unknown',
+        reason: 'A leitura automática não pôde ser organizada. Confira as fotos e faça o registro manualmente.',
+      }],
+      raw: { resposta: 'original' },
+      model: 'modelo-teste',
+      tokensUsed: 123,
+    });
+  });
+
+  it('não mascara erros que não pertencem ao modelo', () => {
+    expect(interpretationFallbackForReview(new Error('banco indisponível'))).toBeNull();
+    expect(interpretationFallbackForReview(new ApiError('inválido', 422, 'INVALID_REQUEST'))).toBeNull();
+  });
+
+  it('preserva a captura quando o transporte do modelo falha', () => {
+    const fallback = interpretationFallbackForReview(new LlmRequestError({
+      model: 'modelo-teste',
+      phase: 'interpret_initial',
+      failureKind: 'NETWORK',
+      providerStatus: null,
+    }));
+
+    expect(fallback).toMatchObject({
+      intents: [{ type: 'unknown' }],
+      raw: null,
+      model: 'modelo-teste',
+      tokensUsed: null,
+    });
   });
 });

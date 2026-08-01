@@ -65,7 +65,18 @@ export function createApp() {
     const known = error instanceof ApiError;
     const status = known ? error.status : 500;
     const requestId = c.res.headers.get('x-request-id');
-    if (!known) console.error(JSON.stringify({ level: 'error', requestId, code: 'INTERNAL_ERROR', message: error.message }));
+    if (!known || status >= 500) {
+      console.error(JSON.stringify({
+        level: 'error',
+        event: 'api_request_failed',
+        requestId,
+        method: c.req.method,
+        path: c.req.path,
+        status,
+        code: known ? error.code : 'INTERNAL_ERROR',
+        ...(!known ? { message: error.message } : {}),
+      }));
+    }
     return c.json({
       error: {
         code: known ? error.code : 'INTERNAL_ERROR',

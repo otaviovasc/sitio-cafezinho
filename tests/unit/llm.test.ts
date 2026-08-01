@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { OpenRouterProvider } from '../../src/server/services/llm';
+import {
+  LlmInterpretationError,
+  LlmRequestError,
+  OpenRouterProvider,
+} from '../../src/server/services/llm';
 
 const audio = {
   buffer: Buffer.from('audio'),
@@ -82,5 +86,100 @@ describe('OpenRouterProvider.transcribe', () => {
     expect(warn).toHaveBeenCalledOnce();
     expect(warn.mock.calls[0]?.[0]).toContain('"firstModel":"google/chirp-3"');
     expect(warn.mock.calls[0]?.[0]).toContain('"secondModel":"openai/gpt-4o-mini-transcribe"');
+  });
+});
+
+describe('OpenRouterProvider.interpret', () => {
+  it('refaz uma interpretação que veio fora do contrato e usa a resposta corrigida', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        choices: [{ finish_reason: 'stop', message: { content: '{"registros":[]}' } }],
+        usage: { total_tokens: 120 },
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        choices: [{
+          finish_reason: 'stop',
+          message: { content: '{"intents":[{"type":"unknown","reason":"Revisar a leitura"}]}' },
+        }],
+        usage: { total_tokens: 80 },
+      }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(provider().interpret('Três fotos de controle individual')).resolves.toMatchObject({
+      intents: [{ type: 'unknown', reason: 'Revisar a leitura' }],
+      tokensUsed: 200,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const repairBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(repairBody.messages.at(-1).content).toContain('Corrija a resposta anterior');
+  });
+
+  it('expõe somente diagnósticos estruturais quando as duas respostas são inválidas', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        choices: [{ finish_reason: 'length', message: { content: '{"intents":[' } }],
+        usage: { total_tokens: 4000 },
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        choices: [{ finish_reason: 'stop', message: { content: '{"intents":[]}' } }],
+        usage: { total_tokens: 30 },
+      }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const failure = await provider().interpret('conteúdo sensível da fazenda').catch((error) => error);
+
+    expect(failure).toBeInstanceOf(LlmInterpretationError);
+    expect(failure).toMatchObject({
+      code: 'INTERPRET_INVALID',
+      status: 502,
+      diagnostics: {
+        attempts: [
+          expect.objectContaining({ failureKind: 'INVALID_JSON', finishReason: 'length' }),
+          expect.objectContaining({ failureKind: 'INVALID_SCHEMA', finishReason: 'stop' }),
+        ],
+      },
+    });
+    expect(JSON.stringify(failure.diagnostics)).not.toContain('conteúdo sensível');
+  });
+
+  it('converte falha de rede em erro sanitizado que permite o fallback', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('token secreto na falha de rede')));
+
+    const failure = await provider().interpret('conteúdo sensível da fazenda').catch((error) => error);
+
+    expect(failure).toBeInstanceOf(LlmRequestError);
+    expect(failure).toMatchObject({
+      code: 'LLM_FAILED',
+      message: 'O serviço de leitura automática está indisponível agora. Tente novamente.',
+      diagnostics: {
+        model: 'google/gemini-test',
+        phase: 'interpret_initial',
+        failureKind: 'NETWORK',
+        providerStatus: null,
+      },
+    });
+    expect(JSON.stringify(failure)).not.toContain('token secreto');
+  });
+
+  it('classifica resposta não-JSON do provedor sem vazar seu corpo', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response('<html>detalhe externo sensível</html>', {
+        status: 502,
+        headers: { 'content-type': 'text/html' },
+      }),
+    ));
+
+    const failure = await provider().interpret('leitura').catch((error) => error);
+
+    expect(failure).toMatchObject({
+      code: 'LLM_FAILED',
+      diagnostics: {
+        phase: 'interpret_initial',
+        failureKind: 'INVALID_PROVIDER_RESPONSE',
+        providerStatus: 502,
+      },
+    });
+    expect(JSON.stringify(failure)).not.toContain('detalhe externo');
   });
 });

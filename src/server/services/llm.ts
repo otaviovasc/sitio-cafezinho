@@ -31,14 +31,49 @@ export interface LlmProvider {
 }
 
 type ChatResponse = {
-  choices?: Array<{ message?: { content?: unknown } }>;
+  choices?: Array<{ finish_reason?: unknown; message?: { content?: unknown } }>;
   usage?: { total_tokens?: unknown };
-  error?: { message?: unknown };
 };
 
-function describeError(raw: unknown): string {
-  const message = (raw as ChatResponse | null)?.error?.message;
-  return typeof message === 'string' ? message : 'erro desconhecido';
+type InterpretationAttemptDiagnostic = {
+  failureKind: 'EMPTY_RESPONSE' | 'INVALID_JSON' | 'INVALID_SCHEMA';
+  contentLength: number;
+  finishReason: string | null;
+  issueCodes: string[];
+  issuePaths: string[];
+};
+
+export type InterpretationFailureDiagnostics = {
+  model: string;
+  attempts: InterpretationAttemptDiagnostic[];
+};
+
+export type LlmRequestDiagnostics = {
+  model: string;
+  phase: 'ocr' | 'interpret_initial' | 'interpret_repair';
+  failureKind: 'NETWORK' | 'INVALID_PROVIDER_RESPONSE' | 'PROVIDER_REJECTED';
+  providerStatus: number | null;
+};
+
+export class LlmRequestError extends ApiError {
+  constructor(readonly diagnostics: LlmRequestDiagnostics) {
+    super('O serviço de leitura automática está indisponível agora. Tente novamente.', 502, 'LLM_FAILED');
+  }
+}
+
+export class LlmInterpretationError extends ApiError {
+  constructor(
+    readonly diagnostics: InterpretationFailureDiagnostics,
+    readonly raw: unknown,
+    readonly model: string,
+    readonly tokensUsed: number | null,
+  ) {
+    super(
+      'O modelo não conseguiu organizar a leitura. As imagens foram preservadas para revisão.',
+      502,
+      'INTERPRET_INVALID',
+    );
+  }
 }
 
 function messageContent(raw: unknown): string {
@@ -119,10 +154,8 @@ export class OpenRouterProvider implements LlmProvider {
         event: 'stt_failed',
         firstModel: primary.model,
         firstStatus: primary.response.status,
-        firstMessage: describeError(primary.raw),
         secondModel: result === primary ? null : result.model,
         secondStatus: result === primary ? null : result.response.status,
-        secondMessage: result === primary ? null : describeError(result.raw),
       }));
       throw new ApiError('Não foi possível transcrever o áudio agora. Tente novamente.', 502, 'STT_FAILED');
     }
@@ -144,53 +177,166 @@ export class OpenRouterProvider implements LlmProvider {
         { type: 'text', text: instruction },
         { type: 'image_url', image_url: { url: dataUri } },
       ],
-    }]);
+    }], undefined, 'ocr');
     return { text: messageContent(raw).trim(), raw, model: this.config.intentModel };
   }
 
   async interpret(transcript: string, context: InterpretContext = {}): Promise<InterpretResult> {
-    const raw = await this.chat(
+    const messages = [
+      { role: 'system', content: buildInterpretSystemPrompt(context) },
+      { role: 'user', content: transcript },
+    ];
+    const firstRaw = await this.chat(messages, { type: 'json_object' }, 'interpret_initial');
+    const first = parseInterpretation(firstRaw);
+    if (first.success) {
+      return {
+        intents: first.data.intents,
+        raw: firstRaw,
+        model: this.config.intentModel,
+        tokensUsed: totalTokens(firstRaw),
+      };
+    }
+
+    const repairRaw = await this.chat(
       [
-        { role: 'system', content: buildInterpretSystemPrompt(context) },
-        { role: 'user', content: transcript },
+        ...messages,
+        { role: 'assistant', content: messageContent(firstRaw) },
+        {
+          role: 'user',
+          content: 'Corrija a resposta anterior. Devolva somente um objeto JSON válido que cumpra exatamente o contrato, preserve os dados originais e não invente valores.',
+        },
       ],
       { type: 'json_object' },
+      'interpret_repair',
     );
-    const json = safeParseJson(messageContent(raw));
-    const parsed = interpretationSchema.safeParse(json);
-    if (!parsed.success) throw new ApiError('O modelo devolveu uma interpretação fora do formato esperado.', 502, 'INTERPRET_INVALID');
-    const totalTokens = (raw as ChatResponse).usage?.total_tokens;
+    const repaired = parseInterpretation(repairRaw);
+    const tokensUsed = sumTokens(firstRaw, repairRaw);
+    if (!repaired.success) {
+      throw new LlmInterpretationError(
+        { model: this.config.intentModel, attempts: [first.diagnostic, repaired.diagnostic] },
+        { first: firstRaw, repair: repairRaw },
+        this.config.intentModel,
+        tokensUsed,
+      );
+    }
     return {
-      intents: parsed.data.intents,
-      raw,
+      intents: repaired.data.intents,
+      raw: { first: firstRaw, repair: repairRaw },
       model: this.config.intentModel,
-      tokensUsed: typeof totalTokens === 'number' ? totalTokens : null,
+      tokensUsed,
     };
   }
 
-  private async chat(messages: unknown[], responseFormat?: { type: string }): Promise<unknown> {
-    const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: this.headers({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({
+  private async chat(
+    messages: unknown[],
+    responseFormat?: { type: string },
+    phase: LlmRequestDiagnostics['phase'] = 'interpret_initial',
+  ): Promise<unknown> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.config.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          model: this.config.intentModel,
+          messages,
+          temperature: 0,
+          ...(responseFormat ? { response_format: responseFormat } : {}),
+        }),
+      });
+    } catch {
+      throw new LlmRequestError({
         model: this.config.intentModel,
-        messages,
-        temperature: 0,
-        ...(responseFormat ? { response_format: responseFormat } : {}),
-      }),
-    });
-    const raw = await response.json();
-    if (!response.ok) throw new ApiError(`Falha no modelo: ${describeError(raw)}`, 502, 'LLM_FAILED');
+        phase,
+        failureKind: 'NETWORK',
+        providerStatus: null,
+      });
+    }
+
+    let raw: unknown;
+    try {
+      raw = await response.json();
+    } catch {
+      throw new LlmRequestError({
+        model: this.config.intentModel,
+        phase,
+        failureKind: 'INVALID_PROVIDER_RESPONSE',
+        providerStatus: response.status,
+      });
+    }
+    if (!response.ok) {
+      throw new LlmRequestError({
+        model: this.config.intentModel,
+        phase,
+        failureKind: 'PROVIDER_REJECTED',
+        providerStatus: response.status,
+      });
+    }
     return raw;
   }
 }
 
-function safeParseJson(content: string): unknown {
-  try {
-    return JSON.parse(stripMarkdownJson(content));
-  } catch {
-    return null;
+function totalTokens(raw: unknown): number | null {
+  const value = (raw as ChatResponse | null)?.usage?.total_tokens;
+  return typeof value === 'number' ? value : null;
+}
+
+function sumTokens(...responses: unknown[]): number | null {
+  const values = responses.map(totalTokens).filter((value): value is number => value !== null);
+  return values.length ? values.reduce((sum, value) => sum + value, 0) : null;
+}
+
+function finishReason(raw: unknown): string | null {
+  const value = (raw as ChatResponse | null)?.choices?.[0]?.finish_reason;
+  return typeof value === 'string' ? value : null;
+}
+
+function parseInterpretation(raw: unknown):
+  | { success: true; data: { intents: VoiceIntent[] } }
+  | { success: false; diagnostic: InterpretationAttemptDiagnostic } {
+  const content = messageContent(raw);
+  if (!content.trim()) {
+    return {
+      success: false,
+      diagnostic: {
+        failureKind: 'EMPTY_RESPONSE',
+        contentLength: content.length,
+        finishReason: finishReason(raw),
+        issueCodes: [],
+        issuePaths: [],
+      },
+    };
   }
+
+  let json: unknown;
+  try {
+    json = JSON.parse(stripMarkdownJson(content));
+  } catch {
+    return {
+      success: false,
+      diagnostic: {
+        failureKind: 'INVALID_JSON',
+        contentLength: content.length,
+        finishReason: finishReason(raw),
+        issueCodes: [],
+        issuePaths: [],
+      },
+    };
+  }
+
+  const parsed = interpretationSchema.safeParse(json);
+  if (parsed.success) return { success: true, data: parsed.data };
+  const issues = parsed.error.issues.slice(0, 12);
+  return {
+    success: false,
+    diagnostic: {
+      failureKind: 'INVALID_SCHEMA',
+      contentLength: content.length,
+      finishReason: finishReason(raw),
+      issueCodes: [...new Set(issues.map((issue) => issue.code))],
+      issuePaths: issues.map((issue) => issue.path.join('.')).filter(Boolean),
+    },
+  };
 }
 
 let cached: LlmProvider | undefined;
