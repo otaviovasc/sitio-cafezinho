@@ -15,12 +15,13 @@ const envSchema = z.object({
   SESSION_SECRET: z.string().min(32, 'SESSION_SECRET deve ter pelo menos 32 caracteres.'),
   PUBLIC_APP_URL: z.string().url().default('http://localhost:3000'),
   SEED_DEMO_DATA: z.enum(['true', 'false']).default('false'),
-  STORAGE_MODE: z.enum(['local', 'google_drive']).default('local'),
+  STORAGE_MODE: z.enum(['local', 'railway_bucket']).default('local'),
   LOCAL_STORAGE_PATH: z.string().default('/data/uploads'),
-  GOOGLE_CLIENT_ID: z.string().optional().default(''),
-  GOOGLE_CLIENT_SECRET: z.string().optional().default(''),
-  GOOGLE_REFRESH_TOKEN: z.string().optional().default(''),
-  GOOGLE_DRIVE_FOLDER_ID: z.string().optional().default(''),
+  AWS_ENDPOINT_URL: z.union([z.literal(''), z.string().url()]).default(''),
+  AWS_ACCESS_KEY_ID: z.string().optional().default(''),
+  AWS_SECRET_ACCESS_KEY: z.string().optional().default(''),
+  AWS_S3_BUCKET_NAME: z.string().optional().default(''),
+  AWS_DEFAULT_REGION: z.string().optional().default('auto'),
   // Camada de linguagem natural (áudio/documento/texto → ação). Opcional:
   // sem chave, os endpoints de captura respondem 503 e a UI de voz fica oculta.
   OPENROUTER_API_KEY: z.string().optional().default(''),
@@ -32,9 +33,9 @@ const envSchema = z.object({
   OPENROUTER_STT_FALLBACK_MODEL: z.string().default('openai/gpt-4o-mini-transcribe'),
   OPENROUTER_INTENT_MODEL: z.string().default('google/gemini-3.1-flash-lite'),
 }).superRefine((value, context) => {
-  if (value.STORAGE_MODE === 'google_drive') {
-    for (const key of ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REFRESH_TOKEN', 'GOOGLE_DRIVE_FOLDER_ID'] as const) {
-      if (!value[key]) context.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: `${key} é obrigatória no modo google_drive.` });
+  if (value.STORAGE_MODE === 'railway_bucket') {
+    for (const key of ['AWS_ENDPOINT_URL', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_S3_BUCKET_NAME', 'AWS_DEFAULT_REGION'] as const) {
+      if (!value[key]) context.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: `${key} é obrigatória no modo railway_bucket.` });
     }
   }
 });

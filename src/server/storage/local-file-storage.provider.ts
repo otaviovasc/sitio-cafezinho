@@ -20,7 +20,7 @@ export class LocalFileStorageProvider implements FileStorageProvider {
     await mkdir(this.root, { recursive: true });
     const fileId = `${randomUUID()}${fileExtensions[input.mimeType]}`;
     await writeFile(this.resolve(fileId), input.buffer, { flag: 'wx' });
-    return { fileId, folderId: null };
+    return { fileId };
   }
 
   async open(fileId: string) { return createReadStream(this.resolve(fileId)); }

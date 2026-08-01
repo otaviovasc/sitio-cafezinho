@@ -16,7 +16,7 @@ src/db           schema, migrations e seed PostgreSQL
 - `src/domain` não conhece React, Hono, Drizzle, PostgreSQL ou Google.
 - `src/domain/animal-lifecycle.ts` separa ciclo produtivo de lote e valida sexo por situação; `src/domain/herd.ts` concentra a semântica da rotina de ordenha. Nomes de lotes e de pastos permanecem dados do PostgreSQL.
 - `src/server/routes` valida entrada e traduz HTTP; operações com mais de uma gravação ficam em serviços transacionais.
-- `src/server/storage` contém a porta de arquivos e as implementações local/Google Drive escolhidas no composition root.
+- `src/server/storage` contém a porta de arquivos e as implementações local/Railway Bucket escolhidas no composition root.
 - `src/client/features` concentra fluxos reutilizáveis; `pages` compõe as rotas e `components/ui.tsx` mantém as primitives do design system.
 - O cliente tem o jogo como shell: `/` renderiza o tabuleiro (`/jogo` redireciona) e toda criação/edição/consulta do dia a dia acontece nas folhas (`GameSheet`/`GameEntitySheet`) e no Caderno (`GameNotebook`, com a aba Hoje que monta o `TodayPanel` do antigo dashboard). As páginas clássicas continuam como superfícies de auditoria, correção e gráficos, reunidas no hub `/graficos`; o menu do `AppShell` é mínimo (Mapa, Caderno via `?caderno=`, Gráficos) e o assistente de captura é global (MicFab).
 - `src/db` é a fonte do modelo persistente. Toda mudança de schema exige migration.
@@ -28,7 +28,7 @@ Novas regras começam em `domain` quando forem independentes de infraestrutura. 
 O armazenamento segue o mesmo contrato nos dois ambientes:
 
 - local: volume Docker em `/data/uploads`;
-- produção: uma pasta Google Drive definida por variável de ambiente.
+- produção: Railway Storage Bucket privado com credenciais S3 injetadas por referência.
 
 Metadados ficam sempre no PostgreSQL. Segredos são lidos apenas no servidor e não entram no banco nem no bundle React.
 

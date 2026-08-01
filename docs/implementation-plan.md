@@ -1,6 +1,6 @@
 # Checklist de implementação
 
-Decisão de escopo: seguir a correção 80/20 — local em volume Docker e Railway em uma pasta Google Drive já criada, usando refresh token em variável de ambiente. Não haverá tela de conexão, tabela de conexão, OAuth dentro do app, token no banco, múltiplos providers simultâneos ou fake de Drive.
+Decisão de escopo: local em volume Docker e produção em Railway Storage Bucket privado, com credenciais S3 injetadas por referência. Não haverá tela de conexão, credencial no banco, múltiplos providers simultâneos ou fake de bucket.
 
 ## Marco 1 — Base
 
@@ -31,7 +31,7 @@ Decisão de escopo: seguir a correção 80/20 — local em volume Docker e Railw
 ## Marco 4 — Operação
 
 - [x] Dockerfile e Compose
-- [x] Google Drive por ambiente + script de autorização
+- [x] Railway Storage Bucket por ambiente
 - [x] Railway e documentação operacional
 
 ## Marco 5 — Evidências
@@ -46,10 +46,9 @@ Decisão de escopo: seguir a correção 80/20 — local em volume Docker e Railw
 
 ## Ações externas (não executadas nesta fase)
 
-- [ ] Criar projeto, aplicação e PostgreSQL no Railway
-- [ ] Criar pasta e cliente OAuth no Google Cloud/Drive
-- [ ] Gerar refresh token real e executar checklist manual do Drive
-- [ ] Fazer deploy e smoke test no domínio público
+- [x] Criar projeto, aplicação e PostgreSQL no Railway
+- [x] Criar e conectar Railway Storage Bucket
+- [ ] Fazer deploy e smoke test do bucket no domínio público
 
 ## Evolução de operação — julho de 2026
 
@@ -103,4 +102,4 @@ Decisão de escopo: seguir a correção 80/20 — local em volume Docker e Railw
 - [x] Transformar a rota principal em Hoje com pendências reais e ações prioritárias
 - [x] Adicionar exportações CSV e scripts de backup/restauração PostgreSQL 17
 - [x] Ensaiar backup e restauração em banco local descartável
-- [ ] Validar Railway e Google Drive em produção — adiado por decisão do responsável
+- [ ] Validar Railway Storage Bucket em produção

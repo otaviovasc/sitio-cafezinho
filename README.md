@@ -16,7 +16,7 @@ Aplicação interna, compartilhada e mobile-first para a rotina diária de uma p
 - compras rápidas, itens opcionais, fornecedores, vencimentos e pagamento simples;
 - receitas esperadas ou recebidas, venda de leite, saída econômica do animal e resultado de caixa registrado;
 - preço mensal editável do leite, histórico e estimativa sobre o volume efetivamente coletado, sem criar receita automática;
-- fotos/PDFs em volume local ou em uma pasta Google Drive, reutilizados por compra, coleta, receita e saída;
+- fotos/PDFs em volume local ou Railway Storage Bucket, reutilizados por compra, coleta, receita e saída;
 - página Hoje com pendências reais, quatro ações prioritárias, resumo do dia e visão mensal;
 - exportações CSV e backup/restauração PostgreSQL reproduzíveis.
 
@@ -67,27 +67,24 @@ pnpm db:migrate
 pnpm db:seed
 pnpm backup:create
 pnpm backup:restore --file=<arquivo>
-pnpm google-drive:authorize
 ```
 
 ## Armazenamento
 
 - Local: `STORAGE_MODE=local` e `LOCAL_STORAGE_PATH=/data/uploads`.
-- Railway: `STORAGE_MODE=google_drive` com `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN` e `GOOGLE_DRIVE_FOLDER_ID`.
-
-Não há tela de conexão do Drive nem token no banco. A autorização é feita uma única vez com `pnpm google-drive:authorize`; veja [docs/google-drive-setup.md](docs/google-drive-setup.md).
+- Railway: `STORAGE_MODE=railway_bucket` com as variáveis S3 do bucket injetadas por referência.
 
 Arquivos aceitos: JPEG, PNG, WebP e PDF, até 15 MB. Metadados e vínculos ficam no PostgreSQL; o binário fica no provider selecionado.
 
 ## Produção no Railway
 
-O mesmo `Dockerfile` é usado localmente e no Railway. A aplicação lê `PORT` e `DATABASE_URL`, executa migrations e seed idempotente no pre-deploy e usa Google Drive, nunca o filesystem efêmero. Veja [docs/railway-deployment.md](docs/railway-deployment.md).
+O mesmo `Dockerfile` é usado localmente e no Railway. A aplicação lê `PORT` e `DATABASE_URL`, executa migrations e seed idempotente no pre-deploy e usa Storage Bucket, nunca o filesystem efêmero. Veja [docs/railway-deployment.md](docs/railway-deployment.md).
 
 ## Testes e operação
 
 Os testes unitários cobrem regras de domínio, ciclo produtivo, peso, parsers de importação, autenticação, storage e seed. O Playwright cobre fluxos reais em desktop, celular e tablet, com screenshots de QA visual. A lista de superfícies está em [docs/feature-surface-map.md](docs/feature-surface-map.md). Para a validação conjunta da família, sigam [docs/qa-guide.md](docs/qa-guide.md).
 
-Para cópias tabulares, use `/configuracoes/dados`. Para backup completo, siga [docs/backup-and-restore.md](docs/backup-and-restore.md), ensaie a restauração em banco descartável e mantenha também a pasta do Drive protegida. Não compartilhe `.env`, refresh tokens ou a senha da aplicação. Não há recuperação de senha: altere `APP_PASSWORD` no ambiente e reinicie o serviço.
+Para cópias tabulares, use `/configuracoes/dados`. Para backup completo, siga [docs/backup-and-restore.md](docs/backup-and-restore.md), ensaie a restauração em banco descartável e mantenha uma cópia dos objetos do bucket. Não compartilhe `.env`, credenciais S3 ou a senha da aplicação. Não há recuperação de senha: altere `APP_PASSWORD` no ambiente e reinicie o serviço.
 
 ## Limitações assumidas
 

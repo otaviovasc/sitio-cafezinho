@@ -195,16 +195,14 @@ Regras que devem permanecer verdadeiras:
 - [ ] Confirmar que animal, banco e documento continuam acessíveis.
 - [ ] Executar `docker compose exec app node dist/db/seed.js` duas vezes e confirmar que o seed não duplica dados.
 
-## 14. Google Drive e Railway — somente quando configurados
+## 14. Railway Storage Bucket
 
-Não há tela de conexão. O Drive é autorizado uma vez pelo responsável conforme `docs/google-drive-setup.md`.
-
-- [ ] Executar `pnpm google-drive:authorize`, autorizar a conta escolhida e guardar o refresh token como segredo.
+- [ ] Configurar o bucket conforme `docs/railway-bucket-setup.md`.
 - [ ] Configurar Railway conforme `docs/railway-deployment.md` sem `SEED_DEMO_DATA=true`.
-- [ ] Fazer upload e confirmar o arquivo dentro da pasta configurada no Drive.
-- [ ] Abrir/baixar e excluir pelo sistema; confirmar o efeito no Drive.
+- [ ] Fazer upload e confirmar o objeto no bucket.
+- [ ] Abrir/baixar e excluir pelo sistema; confirmar o efeito no bucket.
 - [ ] Fazer redeploy e confirmar que banco e arquivo continuam acessíveis.
-- [ ] Revogar o token apenas em ambiente de teste e confirmar erro claro de armazenamento.
+- [ ] Usar credenciais inválidas apenas em ambiente de teste e confirmar erro claro de armazenamento.
 
 ## 15. Como relatar um problema
 

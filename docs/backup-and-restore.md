@@ -1,6 +1,6 @@
 # Backup e restauração
 
-O PostgreSQL é a fonte oficial dos dados. Documentos continuam no provider configurado (volume local ou Google Drive) e devem ser protegidos separadamente.
+O PostgreSQL é a fonte oficial dos dados. Documentos continuam no provider configurado (volume local ou Railway Storage Bucket) e devem ser protegidos separadamente.
 
 ## Criar backup
 
@@ -43,7 +43,7 @@ Antes de migration ou primeira carga real:
 1. confirme `SEED_DEMO_DATA=false`;
 2. gere um backup pelo recurso PostgreSQL/Railway ou execute `pnpm backup:create` em ambiente seguro com a `DATABASE_URL` privada;
 3. armazene o `.dump` fora do filesystem efêmero do serviço;
-4. mantenha também a pasta Google Drive protegida;
+4. mantenha também uma cópia dos objetos do Railway Storage Bucket;
 5. ensaie a restauração em outro banco PostgreSQL antes de depender do arquivo.
 
 Não restaure sobre produção para testar. Crie um banco temporário, execute a restauração com `--confirm`, confira migrations e contagens e então descarte esse banco.

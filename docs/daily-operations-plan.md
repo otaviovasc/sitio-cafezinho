@@ -24,7 +24,7 @@ Plano curto para evoluir o sistema existente sem reescrever a arquitetura nem tr
 - Produção geral, produção por lote, soma do controle individual e coleta serão exibidas como fatos independentes. Indicadores preferem o geral e, quando ausente, identificam a soma dos lotes registrados; diferenças não serão classificadas automaticamente como perda ou erro.
 - Carência será sempre descrita como data informada; o sistema nunca liberará o leite automaticamente.
 - Saída com valor poderá criar uma receita somente por escolha explícita. Morte nunca criará receita.
-- Compras e anexos existentes não serão duplicados. O mesmo provider local/Google Drive continuará responsável pelos binários.
+- Compras e anexos existentes não serão duplicados. O mesmo provider local/Railway Bucket continuará responsável pelos binários.
 - Backup PostgreSQL local será criado e validado antes da migration. A restauração será ensaiada em banco descartável antes da conclusão.
 
 ## Rollback

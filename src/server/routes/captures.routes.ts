@@ -83,7 +83,6 @@ async function persistCapture(base: CaptureBase, interpretation: InterpretResult
           sha256: hashFile(base.document.buffer),
           storageProvider: storage.kind,
           storageFileId: stored.fileId,
-          storageFolderId: stored.folderId,
           storageStatus: 'AVAILABLE',
           documentType: 'MILK_NOTEBOOK',
         }).returning({ id: attachments.id });

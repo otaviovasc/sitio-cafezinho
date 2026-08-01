@@ -20,14 +20,13 @@
     "db:migrate": "tsx src/db/migrate.ts",
     "db:seed": "tsx src/db/seed.ts",
     "backup:create": "tsx scripts/backup-create.ts",
-    "backup:restore": "tsx scripts/backup-restore.ts",
-    "google-drive:authorize": "tsx scripts/google-drive-authorize.ts"
+    "backup:restore": "tsx scripts/backup-restore.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1100.0",
     "@fontsource-variable/nunito": "^5.2.7",
     "@hono/node-server": "^1.14.1",
     "drizzle-orm": "^0.44.2",
-    "googleapis": "^150.0.1",
     "hono": "^4.7.11",
     "leaflet": "^1.9.4",
     "lucide-react": "^1.24.0",

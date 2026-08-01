@@ -50,7 +50,6 @@ export const attachmentRoutes = new Hono()
         sha256,
         storageProvider: storage.kind,
         storageFileId: stored.fileId,
-        storageFolderId: stored.folderId,
         storageStatus: 'AVAILABLE',
         documentType,
         purchaseId,

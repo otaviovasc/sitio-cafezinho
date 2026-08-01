@@ -41,7 +41,7 @@ export const purchaseCategory = pgEnum('purchase_category', [
 ]);
 export const purchaseStatus = pgEnum('purchase_status', ['OPEN', 'PAID', 'CANCELLED']);
 export const purchaseUnit = pgEnum('purchase_unit', ['UNIT', 'KG', 'LITER', 'BAG', 'BOX', 'OTHER']);
-export const storageProvider = pgEnum('storage_provider', ['LOCAL', 'GOOGLE_DRIVE']);
+export const storageProvider = pgEnum('storage_provider', ['LOCAL', 'RAILWAY_BUCKET']);
 export const storageStatus = pgEnum('storage_status', ['UPLOADING', 'AVAILABLE', 'FAILED', 'DELETED']);
 export const documentType = pgEnum('document_type', [
   'INVOICE', 'BOLETO', 'PAYMENT_RECEIPT', 'MILK_NOTEBOOK', 'OTHER',
@@ -442,7 +442,6 @@ export const attachments = pgTable('attachments', {
   sha256: text('sha256').notNull(),
   storageProvider: storageProvider('storage_provider').notNull(),
   storageFileId: text('storage_file_id').notNull(),
-  storageFolderId: text('storage_folder_id'),
   storageStatus: storageStatus('storage_status').notNull(),
   documentType: documentType('document_type').notNull(),
   purchaseId: uuid('purchase_id').references(() => purchases.id, { onDelete: 'set null' }),

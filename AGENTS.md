@@ -7,7 +7,7 @@ Sistema simples de gestão de uma propriedade leiteira familiar.
 - Domínio ou dados: `$sitio-domain`.
 - Frontend: `$field-mobile-ux` e `$sitio-ui-system`.
 - Alteração visual: `$visual-qa`.
-- Docker, Railway, Google Drive ou uploads: `$railway-google-drive`.
+- Docker, Railway, buckets ou uploads: `$railway-storage`.
 - Antes de concluir: `$release-finalization`.
 
 ## Regras centrais
@@ -39,7 +39,7 @@ Sistema simples de gestão de uma propriedade leiteira familiar.
 - Nunca habilitar `SEED_DEMO_DATA` em produção.
 - Documentos reutilizam `attachments`; documentos de compra, coleta, receita ou saída nunca criam outro fato financeiro.
 - Toda funcionalidade útil deve ter uma superfície no frontend; não criar endpoint morto.
-- Local usa volume Docker; Railway usa Google Drive por variáveis de ambiente.
-- Não armazenar tokens Google no banco nem expô-los ao cliente.
+- Local usa volume Docker; Railway usa Storage Bucket privado por variáveis de referência.
+- Não expor credenciais do bucket ao cliente nem armazená-las no banco.
 - Executar migrations e seed idempotente antes do start.
 - Não versionar `.env`, uploads, credenciais, tokens ou documentos reais.
