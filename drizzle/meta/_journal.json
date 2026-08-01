@@ -162,6 +162,13 @@
       "when": 1785602206133,
       "tag": "0022_railway_bucket",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1785605800000,
+      "tag": "0023_capture_documents",
+      "breakpoints": true
     }
   ]
 }

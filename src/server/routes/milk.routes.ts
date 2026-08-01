@@ -2,17 +2,19 @@ import { and, asc, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { getDb } from '../../db/client.js';
-import { animalAliases, animalGroupAssignments, animals, animalStatusEvents, attachments, captures, dailyMilkTotals, herdGroups, milkMeasurements, milkSessions, proposedActions } from '../../db/schema.js';
+import { animalAliases, animalGroupAssignments, animals, animalStatusEvents, attachments, captureDocuments, captures, dailyMilkTotals, herdGroups, milkMeasurements, milkSessions, proposedActions } from '../../db/schema.js';
 import { canRegisterAnimalFromMeasurement, identityFromRawAnimalLabel } from '../../domain/animal-registration.js';
+import { milkTargetGroupIssue, planDatedGroupChange, planInferredGroupChange, type DatedGroupAssignment } from '../../domain/animal-group-change.js';
 import { decimalString, normalizeLabel } from '../../domain/format.js';
 import { resolveDailyMilkByDate } from '../../domain/daily-milk.js';
 import { formatMilkImportIssues, parseMilkImport } from '../../domain/import.js';
-import { suggestAnimalByLabel } from '../../domain/nl/matching.js';
+import { deriveMilkImportProvenance, milkSourceActionSetIssue, selectSourceAttachmentIds, type ServerMilkSource } from '../../domain/milk-import-provenance.js';
+import { matchAnimalByLabel, suggestAnimalByLabel } from '../../domain/nl/matching.js';
 import { estimateSplit } from '../../domain/milk.js';
+import { dateKeyInSaoPaulo } from '../../domain/purchases.js';
 import { fail } from '../http/api-error.js';
 import { decimalInput, optionalText, readJson, validate } from '../http/validation.js';
-import { createMilkSession, loadMilkingHerdOnDate, mergeMilkSession } from '../services/milk-session.service.js';
-import { refreshCaptureStatus } from './captures.routes.js';
+import { createMilkSession, loadMilkingHerdOnDate, mergeMilkSession, type MilkSessionDraft, type MilkSessionTransaction } from '../services/milk-session.service.js';
 
 const measurementBaseSchema = z.object({
   animalId: z.string().uuid().nullable().optional(),
@@ -85,33 +87,19 @@ const importSessionSchema = sessionSchema.extend({
     captureId: z.string().uuid(),
     actionId: z.string().uuid(),
   })).max(20).optional(),
-});
-
-async function resolveSourceActions(
-  sourceActions: Array<{ captureId: string; actionId: string }>,
-  sessionId: string,
-) {
-  for (const source of sourceActions) {
-    const [updated] = await getDb().update(proposedActions).set({
-      status: 'CONFIRMED',
-      committedRecordType: 'milk_session',
-      committedRecordId: sessionId,
-      updatedAt: new Date(),
-    }).where(and(
-      eq(proposedActions.id, source.actionId),
-      eq(proposedActions.captureId, source.captureId),
-      eq(proposedActions.status, 'NEEDS_REVIEW'),
-    )).returning({ id: proposedActions.id });
-    if (!updated) continue;
-    const [capture] = await getDb().select({ documentAttachmentId: captures.documentAttachmentId })
-      .from(captures).where(eq(captures.id, source.captureId)).limit(1);
-    if (capture?.documentAttachmentId) {
-      await getDb().update(attachments).set({ milkSessionId: sessionId })
-        .where(eq(attachments.id, capture.documentAttachmentId));
-    }
-    await refreshCaptureStatus(source.captureId);
+  groupChangeDecisions: z.array(z.object({
+    animalId: z.string().uuid(),
+    approved: z.boolean(),
+  })).max(300).optional(),
+}).superRefine((value, context) => {
+  if (Boolean(value.sourceCaptureId) !== Boolean(value.sourceActionId)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['sourceActionId'],
+      message: 'Informe captura e ação de origem juntas.',
+    });
   }
-}
+});
 
 function sessionScopeCondition(sessionDate: string, herdGroupId?: string | null) {
   return and(
@@ -125,6 +113,8 @@ type StoredImportPayload = {
   herdGroupId?: unknown;
   herdGroupLabel?: unknown;
   sourceMode?: unknown;
+  sourceDocumentOrdinals?: unknown;
+  metadataReview?: unknown;
   measurements?: unknown;
 };
 
@@ -132,6 +122,341 @@ function actionImport(action: { resolvedPayload: unknown }): StoredImportPayload
   const payload = action.resolvedPayload as { import?: unknown } | null;
   const imported = payload?.import;
   return imported && typeof imported === 'object' ? imported as StoredImportPayload : null;
+}
+
+type SourceActionRef = { captureId: string; actionId: string };
+type ValidatedSourceAction = {
+  id: string;
+  captureId: string;
+  status: 'NEEDS_REVIEW' | 'CONFIRMED' | 'DISMISSED' | 'FAILED';
+  committedRecordType: string | null;
+  committedRecordId: string | null;
+  resolvedPayload: unknown;
+};
+
+function optionalNumber(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function assertMilkTargetGroup(group: {
+  active: boolean;
+  milkingRoutine: 'MORNING_AND_AFTERNOON' | 'MORNING_ONLY' | 'NOT_MILKED';
+} | null | undefined) {
+  const issue = milkTargetGroupIssue(group);
+  if (issue === 'GROUP_NOT_FOUND') return fail('O lote informado não existe mais.', 409, issue);
+  if (issue === 'GROUP_INACTIVE') return fail('O lote informado está inativo.', 409, issue);
+  if (issue === 'GROUP_NOT_MILKED') return fail('O lote informado não possui rotina de ordenha.', 409, issue);
+}
+
+function sourceRowsFromActions(actions: ValidatedSourceAction[]) {
+  return actions.flatMap((action): ServerMilkSource[] => {
+    const imported = actionImport(action);
+    if (!Array.isArray(imported?.measurements)) return [];
+    return imported.measurements.flatMap((rawRow) => {
+      if (!rawRow || typeof rawRow !== 'object') return [];
+      const row = rawRow as Record<string, unknown>;
+      if (typeof row.rawAnimalLabel !== 'string' || !row.rawAnimalLabel.trim()) return [];
+      const confidence = row.confidence === 'LOW' || row.confidence === 'MEDIUM' ? row.confidence : 'HIGH';
+      return [{
+        captureId: action.captureId,
+        proposedActionId: action.id,
+        rawAnimalLabel: row.rawAnimalLabel,
+        rawValueText: typeof row.rawValueText === 'string' ? row.rawValueText : null,
+        morningLiters: optionalNumber(row.morningLiters),
+        afternoonLiters: optionalNumber(row.afternoonLiters),
+        totalLiters: optionalNumber(row.totalLiters),
+        confidence,
+        notes: typeof row.notes === 'string' ? row.notes : null,
+      }];
+    });
+  });
+}
+
+async function loadValidatedSourceActions(
+  tx: MilkSessionTransaction,
+  refs: SourceActionRef[],
+  draft: Pick<MilkSessionDraft, 'sessionDate' | 'herdGroupId'>,
+  sessionId: string,
+) {
+  if (!refs.length) return [];
+  const actionIds = refs.map((ref) => ref.actionId);
+  const duplicateIssue = milkSourceActionSetIssue(refs, [], {
+    sessionDate: draft.sessionDate,
+    herdGroupId: draft.herdGroupId ?? null,
+    sessionId,
+  });
+  if (duplicateIssue === 'DUPLICATE_SOURCE_ACTION') {
+    return fail('Não repita a mesma ação de origem.', 400, duplicateIssue);
+  }
+  const actions = await tx.select({
+    id: proposedActions.id,
+    captureId: proposedActions.captureId,
+    actionType: proposedActions.actionType,
+    status: proposedActions.status,
+    committedRecordType: proposedActions.committedRecordType,
+    committedRecordId: proposedActions.committedRecordId,
+    resolvedPayload: proposedActions.resolvedPayload,
+  }).from(proposedActions).where(inArray(proposedActions.id, actionIds));
+  const actionIssue = milkSourceActionSetIssue(refs, actions.map((action) => {
+    return {
+      ...action,
+      // Data e lote são campos editáveis da revisão humana. As fontes brutas
+      // e o tipo da ação continuam vindo exclusivamente do servidor.
+      sessionDate: draft.sessionDate,
+      herdGroupId: draft.herdGroupId ?? null,
+    };
+  }), {
+    sessionDate: draft.sessionDate,
+    herdGroupId: draft.herdGroupId ?? null,
+    sessionId,
+  });
+  if (actionIssue) {
+    const message = actionIssue === 'SOURCE_ACTION_CHANGED'
+      ? 'Uma ação de origem não existe mais.'
+      : actionIssue === 'SOURCE_CAPTURE_MISMATCH'
+        ? 'As ações devem pertencer à mesma captura.'
+        : actionIssue === 'SOURCE_ACTION_ALREADY_REVIEWED'
+          ? 'A ação de origem já foi revisada em outro registro.'
+          : 'A ação de origem não pertence a este controle individual.';
+    return fail(message, 409, actionIssue);
+  }
+  const siblings = await tx.select({
+    id: proposedActions.id,
+    resolvedPayload: proposedActions.resolvedPayload,
+  }).from(proposedActions).where(and(
+    eq(proposedActions.captureId, actions[0].captureId),
+    eq(proposedActions.actionType, 'INDIVIDUAL_MILK_SESSION'),
+    eq(proposedActions.status, 'NEEDS_REVIEW'),
+  ));
+  const omittedRelevant = siblings.some((sibling) => {
+    const imported = actionImport(sibling);
+    return imported?.sessionDate === draft.sessionDate
+      && (typeof imported.herdGroupId === 'string' ? imported.herdGroupId : null) === (draft.herdGroupId ?? null)
+      && !actionIds.includes(sibling.id);
+  });
+  if (omittedRelevant) {
+    return fail('A revisão não inclui todas as ações deste lote na captura.', 409, 'SOURCE_ACTION_INCOMPLETE');
+  }
+  return actions;
+}
+
+async function prepareImportDraft(
+  tx: MilkSessionTransaction,
+  sessionId: string,
+  draft: MilkSessionDraft,
+  refs: SourceActionRef[],
+) {
+  if (draft.herdGroupId) {
+    const [group] = await tx.select({
+      active: herdGroups.active,
+      milkingRoutine: herdGroups.milkingRoutine,
+    }).from(herdGroups).where(eq(herdGroups.id, draft.herdGroupId)).limit(1);
+    assertMilkTargetGroup(group);
+  }
+  const activeAnimalIds = draft.measurements.flatMap((measurement) =>
+    measurement.animalId && (measurement.status ?? 'CONFIRMED') !== 'EXCLUDED'
+      ? [measurement.animalId]
+      : []);
+  if (activeAnimalIds.length) {
+    const duplicatedAcrossGroups = await tx.select({
+      animalId: milkMeasurements.animalId,
+    }).from(milkMeasurements)
+      .innerJoin(milkSessions, eq(milkSessions.id, milkMeasurements.milkSessionId))
+      .where(and(
+        eq(milkSessions.sessionDate, draft.sessionDate),
+        ne(milkSessions.id, sessionId),
+        inArray(milkMeasurements.animalId, activeAnimalIds),
+        ne(milkMeasurements.status, 'EXCLUDED'),
+      )).limit(1);
+    if (duplicatedAcrossGroups.length) {
+      return fail(
+        'Uma vaca desta revisão já está em outro controle individual na mesma data. Exclua a linha do lote incorreto.',
+        409,
+        'ANIMAL_IN_ANOTHER_GROUP_SESSION',
+      );
+    }
+  }
+
+  const actions = await loadValidatedSourceActions(tx, refs, draft, sessionId);
+  if (!actions.length) {
+    return {
+      draft: {
+        ...draft,
+        measurements: draft.measurements.map((measurement) => ({ ...measurement, sources: undefined })),
+      },
+      actions,
+    };
+  }
+  const provenance = deriveMilkImportProvenance(draft.measurements, sourceRowsFromActions(actions));
+  if (!provenance.ok) {
+    const message = provenance.code === 'SOURCE_ACTION_INCOMPLETE'
+      ? 'A revisão omitiu uma ou mais linhas reconhecidas na captura.'
+      : provenance.code === 'SOURCE_REUSED'
+        ? 'A mesma linha reconhecida foi usada em mais de uma medição.'
+      : `Não foi possível confirmar a origem da linha ${(provenance.measurementIndex ?? 0) + 1}.`;
+    return fail(`${message} Recarregue a revisão antes de salvar.`, 409, provenance.code);
+  }
+  return {
+    draft: {
+      ...draft,
+      measurements: draft.measurements.map((measurement, index) => ({
+        ...measurement,
+        sources: provenance.sourcesByMeasurement[index],
+      })),
+    },
+    actions,
+  };
+}
+
+async function finalizeSourceActions(
+  tx: MilkSessionTransaction,
+  actions: ValidatedSourceAction[],
+  sessionId: string,
+) {
+  const captureIds = [...new Set(actions.map((action) => action.captureId))];
+  for (const action of actions) {
+    if (action.status === 'NEEDS_REVIEW') {
+      const [updated] = await tx.update(proposedActions).set({
+        status: 'CONFIRMED',
+        committedRecordType: 'milk_session',
+        committedRecordId: sessionId,
+        updatedAt: new Date(),
+      }).where(and(
+        eq(proposedActions.id, action.id),
+        eq(proposedActions.captureId, action.captureId),
+        eq(proposedActions.actionType, 'INDIVIDUAL_MILK_SESSION'),
+        eq(proposedActions.status, 'NEEDS_REVIEW'),
+      )).returning({ id: proposedActions.id });
+      if (!updated) return fail('A ação de origem mudou durante a revisão.', 409, 'SOURCE_ACTION_CHANGED');
+    }
+
+    const allDocuments = await tx.select({
+      ordinal: captureDocuments.ordinal,
+      attachmentId: captureDocuments.attachmentId,
+    }).from(captureDocuments).where(eq(captureDocuments.captureId, action.captureId));
+    const ordinalValue = actionImport(action)?.sourceDocumentOrdinals;
+    const ordinals = Array.isArray(ordinalValue)
+      ? ordinalValue.filter((ordinal): ordinal is number => Number.isInteger(ordinal) && ordinal > 0)
+      : [];
+    let legacyAttachmentId: string | null = null;
+    if (!allDocuments.length) {
+      const [legacyCapture] = await tx.select({ attachmentId: captures.documentAttachmentId })
+        .from(captures).where(eq(captures.id, action.captureId)).limit(1);
+      legacyAttachmentId = legacyCapture?.attachmentId ?? null;
+    }
+    const attachmentIds = selectSourceAttachmentIds(allDocuments, ordinals, legacyAttachmentId);
+    if (attachmentIds.length) {
+      const documentAttachments = await tx.select({ id: attachments.id, milkSessionId: attachments.milkSessionId })
+        .from(attachments).where(inArray(attachments.id, attachmentIds));
+      if (documentAttachments.some((attachment) => attachment.milkSessionId && attachment.milkSessionId !== sessionId)) {
+        return fail('Um documento de origem já pertence a outro controle.', 409, 'SOURCE_ATTACHMENT_ALREADY_LINKED');
+      }
+      await tx.update(attachments).set({ milkSessionId: sessionId })
+        .where(inArray(attachments.id, attachmentIds));
+    }
+  }
+  for (const captureId of captureIds) {
+    const remaining = await tx.select({ id: proposedActions.id }).from(proposedActions)
+      .where(and(eq(proposedActions.captureId, captureId), eq(proposedActions.status, 'NEEDS_REVIEW'))).limit(1);
+    await tx.update(captures).set({
+      status: remaining.length ? 'NEEDS_REVIEW' : 'REVIEWED',
+      updatedAt: new Date(),
+    }).where(eq(captures.id, captureId));
+  }
+}
+
+type GroupChangeDecision = { animalId: string; approved: boolean };
+
+function assignmentsByAnimal(rows: Array<DatedGroupAssignment & { animalId: string }>) {
+  return rows.reduce((grouped, row) => {
+    const current = grouped.get(row.animalId) ?? [];
+    current.push(row);
+    grouped.set(row.animalId, current);
+    return grouped;
+  }, new Map<string, DatedGroupAssignment[]>());
+}
+
+async function applyApprovedGroupChanges(
+  tx: MilkSessionTransaction,
+  sessionId: string,
+  draft: Pick<MilkSessionDraft, 'sessionDate' | 'herdGroupId' | 'measurements'>,
+  decisions: GroupChangeDecision[],
+) {
+  const approvedIds = decisions.filter((decision) => decision.approved).map((decision) => decision.animalId);
+  if (!approvedIds.length) return;
+  if (!draft.herdGroupId) return fail('Escolha o lote antes de confirmar mudanças.', 400, 'GROUP_REQUIRED');
+  if (new Set(approvedIds).size !== approvedIds.length) {
+    return fail('Não repita a decisão de mudança para o mesmo animal.', 400, 'DUPLICATE_GROUP_CHANGE');
+  }
+
+  const eligibleRows = draft.measurements.filter((row) =>
+    row.animalId && approvedIds.includes(row.animalId) && (row.status ?? 'CONFIRMED') !== 'EXCLUDED');
+  if (new Set(eligibleRows.map((row) => row.animalId)).size !== approvedIds.length) {
+    return fail('Uma mudança de lote aprovada não corresponde às medições revisadas.', 409, 'GROUP_CHANGE_REVIEW_CHANGED');
+  }
+
+  const [targetGroup, allAnimals, allAliases, assignmentRows] = await Promise.all([
+    tx.select({
+      id: herdGroups.id,
+      active: herdGroups.active,
+      milkingRoutine: herdGroups.milkingRoutine,
+    }).from(herdGroups).where(eq(herdGroups.id, draft.herdGroupId)).limit(1),
+    tx.select().from(animals),
+    tx.select().from(animalAliases),
+    tx.select({
+      id: animalGroupAssignments.id,
+      animalId: animalGroupAssignments.animalId,
+      groupId: animalGroupAssignments.groupId,
+      groupName: herdGroups.name,
+      startedOn: animalGroupAssignments.startedOn,
+      endedOn: animalGroupAssignments.endedOn,
+    }).from(animalGroupAssignments)
+      .innerJoin(herdGroups, eq(herdGroups.id, animalGroupAssignments.groupId))
+      .where(inArray(animalGroupAssignments.animalId, approvedIds)),
+  ]);
+  assertMilkTargetGroup(targetGroup[0]);
+
+  const historyByAnimal = assignmentsByAnimal(assignmentRows);
+  for (const animalId of approvedIds) {
+    const measurement = eligibleRows.find((row) => row.animalId === animalId);
+    const exact = measurement
+      ? matchAnimalByLabel(measurement.rawAnimalLabel, allAnimals, allAliases)
+      : undefined;
+    if (!exact || exact.id !== animalId) {
+      return fail('A mudança de lote exige um vínculo exato por nome, brinco ou alias.', 409, 'GROUP_CHANGE_EXACT_MATCH_REQUIRED');
+    }
+
+    const plan = planDatedGroupChange(historyByAnimal.get(animalId) ?? [], draft.herdGroupId, draft.sessionDate);
+    if (plan.kind === 'NO_CHANGE') continue;
+    if (plan.kind === 'CONFLICT') {
+      const message = plan.reason === 'SAME_DAY_CONFLICT'
+        ? 'O animal já possui outra mudança de lote nesta data.'
+        : plan.reason === 'OVERLAPPING_HISTORY'
+          ? 'O histórico de lotes do animal possui períodos sobrepostos.'
+          : 'O animal não possuía um lote válido na data do controle.';
+      return fail(`${message} Revise o histórico antes de salvar.`, 409, `GROUP_CHANGE_${plan.reason}`);
+    }
+
+    const previous = historyByAnimal.get(animalId)?.find((assignment) => assignment.id === plan.closeAssignmentId);
+    if (!previous) return fail('O histórico de lotes mudou durante a revisão.', 409, 'GROUP_CHANGE_REVIEW_CHANGED');
+    const [closed] = await tx.update(animalGroupAssignments)
+      .set({ endedOn: plan.closeOn })
+      .where(and(
+        eq(animalGroupAssignments.id, plan.closeAssignmentId),
+        eq(animalGroupAssignments.animalId, animalId),
+        eq(animalGroupAssignments.groupId, previous.groupId),
+        eq(animalGroupAssignments.startedOn, previous.startedOn),
+        previous.endedOn === null
+          ? isNull(animalGroupAssignments.endedOn)
+          : eq(animalGroupAssignments.endedOn, previous.endedOn),
+      )).returning({ id: animalGroupAssignments.id });
+    if (!closed) return fail('O histórico de lotes mudou durante a revisão.', 409, 'GROUP_CHANGE_REVIEW_CHANGED');
+    await tx.insert(animalGroupAssignments).values({
+      animalId,
+      ...plan.insert,
+      notes: `Lote confirmado na revisão do controle individual ${sessionId}.`,
+    });
+  }
 }
 
 export const milkRoutes = new Hono()
@@ -348,14 +673,23 @@ export const milkRoutes = new Hono()
       return fail('A captura não contém um controle individual válido.', 409, 'INVALID_CAPTURE_IMPORT');
     }
 
-    const pending = await getDb().select().from(proposedActions).where(and(
-      eq(proposedActions.actionType, 'INDIVIDUAL_MILK_SESSION'),
-      eq(proposedActions.status, 'NEEDS_REVIEW'),
-    )).orderBy(asc(proposedActions.createdAt));
+    const batchDocuments = await getDb().select().from(captureDocuments)
+      .where(eq(captureDocuments.captureId, current.captureId))
+      .orderBy(asc(captureDocuments.ordinal));
     const groupId = typeof baseImport.herdGroupId === 'string' ? baseImport.herdGroupId : null;
-    // Sem lote resolvido não há chave segura para combinar capturas.
-    const related = groupId
-      ? pending.filter((candidate) => {
+    // Capturas novas carregam todos os documentos do envio sob o mesmo captureId.
+    // Isso impede que duas revisões independentes com a mesma data/lote se misturem.
+    // No legado, sem capture_documents, mantemos apenas a própria ação: data+lote
+    // globais não constituem uma identidade segura de lote de envio.
+    const candidates = batchDocuments.length
+      ? await getDb().select().from(proposedActions).where(and(
+        eq(proposedActions.captureId, current.captureId),
+        eq(proposedActions.actionType, 'INDIVIDUAL_MILK_SESSION'),
+        eq(proposedActions.status, 'NEEDS_REVIEW'),
+      )).orderBy(asc(proposedActions.createdAt))
+      : [current];
+    const related = groupId && baseImport.sessionDate
+      ? candidates.filter((candidate) => {
         const imported = actionImport(candidate);
         return imported?.sessionDate === baseImport.sessionDate && imported?.herdGroupId === groupId;
       })
@@ -381,21 +715,60 @@ export const milkRoutes = new Hono()
         return [{ ...row, sources: [...(Array.isArray(row.sources) ? row.sources : []), source] }];
       });
     });
-    const captureIds = [...new Set(uniqueRelated.map((action) => action.captureId))];
-    const documents = captureIds.length ? await getDb().select({
-      captureId: captures.id,
-      attachmentId: attachments.id,
-      filename: attachments.originalFilename,
-      mimeType: attachments.mimeType,
-      transcript: captures.transcript,
-    }).from(captures)
-      .leftJoin(attachments, eq(captures.documentAttachmentId, attachments.id))
-      .where(inArray(captures.id, captureIds)) : [];
+    const sourceOrdinals = new Set(uniqueRelated.flatMap((action) => {
+      const value = actionImport(action)?.sourceDocumentOrdinals;
+      return Array.isArray(value) ? value.filter((ordinal): ordinal is number =>
+        Number.isInteger(ordinal) && ordinal > 0) : [];
+    }));
+    const currentLabels = new Set(measurements.flatMap((row) => {
+      const label = row && typeof row === 'object' && 'rawAnimalLabel' in row
+        ? (row as { rawAnimalLabel?: unknown }).rawAnimalLabel
+        : null;
+      return typeof label === 'string' ? [normalizeLabel(label)] : [];
+    }));
+    const crossGroupAnimalLabels = candidates.flatMap((candidate) => {
+      const imported = actionImport(candidate);
+      const candidateGroupId = typeof imported?.herdGroupId === 'string' ? imported.herdGroupId : null;
+      if (!imported || candidateGroupId === groupId || imported.sessionDate !== baseImport.sessionDate || !Array.isArray(imported.measurements)) return [];
+      return imported.measurements.flatMap((rawRow) => {
+        if (!rawRow || typeof rawRow !== 'object') return [];
+        const label = (rawRow as { rawAnimalLabel?: unknown }).rawAnimalLabel;
+        return typeof label === 'string' && currentLabels.has(normalizeLabel(label)) ? [label] : [];
+      });
+    });
+    const documents = batchDocuments.length
+      ? batchDocuments
+        .filter((document) => !sourceOrdinals.size || sourceOrdinals.has(document.ordinal))
+        .map((document) => ({
+          captureId: document.captureId,
+          ordinal: document.ordinal,
+          attachmentId: document.attachmentId,
+          filename: document.originalFilename,
+          mimeType: document.mimeType,
+          transcript: document.ocrText,
+          ocrStatus: document.ocrStatus,
+          storageStatus: document.storageStatus,
+          storageWarning: document.storageWarning,
+        }))
+      : await getDb().select({
+        captureId: captures.id,
+        ordinal: sql<number>`1`,
+        attachmentId: attachments.id,
+        filename: attachments.originalFilename,
+        mimeType: attachments.mimeType,
+        transcript: captures.transcript,
+        ocrStatus: sql<string>`case when ${captures.ocrSummary} is null then 'FAILED' else 'AVAILABLE' end`,
+        storageStatus: sql<string>`case when ${attachments.id} is null then 'FAILED' else 'AVAILABLE' end`,
+        storageWarning: sql<string | null>`null`,
+      }).from(captures)
+        .leftJoin(attachments, eq(captures.documentAttachmentId, attachments.id))
+        .where(eq(captures.id, current.captureId));
     return c.json({
       action: current,
       import: {
         ...baseImport,
         herdGroupId: groupId,
+        crossGroupAnimalLabels,
         measurements,
       },
       sourceActions: uniqueRelated.map((action) => ({ captureId: action.captureId, actionId: action.id })),
@@ -411,13 +784,17 @@ export const milkRoutes = new Hono()
       if (error instanceof z.ZodError) return fail(formatMilkImportIssues(error));
       return fail(error instanceof Error ? error.message : 'Não foi possível validar os dados.');
     }
-    const [allAnimals, allAliases, expectedHerd, previousRows, existingRows, resolvedGroup] = await Promise.all([
+    // A data de hoje serve somente para oferecer uma prévia contextual quando
+    // a captura não informou data. A resposta continua vazia e o salvamento
+    // permanece bloqueado até a escolha humana.
+    const reviewDate = parsed.sessionDate || dateKeyInSaoPaulo(new Date());
+    const [allAnimals, allAliases, expectedHerd, previousRows, existingRows, resolvedGroup, assignmentRows] = await Promise.all([
       getDb().select().from(animals),
       getDb().select().from(animalAliases),
-      loadMilkingHerdOnDate(parsed.sessionDate, parsed.herdGroupId),
+      loadMilkingHerdOnDate(reviewDate, parsed.herdGroupId),
       getDb().select({ animalId: milkMeasurements.animalId, totalLiters: milkMeasurements.totalLiters, sessionDate: milkSessions.sessionDate })
         .from(milkMeasurements).innerJoin(milkSessions, eq(milkMeasurements.milkSessionId, milkSessions.id))
-        .where(and(eq(milkMeasurements.status, 'CONFIRMED'), sql`${milkSessions.sessionDate} < ${parsed.sessionDate}`))
+        .where(and(eq(milkMeasurements.status, 'CONFIRMED'), sql`${milkSessions.sessionDate} < ${reviewDate}`))
         .orderBy(desc(milkSessions.sessionDate)),
       getDb().select({
         sessionId: milkSessions.id,
@@ -435,13 +812,23 @@ export const milkRoutes = new Hono()
       }).from(milkSessions)
         .leftJoin(milkMeasurements, eq(milkMeasurements.milkSessionId, milkSessions.id))
         .leftJoin(animals, eq(milkMeasurements.animalId, animals.id))
-        .where(sessionScopeCondition(parsed.sessionDate, parsed.herdGroupId))
+        .where(sessionScopeCondition(reviewDate, parsed.herdGroupId))
         .orderBy(asc(milkMeasurements.createdAt)),
       parsed.herdGroupId
         ? getDb().select({ id: herdGroups.id, name: herdGroups.name, milkingRoutine: herdGroups.milkingRoutine })
           .from(herdGroups).where(eq(herdGroups.id, parsed.herdGroupId)).limit(1)
         : Promise.resolve([]),
+      getDb().select({
+        id: animalGroupAssignments.id,
+        animalId: animalGroupAssignments.animalId,
+        groupId: animalGroupAssignments.groupId,
+        groupName: herdGroups.name,
+        startedOn: animalGroupAssignments.startedOn,
+        endedOn: animalGroupAssignments.endedOn,
+      }).from(animalGroupAssignments)
+        .innerJoin(herdGroups, eq(herdGroups.id, animalGroupAssignments.groupId)),
     ]);
+    const groupHistoryByAnimal = assignmentsByAnimal(assignmentRows);
     const existingMeasurements = existingRows.flatMap((row) => row.measurementId ? [{
       id: row.measurementId,
       animalId: row.animalId,
@@ -492,9 +879,33 @@ export const milkRoutes = new Hono()
       if (match && !item.row.excluded) counts.set(match.id, (counts.get(match.id) ?? 0) + 1);
       return counts;
     }, new Map<string, number>());
+    const crossGroupLabels = new Set((parsed.crossGroupAnimalLabels ?? []).map(normalizeLabel));
     const measurements = consolidated.map(({ row, suggestion }) => {
       const match = suggestion?.animal;
       const expected = match ? expectedHerd.find((animal) => animal.id === match.id) : undefined;
+      const crossGroupConflict = crossGroupLabels.has(normalizeLabel(row.rawAnimalLabel));
+      const groupChangePlan = !crossGroupConflict && parsed.sessionDate && match && resolvedGroup[0]
+        ? planInferredGroupChange(
+          suggestion?.kind ?? null,
+          groupHistoryByAnimal.get(match.id) ?? [],
+          parsed.herdGroupId,
+          parsed.sessionDate,
+        )
+        : null;
+      const previousAssignment = groupChangePlan?.kind === 'APPLY'
+        ? groupHistoryByAnimal.get(match?.id ?? '')?.find((assignment) => assignment.id === groupChangePlan.closeAssignmentId)
+        : undefined;
+      const groupChangeProposal = match && groupChangePlan?.kind === 'APPLY' && previousAssignment
+        ? {
+          animalId: match.id,
+          animalName: match.name,
+          fromGroupId: previousAssignment.groupId,
+          fromGroupName: previousAssignment.groupName ?? null,
+          toGroupId: parsed.herdGroupId,
+          toGroupName: resolvedGroup[0].name,
+          changedOn: parsed.sessionDate,
+        }
+        : null;
       const existingMeasurement = match ? activeExistingByAnimal.get(match.id) : undefined;
       const morningConflict = existingMeasurement?.morningLiters != null && row.morningLiters != null
         && Math.abs(Number(existingMeasurement.morningLiters) - row.morningLiters) > 0.011;
@@ -517,6 +928,7 @@ export const milkRoutes = new Hono()
       if (suggestion?.kind === 'CONTEXTUAL_TAG') issues.push('Animal sugerido pelo brinco encontrado na anotação; confirme o vínculo.');
       if (suggestion?.kind === 'FUZZY') issues.push('Nome parecido com um único animal deste lote; confirme o vínculo sugerido.');
       if (match && (matchCounts.get(match.id) ?? 0) > 1) issues.push('Animal repetido no mesmo período; escolha o valor correto.');
+      if (crossGroupConflict) issues.push('Este animal também aparece em outro lote nesta captura; confirme em qual lote ele estava e exclua a linha incorreta.');
       if (existingMeasurement && !row.excluded && !completesExisting) issues.push('Já existe um valor diferente para este animal no mesmo período.');
       if (row.confidence === 'LOW') issues.push('Baixa confiança na transcrição.');
       if (row.confidence === 'MEDIUM') issues.push('Leitura provável; confira nome e valor.');
@@ -540,6 +952,7 @@ export const milkRoutes = new Hono()
         milkingRoutine: expected?.milkingRoutine ?? null,
         mergeDecision: row.excluded || !existingMeasurement ? 'ADD' : completesExisting ? 'COMPLETE_EXISTING' : null,
         existingMeasurement: existingMeasurement ?? null,
+        groupChangeProposal,
         issues,
       };
     });
@@ -569,6 +982,14 @@ export const milkRoutes = new Hono()
       herdGroupId: parsed.herdGroupId,
       herdGroupName: resolvedGroup[0]?.name ?? parsed.herdGroupLabel,
       sourceMode: parsed.sourceMode,
+      period: parsed.period ?? null,
+      sourceDocumentOrdinals: parsed.sourceDocumentOrdinals ?? [],
+      crossGroupAnimalLabels: parsed.crossGroupAnimalLabels ?? [],
+      metadataReview: {
+        dateRequired: parsed.metadataReview?.dateRequired ?? !parsed.sessionDate,
+        groupRequired: parsed.metadataReview?.groupRequired ?? !parsed.herdGroupId,
+        periodRequired: parsed.metadataReview?.periodRequired ?? parsed.period == null,
+      },
       measurements,
       missingAnimals,
       sessionIssues,
@@ -577,19 +998,69 @@ export const milkRoutes = new Hono()
     });
   })
   .post('/import/milk-session', async (c) => {
-    const { sourceCaptureId, sourceActionId, sourceActions = [], ...body } = validate(importSessionSchema, await readJson(c));
+    const {
+      sourceCaptureId,
+      sourceActionId,
+      sourceActions = [],
+      groupChangeDecisions = [],
+      ...body
+    } = validate(importSessionSchema, await readJson(c));
     const sources = sourceActions.length
       ? sourceActions
       : sourceCaptureId && sourceActionId ? [{ captureId: sourceCaptureId, actionId: sourceActionId }] : [];
+    if (sources.length) {
+      const sourceIds = sources.map((source) => source.actionId);
+      const alreadyCommitted = await getDb().select({
+        id: proposedActions.id,
+        captureId: proposedActions.captureId,
+        actionType: proposedActions.actionType,
+        status: proposedActions.status,
+        committedRecordType: proposedActions.committedRecordType,
+        committedRecordId: proposedActions.committedRecordId,
+      }).from(proposedActions).where(inArray(proposedActions.id, sourceIds));
+      const committedSessionIds = new Set(alreadyCommitted.flatMap((action) =>
+        action.status === 'CONFIRMED'
+        && action.actionType === 'INDIVIDUAL_MILK_SESSION'
+        && action.committedRecordType === 'milk_session'
+        && action.committedRecordId
+          ? [action.committedRecordId]
+          : []));
+      const refsMatch = alreadyCommitted.length === sources.length
+        && alreadyCommitted.every((action) => sources.some((source) =>
+          source.actionId === action.id && source.captureId === action.captureId));
+      if (refsMatch && committedSessionIds.size === 1 && alreadyCommitted.every((action) => action.status === 'CONFIRMED')) {
+        const committedSessionId = [...committedSessionIds][0];
+        const [committedSession] = await getDb().select().from(milkSessions)
+          .where(eq(milkSessions.id, committedSessionId)).limit(1);
+        if (committedSession) return c.json({ ...committedSession, idempotent: true });
+      }
+    }
+    let validatedSources: ValidatedSourceAction[] = [];
+    const hooks = {
+      prepareDraft: async (tx: MilkSessionTransaction, sessionId: string, draft: MilkSessionDraft) => {
+        const prepared = await prepareImportDraft(tx, sessionId, draft, sources);
+        validatedSources = prepared.actions;
+        return prepared.draft;
+      },
+      afterSave: async (tx: MilkSessionTransaction, sessionId: string) => {
+        await applyApprovedGroupChanges(tx, sessionId, body, groupChangeDecisions);
+        await finalizeSourceActions(tx, validatedSources, sessionId);
+      },
+    };
     const [sameScope] = await getDb().select({ id: milkSessions.id }).from(milkSessions)
       .where(sessionScopeCondition(body.sessionDate, body.herdGroupId)).limit(1);
     if (sameScope) {
-      const merged = await mergeMilkSession(sameScope.id, { ...body, source: 'IMPORT', title: body.title || 'Controle importado' });
-      await resolveSourceActions(sources, merged.id);
+      const merged = await mergeMilkSession(
+        sameScope.id,
+        { ...body, source: 'IMPORT', title: body.title || 'Controle importado' },
+        hooks,
+      );
       return c.json(merged);
     }
-    const created = await createMilkSession({ ...body, source: 'IMPORT', title: body.title || 'Controle importado' });
-    await resolveSourceActions(sources, created.id);
+    const created = await createMilkSession(
+      { ...body, source: 'IMPORT', title: body.title || 'Controle importado' },
+      hooks,
+    );
     return c.json(created, 201);
   })
   .post('/milk-sessions', async (c) => {

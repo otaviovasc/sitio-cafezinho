@@ -149,6 +149,7 @@ export function GamePage() {
   }, [searchParams, setSearchParams]);
 
   function handleReviewDone(outcome: ReviewOutcome) {
+    const captureId = individualReview?.sourceActions[0]?.captureId ?? review?.action.captureId;
     setReview(null);
     setIndividualReview(null);
     setOpenSheet(null);
@@ -156,6 +157,16 @@ export function GamePage() {
     if (outcome === 'committed') audio.play('success');
     void reload(false);
     void capturesResource.reload(false);
+    if (captureId) void (async () => {
+      try {
+        const capture = await api<{ actions: ReviewableAction[] }>(`/api/captures/${captureId}`);
+        const next = capture.actions.find((action) => action.status === 'NEEDS_REVIEW');
+        if (next) await openReview(captureId, next.id);
+      } catch {
+        // O registro já foi concluído; a fila do Caderno continua sendo o
+        // fallback seguro caso a próxima revisão não possa ser aberta.
+      }
+    })();
   }
 
   /** Passa a revisão só para a folha de destino da ação aberta. */

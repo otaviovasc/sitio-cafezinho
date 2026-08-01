@@ -42,6 +42,17 @@ export type MilkSessionDraft = {
   measurements: MeasurementDraft[];
 };
 
+export type MilkSessionTransaction = Parameters<Parameters<ReturnType<typeof getDb>['transaction']>[0]>[0];
+
+export type MilkSessionSaveHooks = {
+  prepareDraft?: (
+    tx: MilkSessionTransaction,
+    sessionId: string,
+    draft: MilkSessionDraft,
+  ) => Promise<MilkSessionDraft>;
+  afterSave?: (tx: MilkSessionTransaction, sessionId: string) => Promise<void>;
+};
+
 export async function loadMilkingHerdOnDate(sessionDate: string, herdGroupId?: string | null) {
   const candidates = await getDb().select({
     id: animals.id,
@@ -65,7 +76,7 @@ export async function loadMilkingHerdOnDate(sessionDate: string, herdGroupId?: s
   return candidates.filter((animal) => (events.find((event) => event.animalId === animal.id)?.status ?? animal.currentStatus) === 'LACTATING');
 }
 
-export async function createMilkSession(draft: MilkSessionDraft) {
+export async function createMilkSession(draft: MilkSessionDraft, hooks: MilkSessionSaveHooks = {}) {
   const scopeCondition = draft.herdGroupId
     ? eq(milkSessions.herdGroupId, draft.herdGroupId)
     : isNull(milkSessions.herdGroupId);
@@ -113,11 +124,13 @@ export async function createMilkSession(draft: MilkSessionDraft) {
       source: draft.source,
       notes: draft.notes ?? null,
     }).returning();
-    const stored = await tx.insert(milkMeasurements).values(draft.measurements.map((row) => storedMeasurement(session.id, row))).returning({ id: milkMeasurements.id });
+    const preparedDraft = await hooks.prepareDraft?.(tx, session.id, draft) ?? draft;
+    const stored = await tx.insert(milkMeasurements).values(preparedDraft.measurements.map((row) => storedMeasurement(session.id, row))).returning({ id: milkMeasurements.id });
     for (const [index, measurement] of stored.entries()) {
-      const sources = draft.measurements[index].sources ?? [];
+      const sources = preparedDraft.measurements[index].sources ?? [];
       if (sources.length) await tx.insert(milkMeasurementSources).values(sources.map((source) => storedSource(measurement.id, source)));
     }
+    await hooks.afterSave?.(tx, session.id);
     return session;
   });
 }
@@ -152,7 +165,7 @@ function storedSource(measurementId: string, source: MeasurementSourceDraft) {
   };
 }
 
-export async function mergeMilkSession(sessionId: string, draft: MilkSessionDraft) {
+export async function mergeMilkSession(sessionId: string, draft: MilkSessionDraft, hooks: MilkSessionSaveHooks = {}) {
   const db = getDb();
   const [session] = await db.select().from(milkSessions).where(eq(milkSessions.id, sessionId)).limit(1);
   if (!session) return fail('Controle não encontrado.', 404, 'NOT_FOUND');
@@ -193,18 +206,19 @@ export async function mergeMilkSession(sessionId: string, draft: MilkSessionDraf
   }
 
   return db.transaction(async (tx) => {
+    const preparedDraft = await hooks.prepareDraft?.(tx, sessionId, draft) ?? draft;
     const rowsToInsert: MeasurementDraft[] = [];
     let replacedCount = 0;
     let skippedCount = 0;
     for (const action of plan.actions) {
       if (action.kind === 'SKIP') {
-        const sources = draft.measurements[action.incomingIndex].sources ?? [];
+        const sources = preparedDraft.measurements[action.incomingIndex].sources ?? [];
         if (sources.length) await tx.insert(milkMeasurementSources).values(sources.map((source) => storedSource(action.existingMeasurementId, source)));
         skippedCount += 1;
         continue;
       }
       if (action.kind === 'COMPLETE') {
-        const incoming = draft.measurements[action.incomingIndex];
+        const incoming = preparedDraft.measurements[action.incomingIndex];
         const current = existing.find((row) => row.id === action.existingMeasurementId);
         if (!current) return fail('A medição existente mudou desde a revisão.', 409, 'MERGE_TARGET_CHANGED');
         const morning = incoming.morningLiters ?? (current.morningLiters == null ? null : Number(current.morningLiters));
@@ -228,7 +242,7 @@ export async function mergeMilkSession(sessionId: string, draft: MilkSessionDraf
           .where(and(eq(milkMeasurements.id, action.existingMeasurementId), eq(milkMeasurements.milkSessionId, sessionId)));
         replacedCount += 1;
       }
-      rowsToInsert.push(draft.measurements[action.incomingIndex]);
+      rowsToInsert.push(preparedDraft.measurements[action.incomingIndex]);
     }
     if (rowsToInsert.length) {
       const inserted = await tx.insert(milkMeasurements).values(rowsToInsert.map((row) => storedMeasurement(sessionId, row))).returning({ id: milkMeasurements.id });
@@ -238,6 +252,7 @@ export async function mergeMilkSession(sessionId: string, draft: MilkSessionDraf
       }
     }
     await tx.update(milkSessions).set({ updatedAt: new Date() }).where(eq(milkSessions.id, sessionId));
+    await hooks.afterSave?.(tx, sessionId);
     return {
       ...session,
       merged: true as const,

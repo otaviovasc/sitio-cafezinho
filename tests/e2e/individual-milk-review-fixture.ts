@@ -2,7 +2,6 @@ import type { Page, Route } from '@playwright/test';
 
 const captureId = '11111111-1111-4111-8111-111111111111';
 const actionId = '22222222-2222-4222-8222-222222222222';
-const secondCaptureId = '33333333-3333-4333-8333-333333333333';
 const secondActionId = '44444444-4444-4444-8444-444444444444';
 const groupId = '55555555-5555-4555-8555-555555555555';
 
@@ -23,15 +22,17 @@ const related = {
     herdGroupId: groupId,
     herdGroupLabel: 'Lote 1',
     sourceMode: 'SEPARATE_MORNING_AFTERNOON',
+    metadataReview: { dateRequired: false, groupRequired: false, periodRequired: false },
+    sourceDocumentOrdinals: [1, 2],
     measurements: [],
   },
   sourceActions: [
     { captureId, actionId },
-    { captureId: secondCaptureId, actionId: secondActionId },
+    { captureId, actionId: secondActionId },
   ],
   documents: [
-    { captureId, attachmentId: '66666666-6666-4666-8666-666666666666', filename: 'lote-1-manha.jpg', mimeType: 'image/svg+xml', transcript: 'Lote 1 manhã\\nGuaraná - 10\\nManjuba - 5' },
-    { captureId: secondCaptureId, attachmentId: null, filename: null, mimeType: null, transcript: 'Lote 1 tarde\\nGuaraná - 6\\nManfuba - 5' },
+    { captureId, ordinal: 1, attachmentId: '66666666-6666-4666-8666-666666666666', filename: 'lote-1-manha.jpg', mimeType: 'image/svg+xml', transcript: 'Lote 1 manhã\\nGuaraná - 10\\nManjuba - 5' },
+    { captureId, ordinal: 2, attachmentId: null, filename: 'lote-1-tarde.jpg', mimeType: null, transcript: 'Lote 1 tarde\\nGuaraná - 6\\nManfuba - 5', storageWarning: 'O original da Foto 2 não foi armazenado.' },
   ],
 };
 
@@ -40,6 +41,7 @@ const preview = {
   herdGroupId: groupId,
   herdGroupName: 'Lote 1',
   sourceMode: 'SEPARATE_MORNING_AFTERNOON',
+  metadataReview: { dateRequired: false, groupRequired: false, periodRequired: false },
   sessionIssues: [],
   sessionWarnings: ['Há 1 vaca do lote sem medição vinculada. Isso não registra ausência nem zero.'],
   missingAnimals: [{ id: '99999999-9999-4999-8999-999999999999', name: 'Pequena', tagNumber: null }],
@@ -86,6 +88,16 @@ const preview = {
         status: 'CONFIRMED',
       },
       issues: [],
+      sourceDocumentOrdinals: [1, 2],
+      groupChangeProposal: {
+        animalId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        animalName: 'Guaraná',
+        fromGroupId: '12121212-1212-4121-8121-121212121212',
+        fromGroupName: 'Lote 2',
+        toGroupId: groupId,
+        toGroupName: 'Lote 1',
+        changedOn: '2026-07-28',
+      },
       sources: [],
     },
     {
@@ -103,6 +115,8 @@ const preview = {
       mergeDecision: 'ADD',
       existingMeasurement: null,
       issues: ['Nome parecido com um único animal deste lote; confirme o vínculo sugerido.'],
+      sourceDocumentOrdinals: [2],
+      groupChangeProposal: null,
       sources: [],
     },
   ],

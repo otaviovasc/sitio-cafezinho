@@ -313,6 +313,18 @@ describe('importação de transcrição', () => {
     expect(parseMilkImport(fenced).measurements[0].totalLiters).toBe(21);
   });
 
+  it('preserva o estado de revisão sem data e conflitos entre lotes', () => {
+    const parsed = parseMilkImport(JSON.stringify({
+      ...valid,
+      sessionDate: '',
+      crossGroupAnimalLabels: ['Mimosa'],
+      metadataReview: { dateRequired: true, groupRequired: false, periodRequired: false },
+    }));
+    expect(parsed.sessionDate).toBe('');
+    expect(parsed.crossGroupAnimalLabels).toEqual(['Mimosa']);
+    expect(parsed.metadataReview?.dateRequired).toBe(true);
+  });
+
   it('rejeita valores negativos e divergência', () => {
     expect(() => parseMilkImport(JSON.stringify({ ...valid, measurements: [{ ...valid.measurements[0], totalLiters: -1 }] }))).toThrow();
     expect(() => parseMilkImport(JSON.stringify({ ...valid, measurements: [{ ...valid.measurements[0], morningLiters: 12, afternoonLiters: 9, totalLiters: 20 }] }))).toThrow();

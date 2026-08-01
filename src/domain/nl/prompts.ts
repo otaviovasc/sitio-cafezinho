@@ -17,7 +17,9 @@ Regras invioláveis:
 - NUNCA produza identificadores do sistema. Use somente rótulos, números e datas.
 - Use ponto como separador decimal. "nove litros e meio" = 9.5; "setecentos" = 700.
 - Se algo estiver ambíguo ou incerto, ainda assim registre o que foi dito e marque confidence MEDIUM ou LOW; nunca descarte.
-- Datas: preencha "relative" com "hoje", "ontem" ou "anteontem" quando a pessoa disser isso; preencha "iso" (AAAA-MM-DD) só quando uma data explícita for dita. Sempre copie o trecho original em "rawText".`;
+- Datas: preencha "relative" com "hoje", "ontem" ou "anteontem" quando a pessoa disser isso; preencha "iso" (AAAA-MM-DD) só quando uma data explícita for dita. Sempre copie o trecho original em "rawText".
+- Em entradas com vários documentos, cada trecho começa com [Documento N]. Use essa numeração em sourceDocumentOrdinals. Não misture listas de lote, data ou período diferentes em uma única sessão.
+- "Mesma data", "mesmo lote" e expressões equivalentes no contexto do usuário podem herdar o valor da foto anterior. Se não houver informação, devolva null; não use a data de hoje como palpite.`;
 
 const OUTPUT_CONTRACT = `Responda SOMENTE com um objeto JSON válido, sem Markdown, no formato:
 { "intents": [ ... ] }
@@ -31,8 +33,8 @@ const ACTIONS = `Tipos de ação suportados:
    Deixe morningLiters ou afternoonLiters em null quando o período não foi dito.
 
 2) "individual_milk_session" — leitura vaca a vaca (controle individual).
-   Campos: type, date, scopeLabel (rótulo do lote como escrito/falado, ou null), measurements[] com { animalLabel, morningLiters, afternoonLiters, totalLiters, rawValueText, confidence, notes }.
-   Preencha só os valores ditos; deixe os demais em null.
+   Campos: type, date, scopeLabel (rótulo do lote como escrito/falado, ou null), period ("MORNING", "AFTERNOON" ou null), sourceDocumentOrdinals (números dos documentos que originaram a lista), measurements[] com { animalLabel, morningLiters, afternoonLiters, totalLiters, rawValueText, confidence, notes }.
+   Preencha só os valores ditos; deixe os demais em null. Se o período geral estiver claro, coloque cada valor somente no campo daquele período.
 
 3) "milk_collection" — coleta do laticínio (volume retirado).
    Campos: type, date, liters, sourceLabel ("tanque", "caminhoneiro", "comprovante" ou null), rawValueText, confidence, notes.
@@ -68,9 +70,31 @@ JSON: { "intents": [
 
 Fala: "Produção individual de ontem, primeiro lote de manhã. Mimosa 7 litros, Cocada 9 litros e meio."
 JSON: { "intents": [
-  { "type": "individual_milk_session", "date": { "relative": "ontem", "iso": null, "rawText": "ontem" }, "scopeLabel": "primeiro lote", "measurements": [
+  { "type": "individual_milk_session", "date": { "relative": "ontem", "iso": null, "rawText": "ontem" }, "scopeLabel": "primeiro lote", "period": "MORNING", "sourceDocumentOrdinals": [], "measurements": [
     { "animalLabel": "Mimosa", "morningLiters": 7, "afternoonLiters": null, "totalLiters": 7, "rawValueText": "7 litros", "confidence": "HIGH", "notes": null },
     { "animalLabel": "Cocada", "morningLiters": 9.5, "afternoonLiters": null, "totalLiters": 9.5, "rawValueText": "9 litros e meio", "confidence": "HIGH", "notes": null }
+  ] }
+] }
+
+Entrada com documentos:
+Contexto: "Foto 1 lote 1, 28/07/2026 de manhã. Foto 2 mesmo lote e data à tarde. Foto 3 lote 2, mesma data de manhã."
+[Documento 1: folha-1.jpg]
+Mimosa 7; Cocada 9
+[Documento 2: folha-2.jpg]
+Mimosa 5; Cocada 6
+[Documento 3: folha-3.jpg]
+Estrela 8
+JSON: { "intents": [
+  { "type": "individual_milk_session", "date": { "relative": null, "iso": "2026-07-28", "rawText": "28/07/2026" }, "scopeLabel": "lote 1", "period": "MORNING", "sourceDocumentOrdinals": [1], "measurements": [
+    { "animalLabel": "Mimosa", "morningLiters": 7, "afternoonLiters": null, "totalLiters": 7, "rawValueText": "7", "confidence": "HIGH", "notes": null },
+    { "animalLabel": "Cocada", "morningLiters": 9, "afternoonLiters": null, "totalLiters": 9, "rawValueText": "9", "confidence": "HIGH", "notes": null }
+  ] },
+  { "type": "individual_milk_session", "date": { "relative": null, "iso": "2026-07-28", "rawText": "mesma data" }, "scopeLabel": "lote 1", "period": "AFTERNOON", "sourceDocumentOrdinals": [2], "measurements": [
+    { "animalLabel": "Mimosa", "morningLiters": null, "afternoonLiters": 5, "totalLiters": 5, "rawValueText": "5", "confidence": "HIGH", "notes": null },
+    { "animalLabel": "Cocada", "morningLiters": null, "afternoonLiters": 6, "totalLiters": 6, "rawValueText": "6", "confidence": "HIGH", "notes": null }
+  ] },
+  { "type": "individual_milk_session", "date": { "relative": null, "iso": "2026-07-28", "rawText": "mesma data" }, "scopeLabel": "lote 2", "period": "MORNING", "sourceDocumentOrdinals": [3], "measurements": [
+    { "animalLabel": "Estrela", "morningLiters": 8, "afternoonLiters": null, "totalLiters": 8, "rawValueText": "8", "confidence": "HIGH", "notes": null }
   ] }
 ] }
 

@@ -607,10 +607,12 @@ sem revisão humana.
   `QuickCollectionForm`, `FeedingEventForm`, `PurchaseForm`, `RevenueForm`,
   `MastitisCaseForm`). A compra de alimento usa o editor próprio
   (`FeedPurchaseReviewForm`, extraído da antiga /revisar) na folha do depósito.
-- **Destino pós-captura:** após o POST /api/captures, UMA ação pendente com
-  destino óbvio navega para `/` (o jogo) com o estado da revisão
+- **Destino pós-captura:** após o POST /api/captures, uma ação pendente com
+  destino óbvio — ou o primeiro controle individual de um lote multiimagem —
+  navega para `/` (o jogo) com o estado da revisão
   (`{ reviewCaptureId, reviewActionId }`) e a `GamePage.openReview` abre a
-  folha; ambíguo/múltiplo/não reconhecido cai no caderno na aba Pendências
+  folha. Ao concluir um controle, a próxima pendência da mesma captura abre
+  automaticamente. Ambíguo/não reconhecido cai no caderno na aba Pendências
   (`{ openNotebook: 'pendencias' }`). As folhas passaram a montar mesmo sem
   perímetro traçado — a revisão não depende do mapa.
 - **Controle individual por IA:** a revisão linha a linha vive na mangueira
@@ -621,9 +623,13 @@ sem revisão humana.
   baixa confiança desmarcada por padrão, UM lote para todas com default no
   lote mais frequente do controle, POST /api/animals/bulk e rematch
   automático), QuickAnimalForm linha a linha (memoriza o último lote usado na
-  revisão), decisões de
-  merge; a gravação é o `POST /api/import/milk-session`, que confirma a ação
-  de origem (fase 0). As 3 telas viraram 1 folha.
+  revisão), decisões de merge e propostas explícitas de mudança de lote.
+  A folha larga usa a ordem compartilhada `FactSequence`: Origem → Contexto
+  (data, lote, período) → Medições → Mudanças → Confirmação. Fotos permanecem
+  numeradas na ordem do envio e a origem aparece por medição; metadado ausente
+  bloqueia a gravação até a escolha humana e nova validação no servidor.
+  A gravação é o `POST /api/import/milk-session`, que confirma a ação de
+  origem. As 3 telas viraram 1 folha.
 - **Pesagem por voz/foto (intent WEIGHT_SESSION):** novo intent de verdade —
   schema em `intents.ts` (linhas animal+kg, peso ilegível = null, nunca
   estimado), prompt em `prompts.ts`, resolução em `resolve.ts`

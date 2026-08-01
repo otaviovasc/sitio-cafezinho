@@ -5,6 +5,7 @@ const nullableLiters = z.number().finite().nonnegative().nullable();
 const importMeasurementSourceSchema = z.object({
   captureId: z.string().uuid().nullable().optional(),
   proposedActionId: z.string().uuid().nullable().optional(),
+  sourceDocumentOrdinals: z.array(z.number().int().positive()).optional(),
   rawAnimalLabel: z.string().trim().min(1),
   rawValueText: z.string().nullable().optional(),
   morningLiters: nullableLiters.optional(),
@@ -24,6 +25,7 @@ export const importMeasurementSchema = z.object({
   excluded: z.boolean(),
   notes: z.string().nullable().optional(),
   sources: z.array(importMeasurementSourceSchema).optional(),
+  sourceDocumentOrdinals: z.array(z.number().int().positive()).optional(),
 }).superRefine((row, context) => {
   const parts = (row.morningLiters ?? 0) + (row.afternoonLiters ?? 0);
   if (row.rawAnimalLabel === null && !row.excluded) {
@@ -38,10 +40,20 @@ export const importMeasurementSchema = z.object({
 }).transform((row) => ({ ...row, rawAnimalLabel: row.rawAnimalLabel ?? '[rótulo ilegível]' }));
 
 export const milkImportSchema = z.object({
-  sessionDate: z.string().date(),
+  // Empty is a deliberate review state: an absent date must never silently
+  // become today's measured fact.
+  sessionDate: z.union([z.string().date(), z.literal('')]),
   herdGroupId: z.string().min(1).nullable().default(null),
   herdGroupLabel: z.string().nullable().default(null),
   sourceMode: z.enum(['SEPARATE_MORNING_AFTERNOON', 'COMBINED_TOTAL', 'MIXED', 'UNKNOWN']),
+  period: z.enum(['MORNING', 'AFTERNOON']).nullable().optional(),
+  sourceDocumentOrdinals: z.array(z.number().int().positive()).optional(),
+  crossGroupAnimalLabels: z.array(z.string().trim().min(1)).optional(),
+  metadataReview: z.object({
+    dateRequired: z.boolean().optional(),
+    groupRequired: z.boolean().optional(),
+    periodRequired: z.boolean().optional(),
+  }).optional(),
   measurements: z.array(importMeasurementSchema).min(1),
 });
 

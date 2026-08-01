@@ -51,6 +51,8 @@ Regras: use `Field` (rótulo + dica + erro + aria), `FormErrorSummary` no topo (
 ## Revisão / status
 
 - Revisar uma entrada proposta usa **`ReviewCard`** (`components/review.tsx`): decisão com faixa de triagem, um problema em destaque, barra de ações. Não repita grades de `<Select>` por linha.
+- Revisões com várias etapas usam **`FactSequence`** (`components/fact-sequence.tsx`) e mantêm esta ordem visual reutilizável: **Origem → Contexto → Fatos/Medições → Mudanças derivadas → Confirmação**. A etapa atual precisa refletir o estado real; contexto incompleto nunca aparece como concluído.
+- Em revisões longas, dê espaço aos campos: uma única rolagem, coluna principal larga no desktop, fontes ao lado quando couber e `SubmitBar` fixa. No celular, fontes e formulário empilham sem rolagem aninhada.
 - Rótulo+tom de qualquer enum vem do **registro** `lib/status.ts` via **`StatusBadge`** — não escreva ternários de label/tom espalhados nas telas.
 
 ## Carregando / vazio / erro

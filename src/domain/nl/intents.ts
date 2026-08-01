@@ -48,6 +48,10 @@ export const individualMilkSessionIntent = z.object({
   type: z.literal('individual_milk_session'),
   date: spokenDateSchema,
   scopeLabel: z.string().nullable().default(null),
+  // Período e fotos de origem pertencem à lista inteira. Isso impede que uma
+  // coluna sem cabeçalho seja promovida silenciosamente a manhã ou tarde.
+  period: z.enum(['MORNING', 'AFTERNOON']).nullable().optional(),
+  sourceDocumentOrdinals: z.array(z.number().int().positive()).optional(),
   measurements: z.array(individualMilkMeasurementIntent).min(1),
 });
 export type IndividualMilkSessionIntent = z.infer<typeof individualMilkSessionIntent>;

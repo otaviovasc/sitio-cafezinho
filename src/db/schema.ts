@@ -486,6 +486,33 @@ export const captures = pgTable('captures', {
   index('captures_status_idx').on(table.status),
 ]);
 
+// Arquivos que compõem uma captura lógica. Uma seleção de várias fotos mantém
+// a ordem original e o resultado de OCR de cada foto, mesmo quando o arquivo
+// original não pôde ser enviado ao storage.
+export const captureDocuments = pgTable('capture_documents', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  captureId: uuid('capture_id').notNull().references(() => captures.id, { onDelete: 'cascade' }),
+  ordinal: integer('ordinal').notNull(),
+  originalFilename: text('original_filename').notNull(),
+  mimeType: text('mime_type').notNull(),
+  sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
+  sha256: text('sha256').notNull(),
+  ocrText: text('ocr_text'),
+  ocrRaw: jsonb('ocr_raw'),
+  ocrModel: text('ocr_model'),
+  ocrStatus: text('ocr_status').notNull().default('PENDING'),
+  attachmentId: uuid('attachment_id').references(() => attachments.id, { onDelete: 'set null' }),
+  storageStatus: storageStatus('storage_status').notNull().default('UPLOADING'),
+  storageWarning: text('storage_warning'),
+  ...auditColumns,
+}, (table) => [
+  uniqueIndex('capture_documents_capture_ordinal_unique').on(table.captureId, table.ordinal),
+  index('capture_documents_capture_idx').on(table.captureId),
+  index('capture_documents_attachment_idx').on(table.attachmentId),
+  check('capture_documents_ordinal_positive', sql`${table.ordinal} > 0`),
+  check('capture_documents_ocr_status_valid', sql`${table.ocrStatus} in ('PENDING', 'AVAILABLE', 'FAILED')`),
+]);
+
 // Uma ação proposta por fato reconhecido na captura (um áudio pode gerar várias).
 export const proposedActions = pgTable('proposed_actions', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -690,6 +717,7 @@ export type Revenue = typeof revenues.$inferSelect;
 export type Purchase = typeof purchases.$inferSelect;
 export type Attachment = typeof attachments.$inferSelect;
 export type Capture = typeof captures.$inferSelect;
+export type CaptureDocument = typeof captureDocuments.$inferSelect;
 export type ProposedAction = typeof proposedActions.$inferSelect;
 export type Pasture = typeof pastures.$inferSelect;
 export type PastureOccupancy = typeof pastureOccupancies.$inferSelect;

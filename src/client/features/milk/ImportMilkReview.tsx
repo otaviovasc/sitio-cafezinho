@@ -6,10 +6,11 @@ import { formatDate, formatLiters } from '../../../domain/format';
 import { useToast } from '../../components/feedback-context';
 import { ParsedDecimalInput } from '../../components/form-controls';
 import { ReviewCard } from '../../components/review';
-import { Button, ErrorState, Field, ScrollArea, SectionCard, Select, SkeletonList, StatCard, StatusBadge } from '../../components/ui';
+import { Button, ErrorState, Field, Input, SectionCard, Select, SkeletonList, StatCard, StatusBadge, SubmitBar } from '../../components/ui';
 import { FilterControls } from '../../components/FilterControls';
 import { milkMeasurementStatusDescriptor } from '../../lib/status';
 import { useResource } from '../../hooks/useResource';
+import { useUnsavedGuard } from '../../hooks/useUnsavedGuard';
 import { api, ApiError, json } from '../../lib/api';
 import { BulkRegisterFromLabels, type BulkCreatedAnimal } from '../animals/BulkRegisterFromLabels';
 import type { HerdGroup } from '../animals/GroupPicker';
@@ -23,6 +24,13 @@ type Preview = {
   herdGroupId: string | null;
   herdGroupName?: string | null;
   sourceMode: string;
+  period?: 'MORNING' | 'AFTERNOON' | null;
+  sourceDocumentOrdinals?: number[];
+  crossGroupAnimalLabels?: string[];
+  metadataReview?: { dateRequired?: boolean; groupRequired?: boolean; periodRequired?: boolean };
+  requiresDateReview?: boolean;
+  requiresGroupReview?: boolean;
+  requiresPeriodReview?: boolean;
   sessionIssues: string[];
   sessionWarnings?: string[];
   missingAnimals: Array<{ id: string; name: string | null; tagNumber: string | null }>;
@@ -33,7 +41,17 @@ type Preview = {
     measurementCount: number;
     measurements: ExistingMeasurement[];
   };
-  measurements: Array<{ rawAnimalLabel: string; rawValueText?: string | null; morningLiters: number | null; afternoonLiters: number | null; totalLiters: number | null; confidence: string; status: string; notes?: string | null; animalId: string | null; matchedAnimal: Animal | null; milkingRoutine: MilkingRoutine | null; mergeDecision: 'ADD' | 'COMPLETE_EXISTING' | 'KEEP_EXISTING' | 'REPLACE_EXISTING' | null; existingMeasurement: ExistingMeasurement | null; issues: string[]; sources?: Array<Record<string, unknown>> }>;
+  measurements: Array<{ rawAnimalLabel: string; rawValueText?: string | null; morningLiters: number | null; afternoonLiters: number | null; totalLiters: number | null; confidence: string; status: string; notes?: string | null; animalId: string | null; matchedAnimal: Animal | null; milkingRoutine: MilkingRoutine | null; mergeDecision: 'ADD' | 'COMPLETE_EXISTING' | 'KEEP_EXISTING' | 'REPLACE_EXISTING' | null; existingMeasurement: ExistingMeasurement | null; issues: string[]; sources?: Array<Record<string, unknown>>; sourceDocumentOrdinals?: number[]; groupChangeProposal?: GroupChangeProposal | null }>;
+};
+
+type GroupChangeProposal = {
+  animalId: string;
+  animalName: string | null;
+  fromGroupId: string | null;
+  fromGroupName: string | null;
+  toGroupId: string;
+  toGroupName: string;
+  changedOn: string;
 };
 
 type ExistingMeasurement = {
@@ -76,8 +94,13 @@ export function ImportMilkReview({ prefillJson, sourceCaptureId, sourceActionId,
   const [showBulkRegister, setShowBulkRegister] = useState(false);
   const [lastGroupId, setLastGroupId] = useState('');
   const [existingSession, setExistingSession] = useState<{ id: string; sessionDate: string } | null>(null);
+  const [groupChangeDecisions, setGroupChangeDecisions] = useState<Record<string, boolean>>({});
+  const [metadataConfirmed, setMetadataConfirmed] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const { data: animals, reload: reloadAnimals } = useResource<Animal[]>(preview ? `/api/animals?onDate=${preview.sessionDate}` : '/api/animals');
+  const { data: groups = [] } = useResource<HerdGroup[]>('/api/herd-groups');
   const navigate = useNavigate();
+  useUnsavedGuard(dirty);
 
   // Lote sugerido para novos cadastros: o último usado nesta revisão ou o lote
   // mais frequente entre os animais já vinculados (o lote de ordenha do controle).
@@ -93,7 +116,14 @@ export function ImportMilkReview({ prefillJson, sourceCaptureId, sourceActionId,
 
   const validate = useCallback(async (raw: string) => {
     setBusy(true); setError(''); setExistingSession(null);
-    try { setPreview(await api<Preview>('/api/import/milk-session/validate', json('POST', { content: raw }))); toast('Transcrição carregada. Revise cada linha antes de importar.'); }
+    try {
+      const validated = await api<Preview>('/api/import/milk-session/validate', json('POST', { content: raw }));
+      setPreview(validated);
+      setMetadataConfirmed(!validated.metadataReview?.dateRequired && !validated.metadataReview?.groupRequired && !validated.metadataReview?.periodRequired);
+      setGroupChangeDecisions({});
+      setDirty(false);
+      toast('Transcrição carregada. Revise cada linha antes de importar.');
+    }
     catch (cause) { setPreview(null); setError(cause instanceof Error ? cause.message : 'Não foi possível validar a transcrição.'); }
     finally { setBusy(false); }
   }, [toast]);
@@ -105,7 +135,77 @@ export function ImportMilkReview({ prefillJson, sourceCaptureId, sourceActionId,
 
   function update(index: number, values: Partial<Preview['measurements'][number]>) {
     if (!preview) return;
+    setDirty(true);
     setPreview({ ...preview, measurements: preview.measurements.map((row, rowIndex) => rowIndex === index ? { ...row, ...values } : row) });
+  }
+  function updateMetadata(values: Partial<Pick<Preview, 'sessionDate' | 'herdGroupId' | 'herdGroupName' | 'period'>>) {
+    if (!preview) return;
+    setDirty(true);
+    setMetadataConfirmed(false);
+    const sessionIssues = values.herdGroupId
+      ? preview.sessionIssues.filter((issue) => !issue.includes('não foi identificado') && issue !== 'O lote informado não existe mais.')
+      : preview.sessionIssues;
+    setPreview({ ...preview, ...values, sessionIssues });
+  }
+  function updateGlobalPeriod(period: Preview['period']) {
+    if (!preview) return;
+    setDirty(true);
+    setMetadataConfirmed(false);
+    const measurements = preview.measurements.map((row) => {
+      if (!period || row.morningLiters !== null || row.afternoonLiters !== null || row.totalLiters === null) return row;
+      return period === 'MORNING'
+        ? { ...row, morningLiters: row.totalLiters }
+        : { ...row, afternoonLiters: row.totalLiters };
+    });
+    setPreview({
+      ...preview,
+      period,
+      sourceMode: period ? 'SEPARATE_MORNING_AFTERNOON' : preview.sourceMode,
+      measurements,
+      sessionIssues: period
+        ? preview.sessionIssues.filter((issue) => issue !== 'O controle novo deve separar manhã e tarde.')
+        : preview.sessionIssues,
+    });
+  }
+  async function confirmMetadata() {
+    if (!preview) return;
+    setBusy(true);
+    setError('');
+    try {
+      const content = JSON.stringify({
+        sessionDate: preview.sessionDate,
+        herdGroupId: preview.herdGroupId,
+        herdGroupLabel: preview.herdGroupName ?? null,
+        sourceMode: preview.sourceMode,
+        period: preview.period,
+        metadataReview: preview.metadataReview,
+        sourceDocumentOrdinals: preview.sourceDocumentOrdinals,
+        crossGroupAnimalLabels: preview.crossGroupAnimalLabels,
+        measurements: preview.measurements.map((row) => ({
+          rawAnimalLabel: row.rawAnimalLabel,
+          rawValueText: row.rawValueText ?? null,
+          morningLiters: row.morningLiters,
+          afternoonLiters: row.afternoonLiters,
+          totalLiters: row.totalLiters,
+          confidence: row.confidence,
+          notes: row.notes ?? null,
+          excluded: row.status === 'EXCLUDED',
+          sources: row.sources,
+          sourceDocumentOrdinals: row.sourceDocumentOrdinals,
+        })),
+      });
+      const validated = await api<Preview>('/api/import/milk-session/validate', json('POST', { content }));
+      setPreview(validated);
+      setExistingSession(null);
+      setGroupChangeDecisions({});
+      setMetadataConfirmed(true);
+      setDirty(true);
+      toast('Contexto confirmado. Vínculos e mudanças de lote foram recalculados.');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Não foi possível confirmar o contexto.');
+    } finally {
+      setBusy(false);
+    }
   }
   function updatePeriod(index: number, period: 'morningLiters' | 'afternoonLiters', value: number | null) {
     if (!preview) return;
@@ -151,9 +251,14 @@ export function ImportMilkReview({ prefillJson, sourceCaptureId, sourceActionId,
         sourceCaptureId,
         sourceActionId,
         sourceActions,
+        groupChangeDecisions: groupChangeProposals.map((proposal) => ({
+          animalId: proposal.animalId,
+          approved: groupChangeDecisions[proposal.animalId],
+        })),
         measurements: preview.measurements.map(({ matchedAnimal: _matchedAnimal, milkingRoutine: _milkingRoutine, issues: _issues, existingMeasurement: _existingMeasurement, ...measurement }) => measurement),
       }));
       toast(created.merged ? 'Medições adicionadas ao controle existente' : 'Controle individual importado');
+      setDirty(false);
       onSaved(created.id, Boolean(created.merged));
     } catch (cause) {
       if (cause instanceof ApiError && cause.code === 'SESSION_DATE_EXISTS') {
@@ -210,6 +315,13 @@ export function ImportMilkReview({ prefillJson, sourceCaptureId, sourceActionId,
   const invalidMeasurementCount = preview.measurements.filter((row) => row.status !== 'EXCLUDED' && row.totalLiters === null).length;
   const unresolvedMergeCount = preview.measurements.filter((row) => row.status !== 'EXCLUDED' && row.existingMeasurement && !row.mergeDecision).length;
   const automaticMergeCount = preview.measurements.filter((row) => row.status !== 'EXCLUDED' && row.mergeDecision === 'COMPLETE_EXISTING').length;
+  const groupChangeProposals = [...new Map(preview.measurements.flatMap((row) => row.groupChangeProposal ? [[row.groupChangeProposal.animalId, row.groupChangeProposal] as const] : [])).values()];
+  const unresolvedGroupChangeCount = groupChangeProposals.filter((proposal) => groupChangeDecisions[proposal.animalId] === undefined).length;
+  const dateRequired = preview.metadataReview?.dateRequired ?? preview.requiresDateReview ?? !preview.sessionDate;
+  const groupRequired = preview.metadataReview?.groupRequired ?? preview.requiresGroupReview ?? !preview.herdGroupId;
+  const periodRequired = preview.metadataReview?.periodRequired ?? preview.requiresPeriodReview ?? false;
+  const metadataValuesInvalid = !preview.sessionDate || !preview.herdGroupId || (periodRequired && !preview.period);
+  const metadataInvalid = metadataValuesInvalid || !metadataConfirmed;
 
   return <div className="grid gap-5">
     {error && <ErrorState message={error} />}
@@ -219,7 +331,33 @@ export function ImportMilkReview({ prefillJson, sourceCaptureId, sourceActionId,
       onCancel={() => setExistingSession(null)}
     />}
     <SectionCard title="Revisar o controle">
-      <p className="mb-3 text-sm text-[var(--muted)]"><strong>{formatDate(preview.sessionDate)}</strong>{preview.herdGroupName ? ` · ${preview.herdGroupName}` : ''}</p>
+      <div className="review-context-fields">
+        <Field label="Data do controle" hint={dateRequired ? 'Confirme a data encontrada nas fotos.' : 'Data encontrada no contexto.'} error={!preview.sessionDate ? 'Informe a data.' : undefined}>
+          <Input type="date" value={preview.sessionDate} required onChange={(event) => updateMetadata({ sessionDate: event.target.value })} />
+        </Field>
+        <Field label="Lote" hint={groupRequired ? 'Escolha o lote destas medições.' : 'Lote encontrado no contexto.'} error={!preview.herdGroupId ? 'Escolha o lote.' : undefined}>
+          <Select value={preview.herdGroupId ?? ''} required onChange={(event) => {
+            const group = (groups ?? []).find((item) => item.id === event.target.value);
+            updateMetadata({ herdGroupId: event.target.value || null, herdGroupName: group?.name ?? null });
+          }}>
+            <option value="">Selecione o lote</option>
+            {(groups ?? []).filter((group) => group.active).map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+          </Select>
+        </Field>
+        {(periodRequired || preview.period !== undefined) && <Field label="Período destas fotos" hint="Não presumimos manhã ou tarde." error={periodRequired && !preview.period ? 'Escolha o período.' : undefined}>
+          <Select value={preview.period ?? ''} required={periodRequired} onChange={(event) => updateGlobalPeriod((event.target.value || null) as Preview['period'])}>
+            <option value="">Selecione</option>
+            <option value="MORNING">Manhã</option>
+            <option value="AFTERNOON">Tarde</option>
+          </Select>
+        </Field>}
+        {(!metadataConfirmed || dateRequired || groupRequired || periodRequired) && <div className="review-context-confirm">
+          <Button type="button" variant={metadataConfirmed ? 'secondary' : 'primary'} disabled={metadataValuesInvalid || busy} onClick={() => void confirmMetadata()}>
+            {busy ? 'Recalculando…' : metadataConfirmed ? 'Revalidar contexto' : 'Confirmar contexto'}
+          </Button>
+          <small>{metadataConfirmed ? 'Data, lote e período conferidos.' : 'Confira os campos acima antes das medições.'}</small>
+        </div>}
+      </div>
       {preview.existingSession && <div className="notice notice-info mb-4">
         <strong>Este controle do lote já existe</strong>
         <p className="mt-1 text-sm">As novas linhas ou períodos serão combinados com o controle de {formatDate(preview.sessionDate)}, que já tem {preview.existingSession.measurementCount} medição(ões) ativa(s). Nada será apagado silenciosamente.</p>
@@ -246,8 +384,7 @@ export function ImportMilkReview({ prefillJson, sourceCaptureId, sourceActionId,
         onCancel={() => setShowBulkRegister(false)}
         onCreated={handleBulkCreated}
       /></div>}
-      <ScrollArea label="Linhas da revisão do controle" className="mt-4 max-h-[46rem]">
-        <div className="grid gap-3">{visibleRows.map(({ row, index }) => {
+      <div className="mt-4 grid gap-3" aria-label="Linhas da revisão do controle">{visibleRows.map(({ row, index }) => {
           const selectedAnimal = animals?.find((animal) => animal.id === row.animalId) ?? row.matchedAnimal;
           const completesExisting = row.status !== 'EXCLUDED' && row.mergeDecision === 'COMPLETE_EXISTING';
           const hasMergeConflict = row.status !== 'EXCLUDED' && Boolean(row.existingMeasurement) && !completesExisting;
@@ -255,7 +392,7 @@ export function ImportMilkReview({ prefillJson, sourceCaptureId, sourceActionId,
             key={`${row.rawAnimalLabel}-${index}`}
             accent={row.status === 'EXCLUDED' ? 'dismissed' : row.status === 'CONFIRMED' ? 'ok' : 'action'}
             title={row.rawAnimalLabel}
-            subtitle={`Linha ${index + 1} · original preservado${row.rawValueText ? ` · “${row.rawValueText}”` : ''}`}
+            subtitle={`Linha ${index + 1}${(row.sourceDocumentOrdinals ?? []).length ? ` · Foto ${(row.sourceDocumentOrdinals ?? []).join(' e Foto ')}` : ''} · original preservado${row.rawValueText ? ` · “${row.rawValueText}”` : ''}`}
             value={row.totalLiters === null ? 'Sem valor' : formatLiters(row.totalLiters)}
             badge={<StatusBadge descriptor={milkMeasurementStatusDescriptor[row.status] ?? milkMeasurementStatusDescriptor.NEEDS_REVIEW} />}
             issues={row.issues}
@@ -315,17 +452,44 @@ export function ImportMilkReview({ prefillJson, sourceCaptureId, sourceActionId,
             {row.notes && <p className="mt-2 text-xs text-[var(--muted)]">{row.notes}</p>}
           </ReviewCard>;
         })}</div>
-      </ScrollArea>
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+      {groupChangeProposals.length > 0 && <section className="review-group-changes" aria-labelledby="group-change-title">
+        <div>
+          <h3 id="group-change-title">Mudanças de lote sugeridas</h3>
+          <p>A medição continua válida mesmo se você rejeitar a mudança. O histórico só muda com sua confirmação.</p>
+        </div>
+        {groupChangeProposals.map((proposal) => <article className="review-group-change" key={proposal.animalId}>
+          <div>
+            <strong>{proposal.animalName || 'Animal vinculado'}</strong>
+            <p>{proposal.fromGroupName || 'Sem lote'} → {proposal.toGroupName} em {formatDate(proposal.changedOn)}</p>
+          </div>
+          <div className="flex flex-wrap gap-2" role="group" aria-label={`Decisão de mudança de lote de ${proposal.animalName || 'animal'}`}>
+            <Button type="button" variant={groupChangeDecisions[proposal.animalId] === true ? 'primary' : 'secondary'} onClick={() => {
+              setGroupChangeDecisions((current) => ({ ...current, [proposal.animalId]: true }));
+              setDirty(true);
+            }}>Confirmar mudança</Button>
+            <Button type="button" variant={groupChangeDecisions[proposal.animalId] === false ? 'primary' : 'secondary'} onClick={() => {
+              setGroupChangeDecisions((current) => ({ ...current, [proposal.animalId]: false }));
+              setDirty(true);
+            }}>Manter lote atual</Button>
+          </div>
+        </article>)}
+      </section>}
+      <form className="mt-4" onSubmit={(event) => { event.preventDefault(); void confirm(); }}>
         <p className={`text-xs ${invalidMeasurementCount || unresolvedMergeCount ? 'font-semibold text-[var(--danger)]' : 'text-[var(--muted)]'}`}>
           {invalidMeasurementCount
             ? `${invalidMeasurementCount} linha(s) precisa(m) de um valor ou deve(m) ser excluída(s).`
             : unresolvedMergeCount
               ? `${unresolvedMergeCount} animal(is) já medido(s) precisa(m) de uma decisão.`
+              : unresolvedGroupChangeCount
+                ? `${unresolvedGroupChangeCount} mudança(s) de lote precisa(m) de uma decisão.`
               : 'Confirme em um toque as linhas revisadas. Linhas aguardando revisão ficam fora dos totais.'}
         </p>
-        <Button className="w-full sm:w-auto" disabled={busy || preview.sessionIssues.length > 0 || invalidMeasurementCount > 0 || unresolvedMergeCount > 0} onClick={() => void confirm()}>{busy ? 'Salvando…' : preview.existingSession ? 'Adicionar ao controle existente' : 'Salvar controle revisado'}</Button>
-      </div>
+        <SubmitBar
+          label={preview.existingSession ? 'Adicionar ao controle existente' : 'Salvar controle revisado'}
+          busy={busy}
+          disabled={preview.sessionIssues.length > 0 || invalidMeasurementCount > 0 || unresolvedMergeCount > 0 || unresolvedGroupChangeCount > 0 || metadataInvalid}
+        />
+      </form>
     </SectionCard>
   </div>;
 }

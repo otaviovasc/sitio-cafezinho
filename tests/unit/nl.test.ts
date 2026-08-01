@@ -156,6 +156,65 @@ describe('resolveIndividualMilkSession — Exemplo 3', () => {
     expect(parsed.measurements[0].rawAnimalLabel).toBe('Mimosa');
     expect(parsed.measurements[1].totalLiters).toBe(9.5);
   });
+
+  it('preserva período e documentos de origem e pede os metadados ausentes em uma única revisão', () => {
+    const intent: IndividualMilkSessionIntent = {
+      type: 'individual_milk_session',
+      date: { relative: null, iso: null, rawText: '' },
+      scopeLabel: null,
+      period: null,
+      sourceDocumentOrdinals: [2],
+      measurements: [
+        { animalLabel: 'Mimosa', morningLiters: null, afternoonLiters: null, totalLiters: 5, rawValueText: '5', confidence: 'HIGH', notes: null },
+      ],
+    };
+    const resolved = resolveIndividualMilkSession(intent, groups, NOW);
+    const imported = (resolved.resolvedPayload as {
+      import: {
+        sessionDate: string;
+        period: null;
+        sourceDocumentOrdinals: number[];
+        metadataReview: { dateRequired: boolean; groupRequired: boolean; periodRequired: boolean };
+        measurements: Array<{ morningLiters: number | null; afternoonLiters: number | null }>;
+      };
+    }).import;
+    expect(imported.sessionDate).toBe('');
+    expect(imported.period).toBeNull();
+    expect(imported.sourceDocumentOrdinals).toEqual([2]);
+    expect(imported.metadataReview).toEqual({ dateRequired: true, groupRequired: true, periodRequired: true });
+    expect(imported.measurements[0]).toMatchObject({ morningLiters: null, afternoonLiters: null });
+    expect(resolved.issues).toEqual(expect.arrayContaining([
+      'Informe a data deste controle individual.',
+      'Informe o lote deste controle individual.',
+      'Informe se este controle é da manhã ou da tarde.',
+    ]));
+  });
+
+  it('usa o período explícito para classificar um valor total sem inventar o outro período', () => {
+    const intent: IndividualMilkSessionIntent = {
+      type: 'individual_milk_session',
+      date: spoken('hoje', 'hoje'),
+      scopeLabel: 'primeiro lote',
+      period: 'AFTERNOON',
+      sourceDocumentOrdinals: [3],
+      measurements: [
+        { animalLabel: 'Cocada', morningLiters: null, afternoonLiters: null, totalLiters: 6, rawValueText: '6', confidence: 'HIGH', notes: null },
+      ],
+    };
+    const resolved = resolveIndividualMilkSession(intent, groups, NOW);
+    const imported = (resolved.resolvedPayload as {
+      import: {
+        metadataReview: { dateRequired: boolean; groupRequired: boolean; periodRequired: boolean };
+        measurements: Array<{ morningLiters: number | null; afternoonLiters: number | null; sourceDocumentOrdinals: number[] }>;
+      };
+    }).import;
+    expect(imported.metadataReview).toEqual({ dateRequired: false, groupRequired: false, periodRequired: false });
+    expect(imported.measurements[0]).toMatchObject({
+      morningLiters: null,
+      afternoonLiters: 6,
+      sourceDocumentOrdinals: [3],
+    });
+  });
 });
 
 describe('resolvers de registro — mapeamento de rótulos falados', () => {

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Camera, CheckCircle2, Loader2, Mic, Plus, Square, XCircle } from 'lucide-react';
+import { Camera, ChevronDown, ChevronUp, Loader2, Mic, Plus, Square, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { ENTRY_TYPES } from '../config/entries';
 import { api, ApiError, json } from '../lib/api';
@@ -8,19 +8,21 @@ import { useAudioRecorder } from '../hooks/useAudioRecorder';
 import { reviewDestination, type ReviewableAction } from '../features/game/review';
 import { Modal } from './feedback';
 import { useToast } from './feedback-context';
-import { Button, ErrorState, Textarea } from './ui';
+import { Button, ErrorState, Field, Textarea } from './ui';
 
 function formatSeconds(total: number) {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
 
-type CaptureResult = { captureId: string; actions: ReviewableAction[] };
-type DocumentJob = {
+type CaptureWarning = string | { message?: string; code?: string; documentOrdinal?: number };
+type CaptureResult = {
+  captureId: string;
+  actions: ReviewableAction[];
+  warnings?: CaptureWarning[];
+};
+type SelectedDocument = {
   id: string;
-  filename: string;
-  status: 'PROCESSING' | 'DONE' | 'ERROR';
-  result?: CaptureResult;
-  error?: string;
+  file: File;
 };
 
 type SheetMode = 'choose' | 'recording' | 'processing';
@@ -33,15 +35,14 @@ function CaptureSheet({ open, onClose }: { open: boolean; onClose: () => void })
   const [mode, setMode] = useState<SheetMode>('choose');
   const [text, setText] = useState('');
   const [error, setError] = useState('');
-  const [documentJobs, setDocumentJobs] = useState<DocumentJob[]>([]);
-  const processingDocuments = documentJobs.some((job) => job.status === 'PROCESSING');
+  const [documents, setDocuments] = useState<SelectedDocument[]>([]);
 
   function close() {
-    if (mode === 'processing' || processingDocuments) return;
+    if (mode === 'processing') return;
     setMode('choose');
     setText('');
     setError('');
-    setDocumentJobs([]);
+    setDocuments([]);
     onClose();
   }
 
@@ -55,17 +56,30 @@ function CaptureSheet({ open, onClose }: { open: boolean; onClose: () => void })
     setError('');
     try {
       const result = await api<CaptureResult>('/api/captures', body);
-      toast('Captura enviada. Revise quando quiser.');
+      const warnings = result.warnings ?? [];
+      if (warnings.length) {
+        toast({
+          title: 'Leitura pronta, com um aviso',
+          message: warnings.map((warning) => typeof warning === 'string' ? warning : warning.message ?? 'Um original não foi armazenado.').join(' '),
+          tone: 'warning',
+          duration: 5000,
+        });
+      } else {
+        toast('Captura enviada. Revise quando quiser.');
+      }
       setMode('choose');
       setText('');
+      setDocuments([]);
       onClose();
       // Destino óbvio: uma única ação pendente abre a folha do fato em modo
       // revisão, já preenchida. Ambíguo/múltiplo/não reconhecido: caderno na
       // aba Pendências (fallback).
       const pending = (result.actions ?? []).filter((action) => action.status === 'NEEDS_REVIEW');
-      const target = pending.length === 1 ? reviewDestination(pending[0]) : null;
-      if (pending.length === 1 && target) {
-        navigate('/', { state: { reviewCaptureId: result.captureId, reviewActionId: pending[0].id } });
+      const firstIndividual = pending.find((action) => action.actionType === 'INDIVIDUAL_MILK_SESSION');
+      const directAction = pending.length === 1 ? pending[0] : firstIndividual;
+      const target = directAction ? reviewDestination(directAction) : null;
+      if (directAction && target) {
+        navigate('/', { state: { reviewCaptureId: result.captureId, reviewActionId: directAction.id } });
       } else {
         navigate('/', { state: { openNotebook: 'pendencias' } });
       }
@@ -86,6 +100,8 @@ function CaptureSheet({ open, onClose }: { open: boolean; onClose: () => void })
     const form = new FormData();
     form.append('audio', result.blob, result.filename);
     form.append('durationSeconds', result.durationSeconds.toFixed(3));
+    for (const document of documents) form.append('document', document.file);
+    if (text.trim()) form.append('context', text.trim());
     await submit({ method: 'POST', body: form });
   }
 
@@ -94,49 +110,28 @@ function CaptureSheet({ open, onClose }: { open: boolean; onClose: () => void })
     await submit(json('POST', { text: text.trim() }));
   }
 
-  async function sendDocument(file: File, jobId: string) {
+  async function sendDocuments() {
+    if (!documents.length) return;
     const form = new FormData();
-    form.append('document', file);
+    for (const document of documents) form.append('document', document.file);
     if (text.trim()) form.append('context', text.trim());
-    try {
-      const result = await api<CaptureResult>('/api/captures', { method: 'POST', body: form });
-      setDocumentJobs((jobs) => jobs.map((job) => job.id === jobId ? { ...job, status: 'DONE', result } : job));
-    } catch (cause) {
-      setDocumentJobs((jobs) => jobs.map((job) => job.id === jobId ? {
-        ...job,
-        status: 'ERROR',
-        error: cause instanceof ApiError ? cause.message : 'Não foi possível processar esta imagem.',
-      } : job));
-    }
+    await submit({ method: 'POST', body: form });
   }
 
-  function sendDocuments(files: File[]) {
-    const jobs = files.map((file, index) => ({
-      id: `${Date.now()}-${index}-${file.name}`,
-      filename: file.name,
-      status: 'PROCESSING' as const,
-      file,
-    }));
+  function addDocuments(files: File[]) {
+    const selected = files.map((file, index) => ({ id: `${Date.now()}-${index}-${file.name}-${file.size}`, file }));
     setError('');
-    setDocumentJobs((current) => [...current, ...jobs.map(({ file: _file, ...job }) => job)]);
-    for (const job of jobs) void sendDocument(job.file, job.id);
+    setDocuments((current) => [...current, ...selected]);
   }
 
-  function reviewDocuments() {
-    const firstPending = documentJobs.flatMap((job) => {
-      const result = job.result;
-      if (!result) return [];
-      return result.actions.filter((action) => action.status === 'NEEDS_REVIEW')
-        .map((action) => ({ captureId: result.captureId, action }));
-    })[0];
-    setDocumentJobs([]);
-    setText('');
-    onClose();
-    if (firstPending) {
-      navigate('/', { state: { reviewCaptureId: firstPending.captureId, reviewActionId: firstPending.action.id } });
-    } else {
-      navigate('/', { state: { openNotebook: 'pendencias' } });
-    }
+  function moveDocument(index: number, direction: -1 | 1) {
+    setDocuments((current) => {
+      const target = index + direction;
+      if (target < 0 || target >= current.length) return current;
+      const reordered = [...current];
+      [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+      return reordered;
+    });
   }
 
   return <Modal open={open} title="Assistente de registros" description="Diga o que aconteceu e o assistente preenche — ou registre direto." onClose={close}>
@@ -153,32 +148,60 @@ function CaptureSheet({ open, onClose }: { open: boolean; onClose: () => void })
             <p className="mb-2 text-xs font-bold uppercase tracking-wide text-[var(--muted)]">Deixe o assistente preencher</p>
             {voiceEnabled
               ? <div className="grid gap-2">
-                <button type="button" className="button button-primary w-full" data-autofocus onClick={() => void record()}><Mic size={18} aria-hidden /> Falar</button>
+                <button type="button" className="button button-primary w-full" data-autofocus onClick={() => void record()}><Mic size={18} aria-hidden /> {documents.length ? 'Gravar contexto das fotos' : 'Falar'}</button>
                 <label className="button button-secondary w-full cursor-pointer">
-                  <Camera size={18} aria-hidden /> Fotos ou documentos
+                  <Camera size={18} aria-hidden /> {documents.length ? 'Adicionar mais fotos' : 'Escolher fotos ou documentos'}
                   <input type="file" multiple accept="image/*,application/pdf" className="hidden" onChange={(event) => {
                     const files = Array.from(event.target.files ?? []);
                     event.target.value = '';
-                    if (files.length) sendDocuments(files);
+                    if (files.length) addDocuments(files);
                   }} />
                 </label>
-                {documentJobs.length > 0 && <div className="grid gap-2" aria-live="polite">
-                  {documentJobs.map((job) => <div key={job.id} className="flex min-h-11 items-center gap-2 rounded-xl border border-[var(--line)] px-3 py-2 text-sm">
-                    {job.status === 'PROCESSING'
-                      ? <Loader2 className="shrink-0 animate-spin" size={17} aria-hidden />
-                      : job.status === 'DONE'
-                        ? <CheckCircle2 className="shrink-0 text-[var(--ok)]" size={17} aria-hidden />
-                        : <XCircle className="shrink-0 text-[var(--danger)]" size={17} aria-hidden />}
-                    <span className="min-w-0 flex-1 truncate">{job.filename}</span>
-                    <small className="text-[var(--muted)]">{job.status === 'PROCESSING' ? 'Lendo…' : job.status === 'DONE' ? 'Pronta' : job.error}</small>
-                  </div>)}
-                  {!processingDocuments && documentJobs.some((job) => job.status === 'DONE') && <Button onClick={reviewDocuments}>
-                    Revisar {documentJobs.filter((job) => job.status === 'DONE').length > 1 ? 'imagens juntas' : 'imagem'}
-                  </Button>}
-                  <p className="text-xs text-[var(--muted)]">Você pode escolher mais arquivos enquanto os anteriores são lidos. Controles da mesma data e lote serão reunidos automaticamente.</p>
+                {documents.length > 0 && <div className="grid gap-3" aria-live="polite">
+                  <div className="capture-document-list" aria-label="Fotos na ordem de leitura">
+                    {documents.map((document, index) => <div key={document.id} className="capture-document-item">
+                      <span className="capture-document-number">Foto {index + 1}</span>
+                      <span className="min-w-0 flex-1 truncate text-sm">{document.file.name}</span>
+                      <button
+                        type="button"
+                        className="capture-document-remove"
+                        disabled={index === 0}
+                        aria-label={`Mover Foto ${index + 1} para cima`}
+                        onClick={() => moveDocument(index, -1)}
+                      ><ChevronUp size={18} aria-hidden /></button>
+                      <button
+                        type="button"
+                        className="capture-document-remove"
+                        disabled={index === documents.length - 1}
+                        aria-label={`Mover Foto ${index + 1} para baixo`}
+                        onClick={() => moveDocument(index, 1)}
+                      ><ChevronDown size={18} aria-hidden /></button>
+                      <button
+                        type="button"
+                        className="capture-document-remove"
+                        aria-label={`Remover Foto ${index + 1}: ${document.file.name}`}
+                        onClick={() => setDocuments((current) => current.filter((item) => item.id !== document.id))}
+                      ><Trash2 size={18} aria-hidden /></button>
+                    </div>)}
+                  </div>
+                  <p className="text-xs leading-5 text-[var(--muted)]">A ordem acima será preservada. No contexto, diga o que é cada uma: “Foto 1, lote 1, manhã; Foto 2, mesmo lote, tarde”.</p>
                 </div>}
-                <Textarea placeholder="Ou escreva: hoje o primeiro lote tirou 700 litros de manhã… (também vira contexto da foto)" value={text} onChange={(event) => setText(event.target.value)} />
-                <Button variant="secondary" disabled={!text.trim()} onClick={() => void sendText()}>Enviar texto</Button>
+                <Field
+                  label={documents.length ? 'Contexto das fotos' : 'Descreva o registro'}
+                  hint={documents.length ? 'Informe data, lote e período de cada foto quando isso não estiver escrito nela.' : undefined}
+                >
+                  <Textarea
+                    aria-label={documents.length ? 'Contexto das fotos' : 'Texto do registro'}
+                    placeholder={documents.length ? 'Ex.: Foto 1: lote 1, 28/07/2026, manhã. Foto 2: mesmo lote e data, tarde.' : 'Ex.: hoje o primeiro lote tirou 700 litros de manhã…'}
+                    value={text}
+                    onChange={(event) => setText(event.target.value)}
+                  />
+                </Field>
+                {documents.length
+                  ? <Button onClick={() => void sendDocuments()}>
+                    Processar {documents.length} {documents.length === 1 ? 'foto' : 'fotos'}
+                  </Button>
+                  : <Button variant="secondary" disabled={!text.trim()} onClick={() => void sendText()}>Enviar texto</Button>}
                 <p className="text-xs text-[var(--muted)]">Áudio tem limite de {recorder.maxSeconds}s. Controle longo? Fotografe a anotação — a revisão abre vaca a vaca do mesmo jeito.</p>
               </div>
               : <p className="notice notice-info text-sm">Defina <code>OPENROUTER_API_KEY</code> no ambiente para ativar áudio, foto e texto livres. Os registros diretos abaixo funcionam sempre.</p>}

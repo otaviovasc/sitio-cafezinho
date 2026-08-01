@@ -232,22 +232,35 @@ export function resolveIndividualMilkSession(
   groups: ResolvableGroup[] = [],
   now = new Date(),
 ): ResolvedAction {
-  const sessionDate = resolveSpokenDate(intent.date, now);
+  const dateRequired = !(intent.date.relative || (intent.date.iso && /^\d{4}-\d{2}-\d{2}$/.test(intent.date.iso)));
+  const sessionDate = dateRequired ? '' : resolveSpokenDate(intent.date, now);
   const groupResolution = resolveHerdGroup(intent.scopeLabel, groups);
+  const period = intent.period ?? null;
+  const sourceDocumentOrdinals = intent.sourceDocumentOrdinals ?? [];
+  const groupRequired = !intent.scopeLabel?.trim() || !groupResolution.group;
+  const periodRequired = period === null;
   const measurements = intent.measurements.map((row) => {
+    const periodValue = row.totalLiters;
+    const morningLiters = row.morningLiters ?? (period === 'MORNING' ? periodValue : null);
+    const afternoonLiters = row.afternoonLiters ?? (period === 'AFTERNOON' ? periodValue : null);
     const total = row.totalLiters
-      ?? (row.morningLiters !== null || row.afternoonLiters !== null ? (row.morningLiters ?? 0) + (row.afternoonLiters ?? 0) : null);
+      ?? (morningLiters !== null || afternoonLiters !== null ? (morningLiters ?? 0) + (afternoonLiters ?? 0) : null);
     return {
       rawAnimalLabel: row.animalLabel,
       rawValueText: row.rawValueText,
-      morningLiters: row.morningLiters,
-      afternoonLiters: row.afternoonLiters,
+      morningLiters,
+      afternoonLiters,
       totalLiters: total,
       confidence: row.confidence,
       excluded: false,
       notes: row.notes,
+      sourceDocumentOrdinals,
     };
   });
+  const issues = [...groupResolution.issues];
+  if (dateRequired) issues.push('Informe a data deste controle individual.');
+  if (!intent.scopeLabel?.trim()) issues.push('Informe o lote deste controle individual.');
+  if (periodRequired) issues.push('Informe se este controle é da manhã ou da tarde.');
   return {
     actionType: 'INDIVIDUAL_MILK_SESSION',
     rawIntent: intent,
@@ -257,10 +270,13 @@ export function resolveIndividualMilkSession(
         herdGroupId: groupResolution.group?.id ?? null,
         herdGroupLabel: intent.scopeLabel,
         sourceMode: 'SEPARATE_MORNING_AFTERNOON',
+        period,
+        sourceDocumentOrdinals,
+        metadataReview: { dateRequired, groupRequired, periodRequired },
         measurements,
       },
     },
-    issues: groupResolution.issues,
+    issues,
     commitStatus: 'NEEDS_REVIEW',
   };
 }

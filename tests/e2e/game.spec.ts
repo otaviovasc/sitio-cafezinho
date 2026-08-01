@@ -1,6 +1,41 @@
-import { expect, test, type Route } from '@playwright/test';
+import { expect, test, type Page, type Route } from '@playwright/test';
 import { clearGameMap, createGameMapFixture, login } from './helpers';
 import { mockIndividualMilkReview } from './individual-milk-review-fixture';
+
+async function mockEmptyAuthenticatedGame(page: Page) {
+  await page.route('**/api/session', async (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ authenticated: true, voiceEnabled: true }),
+  }));
+  await page.route('**/api/game/state', async (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      map: { zones: [], installations: [] },
+      plantings: [],
+      markers: [],
+      groups: [],
+      unassignedCount: 0,
+      today: { date: '2026-07-28' },
+    }),
+  }));
+  await page.route(/\/api\/captures(?:\?.*)?$/, async (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: '[]',
+  }));
+  await page.route('**/api/animals?*', async (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: '[]',
+  }));
+  await page.route('**/api/herd-groups', async (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify([{ id: '55555555-5555-4555-8555-555555555555', name: 'Lote 1', active: true, milkingRoutine: 'MORNING_AND_AFTERNOON' }]),
+  }));
+}
 
 test.describe('jogo — fundação', () => {
   test('API do jogo exige sessão', async ({ request }) => {
@@ -38,8 +73,8 @@ test.describe('jogo — fundação', () => {
   });
 });
 
-test('revisão individual reúne duas capturas numa área clara e responsiva', async ({ page }, testInfo) => {
-  await login(page);
+test('revisão individual reúne duas anotações numa área clara e responsiva', async ({ page }, testInfo) => {
+  await mockEmptyAuthenticatedGame(page);
   const source = await mockIndividualMilkReview(page);
   await page.goto('/');
   await page.evaluate(({ captureId, actionId }) => {
@@ -52,10 +87,12 @@ test('revisão individual reúne duas capturas numa área clara e responsiva', a
 
   const workspace = page.getByTestId('individual-milk-review-workspace');
   await expect(workspace).toBeVisible();
-  await expect(page.getByText('2 capturas reunidas')).toBeVisible();
+  await expect(page.getByText('2 anotações reunidas')).toBeVisible();
   await expect(page.getByText('Períodos combinados automaticamente')).toBeVisible();
-  await expect(page.getByText('A imagem desta captura antiga não foi armazenada.')).toBeVisible();
-  await expect(page.getByAltText('Anotação original da captura 1')).toBeVisible();
+  await expect(page.getByText('O original da Foto 2 não foi armazenado.')).toBeVisible();
+  await expect(page.getByAltText('Anotação original da foto 1')).toBeVisible();
+  await expect(page.getByText('Mudanças de lote sugeridas')).toBeVisible();
+  await expect(page.getByText('Lote 2 → Lote 1 em 28/07/2026')).toBeVisible();
   const viewport = page.viewportSize()!;
   const box = await workspace.boundingBox();
   expect(box).not.toBeNull();
@@ -67,29 +104,28 @@ test('revisão individual reúne duas capturas numa área clara e responsiva', a
   }));
   expect(layout.scrollWidth).toBe(layout.clientWidth);
   await page.screenshot({ path: testInfo.outputPath('revisao-controle-individual.png'), fullPage: false, animations: 'disabled' });
+  await page.getByLabel('Data do controle').fill('2026-07-29');
+  await expect(page.getByRole('button', { name: 'Confirmar contexto' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Adicionar ao controle existente' })).toBeDisabled();
+  await page.getByRole('button', { name: 'Confirmar contexto' }).click();
+  await expect(page.getByLabel('Data do controle')).toHaveValue('2026-07-28');
 });
 
-test('assistente envia duas imagens em paralelo e mantém ambas visíveis', async ({ page }) => {
-  await login(page);
-  const waiting: Route[] = [];
+test('assistente preserva a ordem e envia duas imagens juntas com contexto', async ({ page }, testInfo) => {
+  await mockEmptyAuthenticatedGame(page);
+  const requests: Route[] = [];
   await page.route('**/api/captures', async (route) => {
     if (route.request().method() !== 'POST') return route.continue();
-    waiting.push(route);
-    if (waiting.length < 2) return;
-    await Promise.all(waiting.map((pending, index) => pending.fulfill({
+    requests.push(route);
+    await route.fulfill({
       status: 201,
       contentType: 'application/json',
       body: JSON.stringify({
-        captureId: `${index + 1}1111111-1111-4111-8111-111111111111`,
-        actions: [{
-          id: `${index + 1}2222222-2222-4222-8222-222222222222`,
-          captureId: `${index + 1}1111111-1111-4111-8111-111111111111`,
-          actionType: 'INDIVIDUAL_MILK_SESSION',
-          status: 'NEEDS_REVIEW',
-          resolvedPayload: {},
-        }],
+        captureId: '11111111-1111-4111-8111-111111111111',
+        actions: [],
+        warnings: [{ message: 'A Foto 2 foi lida, mas o original não foi armazenado.' }],
       }),
-    })));
+    });
   });
   await page.goto('/');
   await page.getByLabel('Assistente de registros — novo registro').click();
@@ -98,10 +134,19 @@ test('assistente envia duas imagens em paralelo e mantém ambas visíveis', asyn
     { name: 'manha.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('manha') },
     { name: 'tarde.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('tarde') },
   ]);
-  await expect.poll(() => waiting.length).toBe(2);
+  await expect(page.getByText('Foto 1', { exact: true })).toBeVisible();
+  await expect(page.getByText('Foto 2', { exact: true })).toBeVisible();
   await expect(page.getByText('manha.jpg')).toBeVisible();
   await expect(page.getByText('tarde.jpg')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Revisar imagens juntas' })).toBeVisible();
+  await page.getByLabel('Contexto das fotos').fill('Foto 1: lote 1, manhã. Foto 2: mesmo lote, tarde.');
+  await page.screenshot({ path: testInfo.outputPath('assistente-multifoto.png'), fullPage: false, animations: 'disabled' });
+  await page.getByRole('button', { name: 'Processar 2 fotos' }).click();
+  await expect.poll(() => requests.length).toBe(1);
+  const body = requests[0].request().postDataBuffer()?.toString() ?? '';
+  expect(body.indexOf('manha.jpg')).toBeGreaterThan(-1);
+  expect(body.indexOf('tarde.jpg')).toBeGreaterThan(body.indexOf('manha.jpg'));
+  expect(body).toContain('Foto 1: lote 1, manh');
+  await expect(page.getByText('A Foto 2 foi lida, mas o original não foi armazenado.')).toBeVisible();
 });
 
 test.describe('jogo — editor de mapa', () => {
