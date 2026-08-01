@@ -6,6 +6,7 @@ import { api, ApiError, json } from '../lib/api';
 import { useVoice } from '../lib/voice-context';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
 import { reviewDestination, type ReviewableAction } from '../features/game/review';
+import { gameAudio } from '../features/game/audio';
 import { Modal } from './feedback';
 import { useToast } from './feedback-context';
 import { Button, ErrorState, Field, Textarea } from './ui';
@@ -91,7 +92,13 @@ function CaptureSheet({ open, onClose }: { open: boolean; onClose: () => void })
 
   async function record() {
     setMode('recording');
-    const result = await recorder.start();
+    gameAudio.pauseForRecording();
+    let result;
+    try {
+      result = await recorder.start();
+    } finally {
+      gameAudio.resumeAfterRecording();
+    }
     if (!result) {
       setError(recorder.error || 'A gravação ficou vazia. Tente de novo.');
       setMode('choose');
@@ -100,8 +107,6 @@ function CaptureSheet({ open, onClose }: { open: boolean; onClose: () => void })
     const form = new FormData();
     form.append('audio', result.blob, result.filename);
     form.append('durationSeconds', result.durationSeconds.toFixed(3));
-    for (const document of documents) form.append('document', document.file);
-    if (text.trim()) form.append('context', text.trim());
     await submit({ method: 'POST', body: form });
   }
 
@@ -138,7 +143,7 @@ function CaptureSheet({ open, onClose }: { open: boolean; onClose: () => void })
     {mode === 'processing' ? <div className="flex items-center gap-3 py-8 text-sm text-[var(--muted)]"><Loader2 className="animate-spin" size={20} aria-hidden /> Processando a captura…</div>
       : mode === 'recording' ? <div className="grid justify-items-center gap-4 py-4 text-center">
         <div className="text-4xl font-bold tabular-nums" data-testid="capture-recording-timer">{formatSeconds(Math.max(0, recorder.maxSeconds - recorder.seconds))}</div>
-        <p className="text-sm text-[var(--muted)]">Gravando… o tempo mostrado é o que RESTA do limite de {recorder.maxSeconds}s. Fale e toque em parar.</p>
+        <p className="text-sm text-[var(--muted)]">Gravando… o tempo mostrado é o que RESTA do limite de {recorder.maxSeconds}s. O som do jogo fica pausado. Fale e toque em parar.</p>
         {recorder.maxSeconds - recorder.seconds <= 10 && <p className="notice notice-warning text-sm" data-testid="capture-recording-warning">O limite está chegando. Para controles longos (muitas vacas), pare e fotografe a anotação — a foto não tem limite de tempo.</p>}
         <Button variant="danger" onClick={() => recorder.stop()}><Square size={16} aria-hidden /> Parar e enviar</Button>
       </div>
@@ -148,7 +153,7 @@ function CaptureSheet({ open, onClose }: { open: boolean; onClose: () => void })
             <p className="mb-2 text-xs font-bold uppercase tracking-wide text-[var(--muted)]">Deixe o assistente preencher</p>
             {voiceEnabled
               ? <div className="grid gap-2">
-                <button type="button" className="button button-primary w-full" data-autofocus onClick={() => void record()}><Mic size={18} aria-hidden /> {documents.length ? 'Gravar contexto das fotos' : 'Falar'}</button>
+                {!documents.length && <button type="button" className="button button-primary w-full" data-autofocus onClick={() => void record()}><Mic size={18} aria-hidden /> Falar</button>}
                 <label className="button button-secondary w-full cursor-pointer">
                   <Camera size={18} aria-hidden /> {documents.length ? 'Adicionar mais fotos' : 'Escolher fotos ou documentos'}
                   <input type="file" multiple accept="image/*,application/pdf" className="hidden" onChange={(event) => {
@@ -202,7 +207,9 @@ function CaptureSheet({ open, onClose }: { open: boolean; onClose: () => void })
                     Processar {documents.length} {documents.length === 1 ? 'foto' : 'fotos'}
                   </Button>
                   : <Button variant="secondary" disabled={!text.trim()} onClick={() => void sendText()}>Enviar texto</Button>}
-                <p className="text-xs text-[var(--muted)]">Áudio tem limite de {recorder.maxSeconds}s. Controle longo? Fotografe a anotação — a revisão abre vaca a vaca do mesmo jeito.</p>
+                <p className="text-xs text-[var(--muted)]">{documents.length
+                  ? 'As fotos e o contexto escrito serão enviados juntos, preservando a ordem acima.'
+                  : `Áudio tem limite de ${recorder.maxSeconds}s. Controle longo? Fotografe a anotação — a revisão abre vaca a vaca do mesmo jeito.`}</p>
               </div>
               : <p className="notice notice-info text-sm">Defina <code>OPENROUTER_API_KEY</code> no ambiente para ativar áudio, foto e texto livres. Os registros diretos abaixo funcionam sempre.</p>}
           </section>

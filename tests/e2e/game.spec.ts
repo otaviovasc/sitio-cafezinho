@@ -138,7 +138,13 @@ test('assistente preserva a ordem e envia duas imagens juntas com contexto', asy
   await expect(page.getByText('Foto 2', { exact: true })).toBeVisible();
   await expect(page.getByText('manha.jpg')).toBeVisible();
   await expect(page.getByText('tarde.jpg')).toBeVisible();
-  await page.getByLabel('Contexto das fotos').fill('Foto 1: lote 1, manhã. Foto 2: mesmo lote, tarde.');
+  await expect(page.getByRole('button', { name: 'Falar' })).toHaveCount(0);
+  const contextField = page.getByLabel('Contexto das fotos');
+  const contextText = 'Foto 1: lote 1, manhã. Foto 2: mesmo lote, tarde.';
+  await contextField.click();
+  await contextField.pressSequentially(contextText);
+  await expect(contextField).toBeFocused();
+  await expect(contextField).toHaveValue(contextText);
   await page.screenshot({ path: testInfo.outputPath('assistente-multifoto.png'), fullPage: false, animations: 'disabled' });
   await page.getByRole('button', { name: 'Processar 2 fotos' }).click();
   await expect.poll(() => requests.length).toBe(1);
@@ -146,7 +152,58 @@ test('assistente preserva a ordem e envia duas imagens juntas com contexto', asy
   expect(body.indexOf('manha.jpg')).toBeGreaterThan(-1);
   expect(body.indexOf('tarde.jpg')).toBeGreaterThan(body.indexOf('manha.jpg'));
   expect(body).toContain('Foto 1: lote 1, manh');
+  expect(body).not.toContain('captura.webm');
   await expect(page.getByText('A Foto 2 foi lida, mas o original não foi armazenado.')).toBeVisible();
+});
+
+test('áudio é uma captura independente das fotos', async ({ page }, testInfo) => {
+  await mockEmptyAuthenticatedGame(page);
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: async () => ({
+          getTracks: () => [{ stop: () => undefined }],
+        }),
+      },
+    });
+    class FakeMediaRecorder {
+      static isTypeSupported() { return true; }
+      state = 'inactive';
+      mimeType = 'audio/webm';
+      ondataavailable: ((event: { data: Blob }) => void) | null = null;
+      onstop: (() => void) | null = null;
+      constructor(_stream: MediaStream, _options?: MediaRecorderOptions) {}
+      start() { this.state = 'recording'; }
+      stop() {
+        this.state = 'inactive';
+        this.ondataavailable?.({ data: new Blob(['audio independente'], { type: this.mimeType }) });
+        this.onstop?.();
+      }
+    }
+    Object.defineProperty(window, 'MediaRecorder', { configurable: true, value: FakeMediaRecorder });
+  });
+  let body = '';
+  await page.route('**/api/captures', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    body = route.request().postDataBuffer()?.toString() ?? '';
+    await route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({ captureId: '11111111-1111-4111-8111-111111111111', actions: [], warnings: [] }),
+    });
+  });
+
+  await page.goto('/');
+  await page.getByLabel('Assistente de registros — novo registro').click();
+  await page.getByRole('button', { name: 'Falar' }).click();
+  await expect(page.getByTestId('capture-recording-timer')).toBeVisible();
+  await expect(page.getByText('O som do jogo fica pausado.', { exact: false })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('assistente-gravando-audio.png'), fullPage: false, animations: 'disabled' });
+  await page.getByRole('button', { name: 'Parar e enviar' }).click();
+  await expect.poll(() => body).toContain('captura.webm');
+  expect(body).not.toContain('context');
+  expect(body).not.toContain('document');
 });
 
 test.describe('jogo — editor de mapa', () => {

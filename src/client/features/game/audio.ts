@@ -45,6 +45,12 @@ const elements = new Map<string, HTMLAudioElement | null>();
 let soundtrackElement: HTMLAudioElement | null = null;
 let padNodes: { stop: () => void } | null = null;
 let melodyTimer: number | null = null;
+let recordingPauseCount = 0;
+const activeSfxElements = new Set<HTMLAudioElement>();
+
+function isSuppressed() {
+  return muted || recordingPauseCount > 0;
+}
 
 function readMuted(): boolean {
   try { return localStorage.getItem(MUTED_KEY) === '1'; } catch { return false; }
@@ -207,7 +213,7 @@ function startSynthPad() {
   const scale = [523.25, 587.33, 659.25, 783.99, 880];
   let step = 0;
   melodyTimer = window.setInterval(() => {
-    if (!ctx || muted) return;
+    if (!ctx || isSuppressed()) return;
     const note = scale[(step * 3 + (step % 2)) % scale.length];
     tone(ctx, ctx.currentTime + 0.01, 'sine', note, note, 0.05, 0.05, 1.6);
     step += 1;
@@ -230,9 +236,9 @@ function stopSynthPad() {
 // --- Trilha (arquivo real quando existir; senão o pad sintetizado) ---
 
 async function startSoundtrack() {
-  if (muted || !unlocked) return;
+  if (isSuppressed() || !unlocked) return;
   const element = await loadElement('soundtrack');
-  if (muted || !unlocked) return;
+  if (isSuppressed() || !unlocked) return;
   if (element) {
     soundtrackElement = element;
     element.loop = true;
@@ -277,6 +283,7 @@ export const gameAudio = {
     document.removeEventListener('visibilitychange', handleVisibility);
     stopSoundtrack();
     unlocked = false;
+    recordingPauseCount = 0;
   },
   isMuted() { return muted; },
   toggleMuted() {
@@ -292,16 +299,43 @@ export const gameAudio = {
   },
   /** Toca um efeito; se o arquivo não existir, cai no placeholder sintetizado. */
   play(key: GameSoundKey) {
-    if (muted || !unlocked) return;
+    if (isSuppressed() || !unlocked) return;
     void loadElement(key).then((element) => {
-      if (muted) return;
+      if (isSuppressed()) return;
       if (!element) {
         playSynth(key);
         return;
       }
       const instance = element.cloneNode(true) as HTMLAudioElement;
       instance.volume = SFX_VOLUME;
-      void instance.play().catch(() => playSynth(key));
+      activeSfxElements.add(instance);
+      const forget = () => activeSfxElements.delete(instance);
+      instance.addEventListener('ended', forget, { once: true });
+      instance.addEventListener('error', forget, { once: true });
+      void instance.play().catch(() => {
+        forget();
+        playSynth(key);
+      });
     });
+  },
+  /** Pausa temporária, sem alterar a preferência persistida de som do usuário. */
+  pauseForRecording() {
+    recordingPauseCount += 1;
+    stopSoundtrack();
+    for (const element of activeSfxElements) {
+      element.pause();
+      element.currentTime = 0;
+    }
+    activeSfxElements.clear();
+    void context?.suspend();
+  },
+  resumeAfterRecording() {
+    recordingPauseCount = Math.max(0, recordingPauseCount - 1);
+    if (recordingPauseCount > 0) return;
+    void context?.resume();
+    void startSoundtrack();
+  },
+  isPausedForRecording() {
+    return recordingPauseCount > 0;
   },
 };
