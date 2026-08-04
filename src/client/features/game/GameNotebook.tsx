@@ -49,7 +49,14 @@ type CollectionRow = { id: string; collectionDate: string; liters: string; sourc
 type PurchaseRow = { id: string; description: string; supplierName: string | null; purchaseDate: string; category: string; totalAmount: string; dueDate: string | null; status: string; isOverdue: boolean };
 type RevenueRow = { id: string; description: string; revenueDate: string; category: string; amount: string; status: string; animalName: string | null; tagNumber: string | null; buyerName: string | null };
 type MastitisRow = { id: string; animalId: string; animalName: string | null; tagNumber: string | null; detectedAt: string; affectedQuarter: string; detectionMethod: string; status: string; withdrawalEndsAt: string | null };
-type CaptureActionRow = { id: string; actionType: string; commitStatus: string; status: string };
+type CaptureActionRow = {
+  id: string;
+  actionType: string;
+  commitStatus: string;
+  status: string;
+  issues?: string[] | null;
+  resolvedPayload?: Record<string, unknown> | null;
+};
 type CaptureRow = { id: string; inputKind: string; transcript: string | null; createdAt: string; actions: CaptureActionRow[] };
 
 type NotebookDetail =
@@ -351,16 +358,68 @@ function describeDetail(detail: Exclude<NotebookDetail, { type: 'group' }>): Det
   }
 }
 
+type IndividualImportPreview = {
+  sessionDate?: unknown;
+  herdGroupLabel?: unknown;
+  measurements?: unknown;
+};
+
+function individualImportFromAction(action: CaptureActionRow): IndividualImportPreview | null {
+  if (action.actionType !== 'INDIVIDUAL_MILK_SESSION' || !action.resolvedPayload) return null;
+  const imported = action.resolvedPayload.import;
+  return imported && typeof imported === 'object' ? imported as IndividualImportPreview : null;
+}
+
+function previewLiters(value: unknown) {
+  return typeof value === 'number' || typeof value === 'string' ? formatLiters(value) : 'Sem valor legível';
+}
+
+function IndividualCapturePreview({ action }: { action: CaptureActionRow }) {
+  const imported = individualImportFromAction(action);
+  const rows = Array.isArray(imported?.measurements)
+    ? imported.measurements.filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === 'object')
+    : [];
+  if (!imported || !rows.length) return null;
+
+  return <section className="game-notebook-capture-preview" aria-label="Medições encontradas na captura">
+    <div className="game-notebook-capture-preview-heading">
+      <div>
+        <strong>{rows.length} {rows.length === 1 ? 'medição encontrada' : 'medições encontradas'}</strong>
+        <small>Confira cada vaca antes de confirmar na mangueira.</small>
+      </div>
+      <span>{typeof imported.sessionDate === 'string' ? formatDate(imported.sessionDate) : 'Data a confirmar'}</span>
+    </div>
+    <div className="grid gap-2">
+      {rows.map((row, index) => {
+        const label = typeof row.rawAnimalLabel === 'string' ? row.rawAnimalLabel : `Linha ${index + 1}`;
+        const morning = row.morningLiters;
+        const afternoon = row.afternoonLiters;
+        return <article className="game-notebook-capture-row" key={`${label}-${index}`}>
+          <div>
+            <strong>{label}</strong>
+            {typeof row.rawValueText === 'string' && <small>Original: “{row.rawValueText}”</small>}
+          </div>
+          <div className="text-right">
+            <strong>{previewLiters(row.totalLiters)}</strong>
+            <small>{morning !== null && morning !== undefined ? `Manhã ${previewLiters(morning)}` : 'Manhã sem medição'} · {afternoon !== null && afternoon !== undefined ? `Tarde ${previewLiters(afternoon)}` : 'Tarde sem medição'}</small>
+          </div>
+        </article>;
+      })}
+    </div>
+  </section>;
+}
+
 /**
  * Pendência do assistente no caderno: abre a revisão na folha do fato (modo
  * revisão contextual — fase 5). Fala não reconhecida (UNKNOWN) não tem folha:
  * só dá para descartar, saindo da fila sem virar fato.
  */
-function CaptureActionNotebookDetail({ capture, action, onBack, onOpenReview, onChanged }: {
+function CaptureActionNotebookDetail({ capture, action, onBack, onOpenReview, onOpenInstallation, onChanged }: {
   capture: CaptureRow;
   action: CaptureActionRow;
   onBack: () => void;
   onOpenReview: (captureId: string, actionId: string) => void;
+  onOpenInstallation: (target: NotebookSheetTarget) => void;
   onChanged: () => void;
 }) {
   const toast = useToast();
@@ -368,6 +427,7 @@ function CaptureActionNotebookDetail({ capture, action, onBack, onOpenReview, on
   const [error, setError] = useState('');
   const info = describeDetail({ type: 'captureAction', capture, action });
   const reviewable = action.status === 'NEEDS_REVIEW' && action.actionType !== 'UNKNOWN';
+  const individual = action.actionType === 'INDIVIDUAL_MILK_SESSION';
 
   async function dismiss() {
     setBusy(true);
@@ -389,12 +449,19 @@ function CaptureActionNotebookDetail({ capture, action, onBack, onOpenReview, on
     {error && <div className="mb-3"><ErrorState message={error} /></div>}
     <div className="mb-3"><GameEntityActions actions={[
       ...(reviewable
-        ? [{ icon: <ClipboardList size={22} aria-hidden />, label: 'Revisar na folha', hint: 'Abre o fato preenchido pelo assistente, pronto para confirmar ou corrigir.', testid: 'game-notebook-review-open', onClick: () => onOpenReview(capture.id, action.id) }]
+        ? [{ icon: <ClipboardList size={22} aria-hidden />, label: individual ? 'Revisar medições na mangueira' : 'Revisar na folha', hint: individual ? 'Confira animal, manhã, tarde e vínculo antes de salvar o controle.' : 'Abre o fato preenchido pelo assistente, pronto para confirmar ou corrigir.', testid: 'game-notebook-review-open', onClick: () => onOpenReview(capture.id, action.id) }]
+        : action.status === 'NEEDS_REVIEW' && action.actionType === 'UNKNOWN'
+          ? [{ icon: <ClipboardList size={22} aria-hidden />, label: 'Registrar controle individual', hint: 'A leitura não foi organizada. Preencha os valores na mangueira e confirme o registro manualmente.', testid: 'game-notebook-review-manual-individual', onClick: () => onOpenInstallation('MANGUEIRA_INDIVIDUAL') }]
         : []),
       ...(action.status === 'NEEDS_REVIEW'
         ? [{ icon: <Archive size={22} aria-hidden />, label: 'Descartar captura', hint: 'Sai da fila sem virar fato.', testid: 'game-notebook-review-dismiss', onClick: () => void dismiss() }]
         : []),
-    ]} /></div>
+      ]} /></div>
+    {individual && <IndividualCapturePreview action={action} />}
+    {action.actionType === 'UNKNOWN' && action.status === 'NEEDS_REVIEW' && <div className="notice notice-warning mb-3">
+      <strong>Esta leitura ainda não virou um controle.</strong>
+      <p className="mt-1 text-sm">Confira a transcrição abaixo e registre os valores na mangueira. O registro manual será um fato separado até que a leitura seja organizada.</p>
+    </div>}
     {busy && <p className="game-notebook-empty mt-2">Descartando…</p>}
     <DetailFields fields={info.fields} />
   </>;
@@ -754,7 +821,7 @@ export function GameNotebook({ open, initialTab, startInCreate, onClose, onOpenI
             : detail.type === 'feedItem'
               ? <FeedItemNotebookDetail row={detail.row} onBack={() => setDetail(null)} onChanged={() => { inventory.reload(); onChanged(); }} />
               : detail.type === 'captureAction'
-                ? <CaptureActionNotebookDetail capture={detail.capture} action={detail.action} onBack={() => setDetail(null)} onOpenReview={onOpenReview} onChanged={() => { captures.reload(); onChanged(); }} />
+                ? <CaptureActionNotebookDetail capture={detail.capture} action={detail.action} onBack={() => setDetail(null)} onOpenReview={onOpenReview} onOpenInstallation={onOpenInstallation} onChanged={() => { captures.reload(); onChanged(); }} />
                 : <GenericNotebookDetail detail={detail} onBack={() => setDetail(null)} />}
       </div>}
 

@@ -355,6 +355,13 @@ a { color: inherit; text-decoration: none; }
   .game-notebook-filter { background: #fffef9; color: var(--game-ink); min-height: 2.25rem; white-space: nowrap; @apply inline-flex items-center gap-1.5 rounded-full px-3.5 text-sm font-extrabold transition; }
   .game-notebook-filter[data-active='true'] { background: var(--primary); color: white; }
   .game-notebook-filter:focus-visible { @apply outline-none ring-2 ring-[var(--primary)]; }
+  .game-notebook-capture-preview { background: #fffef9; border-color: rgb(58 61 53 / 12%); @apply mb-3 grid gap-3 rounded-2xl border p-3; }
+  .game-notebook-capture-preview-heading { @apply flex items-start justify-between gap-3; }
+  .game-notebook-capture-preview-heading strong, .game-notebook-capture-preview-heading small, .game-notebook-capture-row strong, .game-notebook-capture-row small { @apply block; }
+  .game-notebook-capture-preview-heading small, .game-notebook-capture-row small { color: var(--game-ink-soft); @apply mt-0.5 text-xs; }
+  .game-notebook-capture-preview-heading > span { color: var(--game-ink-soft); @apply shrink-0 text-sm font-bold; }
+  .game-notebook-capture-row { background: var(--game-paper, #f5f0e4); @apply flex items-start justify-between gap-3 rounded-xl px-3 py-2; }
+  .game-notebook-capture-row > div:last-child { @apply max-w-[62%]; }
   .game-sheet-action { background: #fffef9; box-shadow: 0 2px 10px rgb(58 61 53 / 8%); min-height: 64px; text-align: left; @apply flex w-full items-center gap-3 rounded-2xl px-4 py-3 transition; }
   .game-sheet-action:hover { box-shadow: 0 4px 16px rgb(58 61 53 / 14%); transform: translateY(-1px); }
   .game-sheet-action:focus-visible { @apply outline-none ring-2 ring-[var(--primary)]; }
