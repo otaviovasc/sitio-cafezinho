@@ -581,8 +581,10 @@ existentes e montadas sobre `GameEntitySheet`:
   `/api/game/state`; tocar abre a folha correspondente), "Carências
   informadas" (casos abertos com carência; tocar abre o caso) e "Revisão do
   assistente" (capturas NEEDS_REVIEW — desde a fase 5, tocar abre a folha
-  contextual em modo revisão, não mais um card genérico; fala UNKNOWN só dá
-  para descartar).
+  contextual em modo revisão, não mais um card genérico; uma fala UNKNOWN pode
+  ser organizada manualmente como controle individual a partir da fonte
+  original, sem perder a captura, e então segue a mesma revisão antes de
+  confirmar).
 
 ## Revisão pós-IA contextual (fase 5)
 
@@ -629,7 +631,11 @@ sem revisão humana.
   numeradas na ordem do envio e a origem aparece por medição; metadado ausente
   bloqueia a gravação até a escolha humana e nova validação no servidor.
   A gravação é o `POST /api/import/milk-session`, que confirma a ação de
-  origem. As 3 telas viraram 1 folha.
+  origem. Quando a interpretação não reconhece o tipo da captura, o Caderno
+  permite informar data, lote e linhas a partir da imagem original; a ação é
+  reclassificada explicitamente como controle individual e só então entra
+  nesta mesma revisão, mantendo a captura e seus anexos como origem. As 3
+  telas viraram 1 folha.
 - **Pesagem por voz/foto (intent WEIGHT_SESSION):** novo intent de verdade —
   schema em `intents.ts` (linhas animal+kg, peso ilegível = null, nunca
   estimado), prompt em `prompts.ts`, resolução em `resolve.ts`

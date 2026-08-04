@@ -15,6 +15,7 @@ import {
   suppliers,
 } from '../../db/schema.js';
 import { sha256 as hashFile } from '../../domain/files.js';
+import { milkImportSchema } from '../../domain/import.js';
 import { requireDocumentQuantityReview, resolveIntent, type ResolveContext } from '../../domain/nl/resolve.js';
 import { ApiError, fail } from '../http/api-error.js';
 import { readJson, validate } from '../http/validation.js';
@@ -541,6 +542,24 @@ export const captureRoutes = new Hono()
       getDb().select().from(captureDocuments).where(eq(captureDocuments.captureId, capture.id)).orderBy(asc(captureDocuments.ordinal)),
     ]);
     return c.json({ ...capture, documents, actions });
+  })
+  .post('/captures/:captureId/actions/:actionId/reclassify-individual', async (c) => {
+    const { captureId, actionId } = c.req.param();
+    const body = await readJson(c);
+    const parsed = validate(z.object({ import: milkImportSchema }), body);
+    const [action] = await getDb().select().from(proposedActions)
+      .where(and(eq(proposedActions.id, actionId), eq(proposedActions.captureId, captureId))).limit(1);
+    if (!action) return fail('Ação não encontrada.', 404, 'NOT_FOUND');
+    if (action.status !== 'NEEDS_REVIEW') return fail('Esta captura já foi revisada.', 409, 'ACTION_ALREADY_REVIEWED');
+    if (action.actionType !== 'UNKNOWN') return fail('Esta captura já possui um tipo de registro.', 409, 'ACTION_ALREADY_CLASSIFIED');
+
+    const [updated] = await getDb().update(proposedActions).set({
+      actionType: 'INDIVIDUAL_MILK_SESSION',
+      commitStatus: 'NEEDS_REVIEW',
+      resolvedPayload: { import: parsed.import },
+      updatedAt: new Date(),
+    }).where(and(eq(proposedActions.id, actionId), eq(proposedActions.captureId, captureId))).returning();
+    return c.json(updated);
   })
   .post('/captures/:captureId/actions/:actionId/commit', async (c) => {
     const { captureId, actionId } = c.req.param();

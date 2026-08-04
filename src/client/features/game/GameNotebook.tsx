@@ -17,7 +17,9 @@ import { MastitisCaseForm } from '../health/mastitis';
 import { TodayPanel } from '../dashboard/TodayPanel';
 import type { HerdGroup } from '../animals/GroupPicker';
 import { useToast } from '../../components/feedback-context';
-import { ErrorState, SkeletonList, StatusBadge } from '../../components/ui';
+import { Button, ErrorState, Field, Input, Select, SkeletonList, StatusBadge, SubmitBar } from '../../components/ui';
+import { ParsedDecimalInput } from '../../components/form-controls';
+import { useUnsavedGuard } from '../../hooks/useUnsavedGuard';
 import { api, json } from '../../lib/api';
 import { animalSexLabels, categoryLabels, milkingRoutineLabels } from '../../lib/labels';
 import {
@@ -57,7 +59,8 @@ type CaptureActionRow = {
   issues?: string[] | null;
   resolvedPayload?: Record<string, unknown> | null;
 };
-type CaptureRow = { id: string; inputKind: string; transcript: string | null; createdAt: string; actions: CaptureActionRow[] };
+type CaptureDocumentRow = { ordinal: number; originalFilename: string; mimeType: string; attachmentId: string | null; storageWarning: string | null };
+type CaptureRow = { id: string; inputKind: string; transcript: string | null; createdAt: string; documents?: CaptureDocumentRow[]; actions: CaptureActionRow[] };
 
 type NotebookDetail =
   | { type: 'animal'; row: AnimalRow }
@@ -409,25 +412,132 @@ function IndividualCapturePreview({ action }: { action: CaptureActionRow }) {
   </section>;
 }
 
+type RecoveryRow = { label: string; morning: number | null; afternoon: number | null };
+
+function UnknownIndividualRecovery({ capture, action, onCancel, onContinue }: {
+  capture: CaptureRow;
+  action: CaptureActionRow;
+  onCancel: () => void;
+  onContinue: () => void;
+}) {
+  const [date, setDate] = useState('');
+  const [groupId, setGroupId] = useState('');
+  const [groups, setGroups] = useState<Array<{ id: string; name: string; active: boolean; milkingRoutine: string }>>([]);
+  const [rows, setRows] = useState<RecoveryRow[]>([{ label: '', morning: null, afternoon: null }]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const documents = capture.documents ?? [];
+  const dirty = Boolean(date || groupId || rows.some((row) => row.label.trim() || row.morning !== null || row.afternoon !== null));
+  useUnsavedGuard(dirty && !busy);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api<typeof groups>('/api/herd-groups').then((loaded) => {
+      if (!cancelled) setGroups(loaded.filter((group) => group.active && group.milkingRoutine !== 'NOT_MILKED'));
+    }).catch((cause) => {
+      if (!cancelled) setError(cause instanceof Error ? cause.message : 'Não foi possível carregar os lotes.');
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  function updateRow(index: number, value: Partial<RecoveryRow>) {
+    setRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, ...value } : row));
+  }
+
+  async function continueToReview() {
+    const validRows = rows.filter((row) => row.label.trim() && (row.morning !== null || row.afternoon !== null));
+    if (!date || !groupId || !validRows.length) {
+      setError('Informe data, lote e pelo menos uma vaca com um valor de leite.');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    const imported = {
+      sessionDate: date,
+      herdGroupId: groupId,
+      herdGroupLabel: groups.find((group) => group.id === groupId)?.name ?? null,
+      sourceMode: 'SEPARATE_MORNING_AFTERNOON' as const,
+      period: null,
+      sourceDocumentOrdinals: documents.map((document) => document.ordinal),
+      metadataReview: { dateRequired: false, groupRequired: false, periodRequired: false },
+      measurements: validRows.map((row) => ({
+        rawAnimalLabel: row.label.trim(),
+        rawValueText: null,
+        morningLiters: row.morning,
+        afternoonLiters: row.afternoon,
+        totalLiters: (row.morning ?? 0) + (row.afternoon ?? 0),
+        confidence: 'MEDIUM' as const,
+        excluded: false,
+        notes: 'Consolidado manualmente a partir da captura original.',
+      })),
+    };
+    try {
+      await api(`/api/captures/${capture.id}/actions/${action.id}/reclassify-individual`, json('POST', { import: imported }));
+      onContinue();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Não foi possível preparar a revisão.');
+      setBusy(false);
+    }
+  }
+
+  return <div className="game-notebook-recovery">
+    <button type="button" className="game-sheet-back" onClick={onCancel}><ArrowLeft size={16} aria-hidden />Voltar ao detalhe</button>
+    <div className="mb-3">
+      <strong className="text-lg">Organizar como controle individual</strong>
+      <p className="game-notebook-subtitle">A IA não conseguiu classificar esta leitura. Confira a fonte e informe os valores; depois você ainda revisará cada linha antes de salvar.</p>
+    </div>
+    {documents.length > 0 && <section className="game-notebook-recovery-sources" aria-label="Fontes originais">
+      {documents.map((document) => <article key={document.ordinal}>
+        <strong>Foto {document.ordinal} · {document.originalFilename}</strong>
+        {document.storageWarning ? <p className="text-xs">{document.storageWarning}</p> : document.attachmentId && document.mimeType.startsWith('image/')
+          ? <img src={`/api/attachments/${document.attachmentId}/file`} alt={`Fonte original da foto ${document.ordinal}`} />
+          : <p className="text-xs">Fonte original sem visualização disponível.</p>}
+      </article>)}
+    </section>}
+    <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); void continueToReview(); }}>
+      <Field label="Data do controle"><Input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></Field>
+      <Field label="Lote"><Select value={groupId} onChange={(event) => setGroupId(event.target.value)}><option value="">Selecione o lote</option>{groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</Select></Field>
+      <div className="grid gap-2" aria-label="Linhas do controle individual">
+        {rows.map((row, index) => <div className="game-notebook-recovery-row" key={index}>
+          <Field label={`Vaca ${index + 1}`}><Input value={row.label} placeholder="Nome ou brinco" onChange={(event) => updateRow(index, { label: event.target.value })} /></Field>
+          <Field label="Manhã (L)"><ParsedDecimalInput suffix="L" value={row.morning} onValueChange={(value) => updateRow(index, { morning: value })} /></Field>
+          <Field label="Tarde (L)"><ParsedDecimalInput suffix="L" value={row.afternoon} onValueChange={(value) => updateRow(index, { afternoon: value })} /></Field>
+          {rows.length > 1 && <Button type="button" variant="secondary" onClick={() => setRows((current) => current.filter((_, rowIndex) => rowIndex !== index))}>Remover linha</Button>}
+        </div>)}
+      </div>
+      <Button type="button" variant="secondary" onClick={() => setRows((current) => [...current, { label: '', morning: null, afternoon: null }])}>Adicionar vaca</Button>
+      {error && <ErrorState message={error} />}
+      <SubmitBar label="Continuar para revisar as medições" busy={busy} disabled={!date || !groupId || !rows.some((row) => row.label.trim() && (row.morning !== null || row.afternoon !== null))} />
+    </form>
+  </div>;
+}
+
 /**
  * Pendência do assistente no caderno: abre a revisão na folha do fato (modo
- * revisão contextual — fase 5). Fala não reconhecida (UNKNOWN) não tem folha:
- * só dá para descartar, saindo da fila sem virar fato.
+ * revisão contextual — fase 5). Fala não reconhecida (UNKNOWN) oferece uma
+ * recuperação humana que mantém a fonte e reentra na revisão do controle.
  */
-function CaptureActionNotebookDetail({ capture, action, onBack, onOpenReview, onOpenInstallation, onChanged }: {
+function CaptureActionNotebookDetail({ capture, action, onBack, onOpenReview, onChanged }: {
   capture: CaptureRow;
   action: CaptureActionRow;
   onBack: () => void;
   onOpenReview: (captureId: string, actionId: string) => void;
-  onOpenInstallation: (target: NotebookSheetTarget) => void;
   onChanged: () => void;
 }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [view, setView] = useState<'detail' | 'recover'>('detail');
   const info = describeDetail({ type: 'captureAction', capture, action });
   const reviewable = action.status === 'NEEDS_REVIEW' && action.actionType !== 'UNKNOWN';
   const individual = action.actionType === 'INDIVIDUAL_MILK_SESSION';
+
+  if (view === 'recover') return <UnknownIndividualRecovery
+    capture={capture}
+    action={action}
+    onCancel={() => setView('detail')}
+    onContinue={() => onOpenReview(capture.id, action.id)}
+  />;
 
   async function dismiss() {
     setBusy(true);
@@ -451,7 +561,7 @@ function CaptureActionNotebookDetail({ capture, action, onBack, onOpenReview, on
       ...(reviewable
         ? [{ icon: <ClipboardList size={22} aria-hidden />, label: individual ? 'Revisar medições na mangueira' : 'Revisar na folha', hint: individual ? 'Confira animal, manhã, tarde e vínculo antes de salvar o controle.' : 'Abre o fato preenchido pelo assistente, pronto para confirmar ou corrigir.', testid: 'game-notebook-review-open', onClick: () => onOpenReview(capture.id, action.id) }]
         : action.status === 'NEEDS_REVIEW' && action.actionType === 'UNKNOWN'
-          ? [{ icon: <ClipboardList size={22} aria-hidden />, label: 'Registrar controle individual', hint: 'A leitura não foi organizada. Preencha os valores na mangueira e confirme o registro manualmente.', testid: 'game-notebook-review-manual-individual', onClick: () => onOpenInstallation('MANGUEIRA_INDIVIDUAL') }]
+          ? [{ icon: <ClipboardList size={22} aria-hidden />, label: 'Consolidar como controle individual', hint: 'Confira a foto, informe as vacas e revise cada medição antes de salvar.', testid: 'game-notebook-review-manual-individual', onClick: () => setView('recover') }]
         : []),
       ...(action.status === 'NEEDS_REVIEW'
         ? [{ icon: <Archive size={22} aria-hidden />, label: 'Descartar captura', hint: 'Sai da fila sem virar fato.', testid: 'game-notebook-review-dismiss', onClick: () => void dismiss() }]
@@ -460,7 +570,7 @@ function CaptureActionNotebookDetail({ capture, action, onBack, onOpenReview, on
     {individual && <IndividualCapturePreview action={action} />}
     {action.actionType === 'UNKNOWN' && action.status === 'NEEDS_REVIEW' && <div className="notice notice-warning mb-3">
       <strong>Esta leitura ainda não virou um controle.</strong>
-      <p className="mt-1 text-sm">Confira a transcrição abaixo e registre os valores na mangueira. O registro manual será um fato separado até que a leitura seja organizada.</p>
+      <p className="mt-1 text-sm">A ação continuará ligada à captura original. Primeiro organize os valores; depois a revisão linha a linha confirmará o controle.</p>
     </div>}
     {busy && <p className="game-notebook-empty mt-2">Descartando…</p>}
     <DetailFields fields={info.fields} />
@@ -821,7 +931,7 @@ export function GameNotebook({ open, initialTab, startInCreate, onClose, onOpenI
             : detail.type === 'feedItem'
               ? <FeedItemNotebookDetail row={detail.row} onBack={() => setDetail(null)} onChanged={() => { inventory.reload(); onChanged(); }} />
               : detail.type === 'captureAction'
-                ? <CaptureActionNotebookDetail capture={detail.capture} action={detail.action} onBack={() => setDetail(null)} onOpenReview={onOpenReview} onOpenInstallation={onOpenInstallation} onChanged={() => { captures.reload(); onChanged(); }} />
+                ? <CaptureActionNotebookDetail capture={detail.capture} action={detail.action} onBack={() => setDetail(null)} onOpenReview={onOpenReview} onChanged={() => { captures.reload(); onChanged(); }} />
                 : <GenericNotebookDetail detail={detail} onBack={() => setDetail(null)} />}
       </div>}
 
